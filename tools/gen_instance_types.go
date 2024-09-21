@@ -133,20 +133,21 @@ func main() {
 		fmt.Printf("could not marshal generated instance types to JSON: %v\n", err)
 		os.Exit(1)
 	}
+    // Write to the desired file
+    outputFilePath := filepath.Join("cloudprovider", "instance_types.json")
+    if err := os.WriteFile(outputFilePath, output, 0644); err != nil {
+        fmt.Printf("error writing output to file: %v\n", err)
+        os.Exit(1)
+    }
+    fmt.Printf("instance types have been generated and written to %s\n", outputFilePath)
 
-	// define output file path
-	outputFilePath := filepath.Join("..", "cloudprovider", "instance_types.json")
-	// create the output directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(outputFilePath), os.ModePerm); err != nil {
-		fmt.Printf("error creating directories for output file: %v\n", err)
-		os.Exit(1)
-	}
-
-	// write JSON output to the file
-	if err := os.WriteFile(outputFilePath, output, 0644); err != nil {
-		fmt.Printf("error writing output to file: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("instance types have been generated and written to %s\n", outputFilePath)
+    // Read back the written file
+    content, err := os.ReadFile(outputFilePath)
+    if err != nil {
+        fmt.Printf("error reading back written file: %v\n", err)
+        os.Exit(1)
+    }
+    fmt.Printf("content size: %d bytes\n", len(content))
+    fmt.Println("first 500 characters of content:")
+    fmt.Println(string(content[:500]))
 }
