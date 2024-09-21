@@ -17,7 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"sigs.k8s.io/karpenter/kwok/apis"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/apis"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -29,10 +29,10 @@ const (
 	InstanceCPULabelKey    = apis.Group + "/instance-cpu"
 
 	// Internal labels that are propagated to the node
-	KwokLabelKey          = "kwok.x-k8s.io/node"
-	KwokLabelValue        = "fake"
+	IbmLabelKey          = "ibm.x-k8s.io/node"
+	IbmLabelValue        = "fake"
 	NodeViewerLabelKey    = "eks-node-viewer/instance-price"
-	KwokPartitionLabelKey = "kwok-partition"
+	IbmPartitionLabelKey = "ibm-partition"
 )
 
 func init() {

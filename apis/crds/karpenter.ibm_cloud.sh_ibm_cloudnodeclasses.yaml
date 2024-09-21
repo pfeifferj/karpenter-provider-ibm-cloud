@@ -4,25 +4,25 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.3
-  name: kwoknodeclasses.karpenter.kwok.sh
+  name: ibmnodeclasses.karpenter.ibm.sh
 spec:
-  group: karpenter.kwok.sh
+  group: karpenter.ibm.sh
   names:
     categories:
     - karpenter
-    kind: KWOKNodeClass
-    listKind: KWOKNodeClassList
-    plural: kwoknodeclasses
+    kind: IBMNodeClass
+    listKind: IBMNodeClassList
+    plural: ibmnodeclasses
     shortNames:
-    - kwoknc
-    - kwokncs
-    singular: kwoknodeclass
+    - ibmnc
+    - obmncs
+    singular: ibmnodeclass
   scope: Cluster
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: KWOKNodeClass is the Schema for the KWOKNodeClass API
+        description: IBMNodeClass is the Schema for the IBMNodeClass API
         properties:
           apiVersion:
             description: |-
@@ -49,7 +49,7 @@ spec:
                 reason: Ready
                 status: "True"
                 type: Ready
-            description: KWOKNodeClassStatus contains the resolved state of the KwokNodeClass
+            description: IBMNodeClassStatus contains the resolved state of the IBMNodeClass
             properties:
               conditions:
                 description: Conditions contains signals for health and readiness

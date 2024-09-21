@@ -21,7 +21,8 @@ ENVTEST = go run ${PROJECT_DIR}/vendor/sigs.k8s.io/controller-runtime/tools/setu
 GINKGO = go run ${PROJECT_DIR}/vendor/github.com/onsi/ginkgo/v2/ginkgo
 GINKGO_ARGS = -v --randomize-all --randomize-suites --keep-going --race --trace --timeout=30m
 
-CONTROLLER_GEN = go run ${PROJECT_DIR}/vendor/sigs.k8s.io/controller-tools/cmd/controller-gen
+# CONTROLLER_GEN = go run ${PROJECT_DIR}/vendor/sigs.k8s.io/controller-tools/cmd/controller-gen
+CONTROLLER_GEN = ~/.local/share/go/bin/controller-gen
 
 all: help
 
