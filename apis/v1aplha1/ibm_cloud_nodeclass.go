@@ -22,23 +22,23 @@ import (
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
-// KWOKNodeClass is the Schema for the KWOKNodeClass API
+// IBMNodeClass is the Schema for the IBMNodeClass API
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:path=kwoknodeclasses,scope=Cluster,categories=karpenter,shortName={kwoknc,kwokncs}
+// +kubebuilder:resource:path=ibmnodeclasses,scope=Cluster,categories=karpenter,shortName={ibmnc,ibmncs}
 // +kubebuilder:subresource:status
-type KWOKNodeClass struct {
+type IBMNodeClass struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	// +kubebuilder:default:={conditions: {{type: "Ready", status: "True", reason:"Ready", lastTransitionTime: "2024-01-01T01:01:01Z", message: ""}}}
-	Status KWOKNodeClassStatus `json:"status,omitempty"`
+	Status IBMNodeClassStatus `json:"status,omitempty"`
 }
 
-// KWOKNodeClassList contains a list of KwokNodeClass
+// IBMNodeClassList contains a list of IBMNodeClass
 // +kubebuilder:object:root=true
-type KWOKNodeClassList struct {
+type IBMNodeClassList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []KWOKNodeClass `json:"items"`
+	Items           []IBMNodeClass `json:"items"`
 }
 
 const DisruptionReasonExampleReason v1.DisruptionReason = "ExampleReason"

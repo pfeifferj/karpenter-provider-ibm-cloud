@@ -17,20 +17,20 @@ limitations under the License.
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"os"
-	"path/filepath"
+    "encoding/json"
+    "fmt"
+    "log"
+    "os"
+    "path/filepath"
+	"reflect"
 
-	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
-	"github.com/IBM/vpc-go-sdk/vpcv1"
-	"github.com/samber/lo"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
-	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+    "github.com/IBM/go-sdk-core/v5/core"
+    "github.com/IBM/platform-services-go-sdk/globalcatalogv1"
+    "github.com/IBM/vpc-go-sdk/vpcv1"
+    corev1 "k8s.io/api/core/v1"
+    "k8s.io/apimachinery/pkg/api/resource"
+    v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+    "sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
 
 var regionZones = map[string][]string{
@@ -46,116 +46,219 @@ var regionZones = map[string][]string{
 	"br-sao":   {"br-sao-1", "br-sao-2", "br-sao-3"},
 }
 
-// define IBMInstanceType struct
+// IBMInstanceType defines the structure for instance types
 type IBMInstanceType struct {
-	Name             string                       `json:"name"`
-	Architecture     string                       `json:"architecture"`
-	OperatingSystems []corev1.OSName              `json:"operatingSystems"`
-	Resources        corev1.ResourceList          `json:"resources"`
-	Offerings        []IBMOffering                `json:"offerings"`
+    Name             string                       `json:"name"`
+    Architecture     string                       `json:"architecture"`
+    OperatingSystems []corev1.OSName              `json:"operatingSystems"`
+    Resources        corev1.ResourceList          `json:"resources"`
+    Offerings        []IBMOffering                `json:"offerings"`
 }
 
-// define an IBM-specific offering struct
+// IBMOffering defines the structure for IBM-specific offerings
 type IBMOffering struct {
-	Requirements []corev1.NodeSelectorRequirement `json:"requirements"`
-	Offering     cloudprovider.Offering           `json:"offering"`
+    Requirements []corev1.NodeSelectorRequirement `json:"requirements"`
+    Offering     cloudprovider.Offering           `json:"offering"`
 }
 
-// fetch instance profile pricing from IBM Cloud's Global Catalog API
+// initializeVPCClient initializes the VPC client using external configuration
+func initializeVPCClient() (*vpcv1.VpcV1, error) {
+    serviceClientOptions := &vpcv1.VpcV1Options{}
+    vpcClient, err := vpcv1.NewVpcV1UsingExternalConfig(serviceClientOptions)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create VPC client: %v", err)
+    }
+    return vpcClient, nil
+}
+
+// fetchInstanceProfiles fetches instance profiles using the VPC SDK
+func fetchInstanceProfiles(vpcClient *vpcv1.VpcV1) ([]vpcv1.InstanceProfile, error) {
+    listProfilesOptions := &vpcv1.ListInstanceProfilesOptions{}
+    profiles, _, err := vpcClient.ListInstanceProfiles(listProfilesOptions)
+    if err != nil {
+        return nil, fmt.Errorf("error fetching instance profiles: %v", err)
+    }
+    return profiles.Profiles, nil
+}
+
+// initializeGlobalCatalogClient initializes the Global Catalog client using external configuration
+func initializeGlobalCatalogClient() (*globalcatalogv1.GlobalCatalogV1, error) {
+    serviceClientOptions := &globalcatalogv1.GlobalCatalogV1Options{}
+    globalCatalog, err := globalcatalogv1.NewGlobalCatalogV1UsingExternalConfig(serviceClientOptions)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create Global Catalog client: %v", err)
+    }
+    return globalCatalog, nil
+}
+
+// fetchPricing fetches instance profile pricing from IBM Cloud's Global Catalog API
 func fetchPricing(globalCatalog *globalcatalogv1.GlobalCatalogV1, profileName string) (float64, error) {
-	pricingOptions := &globalcatalogv1.GetPricingOptions{
-		ID: &profileName,
-	}
-	pricingData, _, err := globalCatalog.GetPricing(pricingOptions)
-	if err != nil {
-		return 0, fmt.Errorf("error fetching pricing data: %v", err)
-	}
+    // List catalog entries matching the profile name
+    listOptions := &globalcatalogv1.ListCatalogEntriesOptions{
+        Q: core.StringPtr(fmt.Sprintf("name:%s", profileName)),
+    }
 
-	// example extraction logic: adjust as per the exact response structure
-	if len(pricingData.Metrics) > 0 && len(pricingData.Metrics[0].Amounts) > 0 {
-		price := pricingData.Metrics[0].Amounts[0].Price
-		return price, nil
-	}
+    catalogEntries, _, err := globalCatalog.ListCatalogEntries(listOptions)
+    if err != nil {
+        return 0, fmt.Errorf("error listing catalog entries: %v", err)
+    }
 
-	return 0, fmt.Errorf("pricing data not found")
+    if catalogEntries == nil || len(catalogEntries.Resources) == 0 {
+        log.Printf("No catalog entries found for profile: %s with options: %+v", profileName, listOptions)
+    } else {
+        // make this conditional if debug true
+        // log.Printf("Catalog entries found for profile %s: %+v", profileName, catalogEntries.Resources)
+    }
+
+    // DEBUG
+    for _, entry := range catalogEntries.Resources {
+        // Dereference the pointer values correctly
+        name := ""
+        if entry.Name != nil {
+            name = *entry.Name
+        }
+        id := ""
+        if entry.ID != nil {
+            id = *entry.ID
+        }
+        crn := ""
+        if entry.CatalogCRN != nil {
+            crn = *entry.CatalogCRN
+        }
+
+        log.Printf("Catalog Entry - Name: %s, ID: %s, CatalogCRN: %s", name, id, crn)
+    }
+    // END DEBUG
+
+    // Use the first matching catalog entry
+    catalogEntryID := *catalogEntries.Resources[0].ID
+
+    // Get pricing data using the catalog entry ID
+    pricingOptions := &globalcatalogv1.GetPricingOptions{
+        ID: &catalogEntryID,
+    }
+    pricingData, _, err := globalCatalog.GetPricing(pricingOptions)
+    if err != nil {
+        return 0, fmt.Errorf("error fetching pricing data: %v", err)
+    }
+
+    if pricingData != nil {
+        // log.Printf("pricingData found for profile %s: %+v", profileName, pricingData)
+    }
+
+    // Access pricing data from Metrics field
+    if pricingData.Metrics != nil {
+        for _, metric := range pricingData.Metrics {
+            if metric.Amounts != nil {
+                for _, amount := range metric.Amounts {
+                    if amount.Country != nil && *amount.Country == "USA" {
+                        if amount.Prices != nil {
+                            for _, priceObj := range amount.Prices {
+                                if priceObj.Price != nil {
+                                    return *priceObj.Price, nil
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return 0, fmt.Errorf("pricing data not found for profile: %s", profileName)
 }
 
-// construct instance types with pricing data
-func constructIBMInstanceTypes(vpcService *vpcv1.VpcV1, globalCatalog *globalcatalogv1.GlobalCatalogV1) []IBMInstanceType {
-	instanceProfiles, err := fetchInstanceProfiles(vpcService)
-	if err != nil {
-		log.Fatalf("failed to fetch instance profiles: %v", err)
-	}
+func constructIBMInstanceTypes(vpcClient *vpcv1.VpcV1, globalCatalog *globalcatalogv1.GlobalCatalogV1) []IBMInstanceType {
+    instanceProfiles, err := fetchInstanceProfiles(vpcClient)
+    if err != nil {
+        log.Fatalf("failed to fetch instance profiles: %v", err)
+    }
 
-	var instanceTypes []IBMInstanceType
-	for _, profile := range instanceProfiles {
-		options := &vpcv1.GetInstanceProfileOptions{}
-		options.SetName(*profile.Name)
-		detailedProfile, _, err := vpcService.GetInstanceProfile(options)
-		if err != nil {
-			log.Printf("failed to retrieve details for profile %s: %v", *profile.Name, err)
-			continue
-		}
+    var instanceTypes []IBMInstanceType
+    for _, profile := range instanceProfiles {
+        // handle vcpuCount using reflection to extract value
+        vcpuCount := 0
+        if vcpuInterface, ok := profile.VcpuCount.(vpcv1.InstanceProfileVcpuIntf); ok && vcpuInterface != nil {
+            vcpuValue := reflect.ValueOf(vcpuInterface).Elem().FieldByName("Count")
+            if vcpuValue.IsValid() && vcpuValue.Kind() == reflect.Ptr && !vcpuValue.IsNil() {
+                vcpuCount = int(vcpuValue.Elem().Int())
+            }
+        }
 
-		price, err := fetchPricing(globalCatalog, *detailedProfile.Name)
-		if err != nil {
-			log.Printf("failed to retrieve pricing for profile %s: %v", *profile.Name, err)
-			price = 0 // fallback to zero or some default value
-		}
+        // architecture: skipping since profile.Architecture is undefined
+        architecture := "" // or derive it if available from another source
 
-		instance := IBMInstanceType{
-			Name:             *detailedProfile.Name,
-			Architecture:     *detailedProfile.VcpuArchitecture.Value,
-			OperatingSystems: []corev1.OSName{corev1.Linux},
-			Resources: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", *detailedProfile.VcpuCount.Value)),
-				corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", *detailedProfile.Memory.Value)),
-			},
-		}
+        // handle memory using reflection
+        memoryValue := 0
+        if memInterface, ok := profile.Memory.(vpcv1.InstanceProfileMemoryIntf); ok && memInterface != nil {
+            memValue := reflect.ValueOf(memInterface).Elem().FieldByName("Value")
+            if memValue.IsValid() && memValue.Kind() == reflect.Ptr && !memValue.IsNil() {
+                memoryValue = int(memValue.Elem().Int())
+            }
+        }
 
-		for _, zones := range regionZones {
-			for _, zone := range zones {
-				instance.Offerings = append(instance.Offerings, IBMOffering{
-					Requirements: []corev1.NodeSelectorRequirement{
-						{Key: v1.CapacityTypeLabelKey, Operator: corev1.NodeSelectorOpIn, Values: []string{v1.CapacityTypeOnDemand}},
-						{Key: corev1.LabelTopologyZone, Operator: corev1.NodeSelectorOpIn, Values: []string{zone}},
-					},
-					Offering: cloudprovider.Offering{
-						Price:     price,
-						Available: true,
-					},
-				})
-			}
-		}
-		instanceTypes = append(instanceTypes, instance)
-	}
-	return instanceTypes
+        // Fetch pricing from global catalog
+        price, err := fetchPricing(globalCatalog, *profile.Name)
+        if err != nil {
+            log.Printf("failed to retrieve pricing for profile %s: %v", *profile.Name, err)
+            price = 0 // fallback to zero or some default value
+        }
+
+        // define instance
+        instance := IBMInstanceType{
+            Name:             *profile.Name,
+            Architecture:     architecture, // currently empty as explained above
+            OperatingSystems: []corev1.OSName{corev1.Linux},
+            Resources: corev1.ResourceList{
+                corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", vcpuCount)),
+                corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", memoryValue)),
+            },
+        }
+
+        // add offerings
+        for _, zones := range regionZones {
+            for _, zone := range zones {
+                instance.Offerings = append(instance.Offerings, IBMOffering{
+                    Requirements: []corev1.NodeSelectorRequirement{
+                        {Key: v1.CapacityTypeLabelKey, Operator: corev1.NodeSelectorOpIn, Values: []string{v1.CapacityTypeOnDemand}},
+                        {Key: corev1.LabelTopologyZone, Operator: corev1.NodeSelectorOpIn, Values: []string{zone}},
+                    },
+                    Offering: cloudprovider.Offering{
+                        Price:     price,
+                        Available: true,
+                    },
+                })
+            }
+        }
+        instanceTypes = append(instanceTypes, instance)
+    }
+    return instanceTypes
 }
 
 func main() {
-	// create a VPC client
-	vpcService, err := vpcv1.NewVpcV1(&vpcv1.VpcV1Options{})
-	if err != nil {
-		log.Fatalf("failed to create VPC service client: %v", err)
-	}
+    // Initialize the VPC client
+    vpcClient, err := initializeVPCClient()
+    if err != nil {
+        log.Fatalf("failed to initialize VPC client: %v", err)
+    }
 
-	// create a Global Catalog client using external configuration
-	globalCatalog, err := globalcatalogv1.NewGlobalCatalogV1UsingExternalConfig(&globalcatalogv1.GlobalCatalogV1Options{})
-	if err != nil {
-		log.Fatalf("failed to create Global Catalog service client: %v", err)
-	}
+    // Initialize the Global Catalog client using external configuration
+    globalCatalog, err := initializeGlobalCatalogClient()
+    if err != nil {
+        log.Fatalf("failed to initialize Global Catalog client: %v", err)
+    }
 
-	// construct instance types using the VPC service and Global Catalog service
-	instanceTypes := constructIBMInstanceTypes(vpcService, globalCatalog)
-	output, err := json.MarshalIndent(instanceTypes, "", "    ")
-	if err != nil {
-		log.Fatalf("failed to marshal generated instance types to JSON: %v", err)
-	}
+    // Construct instance types using the Global Catalog service
+    instanceTypes := constructIBMInstanceTypes(vpcClient, globalCatalog)
+    output, err := json.MarshalIndent(instanceTypes, "", "    ")
+    if err != nil {
+        log.Fatalf("failed to marshal generated instance types to JSON: %v", err)
+    }
 
-	// write to the desired file
-	outputFilePath := filepath.Join("cloudprovider", "instance_types.json")
-	if err := os.WriteFile(outputFilePath, output, 0644); err != nil {
-		log.Fatalf("failed to write output to file: %v", err)
-	}
-	fmt.Printf("Instance types have been generated and written to %s\n", outputFilePath)
+    // Write to the desired file
+    outputFilePath := filepath.Join("cloudprovider", "instance_types.json")
+    if err := os.WriteFile(outputFilePath, output, 0644); err != nil {
+        log.Fatalf("failed to write output to file: %v", err)
+    }
+    fmt.Printf("Instance types have been generated and written to %s\n", outputFilePath)
 }

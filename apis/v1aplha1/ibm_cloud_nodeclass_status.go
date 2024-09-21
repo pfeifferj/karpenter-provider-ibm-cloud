@@ -20,20 +20,20 @@ import (
 	"github.com/awslabs/operatorpkg/status"
 )
 
-// KWOKNodeClassStatus contains the resolved state of the KwokNodeClass
-type KWOKNodeClassStatus struct {
+// IBMNodeClassStatus contains the resolved state of the IBMNodeClass
+type IBMNodeClassStatus struct {
 	// Conditions contains signals for health and readiness
 	Conditions []status.Condition `json:"conditions,omitempty"`
 }
 
-func (in *KWOKNodeClass) StatusConditions() status.ConditionSet {
+func (in *IBMNodeClass) StatusConditions() status.ConditionSet {
 	return status.NewReadyConditions().For(in)
 }
 
-func (in *KWOKNodeClass) GetConditions() []status.Condition {
+func (in *IBMNodeClass) GetConditions() []status.Condition {
 	return in.Status.Conditions
 }
 
-func (in *KWOKNodeClass) SetConditions(conditions []status.Condition) {
+func (in *IBMNodeClass) SetConditions(conditions []status.Condition) {
 	in.Status.Conditions = conditions
 }

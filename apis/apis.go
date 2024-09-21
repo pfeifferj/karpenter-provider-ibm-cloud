@@ -24,14 +24,14 @@ import (
 )
 
 const (
-	Group = "karpenter.kwok.sh"
+	Group = "karpenter.ibm.sh"
 )
 
 //go:generate controller-gen crd object:headerFile="../../hack/boilerplate.go.txt" paths="./..." output:crd:artifacts:config=crds
 var (
-	//go:embed crds/karpenter.kwok.sh_kwoknodeclasses.yaml
-	KWOKNodeClassCRD []byte
+	//go:embed crds/karpenter.ibm_cloud.sh_ibm_cloud_nodeclasses.yaml
+	IBMNodeClassCRD []byte
 	CRDs             = []*v1.CustomResourceDefinition{
-		object.Unmarshal[v1.CustomResourceDefinition](KWOKNodeClassCRD),
+		object.Unmarshal[v1.CustomResourceDefinition](IBMNodeClassCRD),
 	}
 )
