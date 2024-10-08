@@ -1,6 +1,6 @@
 apiVersion: v2
 name: karpenter
-description: A Helm chart for Karpenter's KwoK Provider, integrated with https://github.com/kubernetes-sigs/kwok.
+description: A Helm chart for Karpenter's IBM Cloud Provider.
 type: application
 version: 0.35.0
 appVersion: 0.35.0
