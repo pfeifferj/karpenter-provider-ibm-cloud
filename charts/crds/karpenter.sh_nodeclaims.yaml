@@ -6,7 +6,7 @@ metadata:
     controller-gen.kubebuilder.io/version: v0.16.3
   name: nodeclaims.karpenter.sh
 spec:
-  group: karpenter.sh
+  group: karpenter.ibm.sh
   names:
     categories:
       - karpenter
