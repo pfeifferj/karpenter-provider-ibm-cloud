@@ -5,7 +5,7 @@ import (
     "fmt"
     "strings"
 
-    "github.com/pfeifferj/cloud-provider-ibm/pkg/ibm"
+    "github.com/pfeifferj/cloud-provider-ibm/ibm"
     "github.com/awslabs/operatorpkg/status"
     "github.com/samber/lo"
     corev1 "k8s.io/api/core/v1"
@@ -21,11 +21,11 @@ import (
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
 
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/apis"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/apis/v1alpha1"
-	cloudproviderevents "github.com/pfeifferj/karpenter-ibm-cloud/pkg/cloudprovider/events"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	cloudproviderevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
 )
 
 const CloudProviderName = "ibmcloud"

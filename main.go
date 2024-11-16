@@ -22,10 +22,10 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/cloudprovider"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/providers/instancetype"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/providers/instance"
-	instancetypepkg "github.com/pfeifferj/karpenter-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	instancetypepkg "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
 	"sigs.k8s.io/karpenter/pkg/operator"
 )
 

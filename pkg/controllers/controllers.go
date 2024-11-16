@@ -10,18 +10,19 @@ import (
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/events"
 
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/cache"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/interruption"
-	nodeclaimgarbagecollection "github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
-	nodeclaimtagging "github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/nodeclaim/tagging"
-	nodeclasshash "github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/nodeclass/hash"
-	nodeclaasstatus "github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/nodeclass/status"
-	nodeclasstermination "github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/nodeclass/termination"
-	providersinstancetype "github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/providers/instancetype"
-	controllerspricing "github.com/pfeifferj/karpenter-ibm-cloud/pkg/controllers/providers/pricing"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/operator/options"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
+	nodeclaimgarbagecollection "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
+	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
+	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
+	nodeclaasstatus "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/status"
+	nodeclasstermination "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/termination"
+	providersinstancetype "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
+	controllerspricing "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/pricing"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/pricing"
 )
 
 func NewControllers(ctx context.Context, mgr manager.Manager, clk clock.Clock,
@@ -29,13 +30,11 @@ func NewControllers(ctx context.Context, mgr manager.Manager, clk clock.Clock,
 	unavailableOfferings *cache.UnavailableOfferings,
 	cloudProvider cloudprovider.CloudProvider,
 	instanceProvider instance.Provider, instanceTypeProvider instancetype.Provider,
-	pricingProvider pricing.Provider,
-	vSwitchProvider vswitch.Provider, securitygroupProvider securitygroup.Provider,
-	imageProvider imagefamily.Provider) []controller.Controller {
+	pricingProvider pricing.Provider) []controller.Controller {
 
 	controllers := []controller.Controller{
 		nodeclasshash.NewController(kubeClient),
-		nodeclaasstatus.NewController(kubeClient, vSwitchProvider, securitygroupProvider, imageProvider),
+		nodeclaasstatus.NewController(kubeClient),
 		nodeclasstermination.NewController(kubeClient, recorder),
 		controllerspricing.NewController(pricingProvider),
 		nodeclaimgarbagecollection.NewController(kubeClient, cloudProvider),

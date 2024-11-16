@@ -24,11 +24,11 @@ import (
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
 
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/apis"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/apis/v1alpha1"
-	cloudproviderevents "github.com/pfeifferj/karpenter-ibm-cloud/pkg/cloudprovider/events"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	cloudproviderevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
 )
 
 const CloudProviderName = "alibabacloud"
