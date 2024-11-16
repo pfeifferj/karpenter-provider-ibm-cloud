@@ -1,0 +1,181 @@
+@startuml
+namespace cloudprovider {
+    class CloudProvider << (S,Aquamarine) >> {
+        - kubeClient client.Client
+        - recorder events.Recorder
+        - instanceTypeProvider instancetype.Provider
+        - instanceProvider instance.Provider
+        - kubeClient client.Client
+        - recorder events.Recorder
+        - instanceTypeProvider instancetype.Provider
+        - instanceProvider instance.Provider
+
+        - resolveInstanceTypeFromInstance(ctx context.Context, instance *instance.Instance) (*cloudprovider.InstanceType, error)
+        - resolveNodePoolFromInstance(ctx context.Context, instance *instance.Instance) (*v1.NodePool, error)
+        - resolveNodeClassFromInstance(ctx context.Context, instance *instance.Instance) (*v1alpha1.ECSNodeClass, error)
+        - resolveNodeClassFromNodePool(ctx context.Context, nodePool *v1.NodePool) (*v1alpha1.ECSNodeClass, error)
+        - instanceToNodeClaim(i *instance.Instance, instanceType *cloudprovider.InstanceType, _ *v1alpha1.ECSNodeClass) *v1.NodeClaim
+        - resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1alpha1.ECSNodeClass, error)
+        - resolveInstanceTypes(ctx context.Context, nodeClaim *v1.NodeClaim, nodeClass *v1alpha1.ECSNodeClass) ([]*cloudprovider.InstanceType, error)
+        - resolveInstanceTypeFromInstance(ctx context.Context, instance *instance.Instance) (*cloudprovider.InstanceType, error)
+        - resolveNodePoolFromInstance(ctx context.Context, instance *instance.Instance) (*v1.NodePool, error)
+        - resolveNodeClassFromInstance(ctx context.Context, instance *instance.Instance) (*v1alpha1.ECSNodeClass, error)
+        - resolveNodeClassFromNodePool(ctx context.Context, nodePool *v1.NodePool) (*v1alpha1.ECSNodeClass, error)
+        - instanceToNodeClaim(i *instance.Instance, instanceType *cloudprovider.InstanceType, _ *v1alpha1.ECSNodeClass) *v1.NodeClaim
+        - resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1alpha1.ECSNodeClass, error)
+        - resolveInstanceTypes(ctx context.Context, nodeClaim *v1.NodeClaim, nodeClass *v1alpha1.ECSNodeClass) ([]*cloudprovider.InstanceType, error)
+
+        + Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1.NodeClaim, error)
+        + List(ctx context.Context) ([]*v1.NodeClaim, error)
+        + Get(ctx context.Context, providerID string) (*v1.NodeClaim, error)
+        + LivenessProbe(req *http.Request) error
+        + GetInstanceTypes(ctx context.Context, nodePool *v1.NodePool) ([]*cloudprovider.InstanceType, error)
+        + Delete(ctx context.Context, nodeClaim *v1.NodeClaim) error
+        + IsDrifted(ctx context.Context, nodeClaim *v1.NodeClaim) (cloudprovider.DriftReason, error)
+        + Name() string
+        + GetSupportedNodeClasses() []status.Object
+        + Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1.NodeClaim, error)
+        + List(ctx context.Context) ([]*v1.NodeClaim, error)
+        + Get(ctx context.Context, providerID string) (*v1.NodeClaim, error)
+        + LivenessProbe(req *http.Request) error
+        + GetInstanceTypes(ctx context.Context, nodePool *v1.NodePool) ([]*cloudprovider.InstanceType, error)
+        + Delete(ctx context.Context, nodeClaim *v1.NodeClaim) error
+        + IsDrifted(ctx context.Context, nodeClaim *v1.NodeClaim) (cloudprovider.DriftReason, error)
+        + Name() string
+        + GetSupportedNodeClasses() []status.Object
+
+    }
+}
+
+
+namespace ibmcloud {
+    class CloudProvider << (S,Aquamarine) >> {
+        - kubeClient client.Client
+        - ibmClient *ibm.Client
+        - instanceTypes []*cloudprovider.InstanceType
+
+        - toNode(nodeClaim *v1.NodeClaim, instanceID string) (*v1.Node, error)
+        - getInstanceType(name string) (*cloudprovider.InstanceType, error)
+        - instanceToNodeClaim(instance *ibm.Instance) (*v1.NodeClaim, error)
+
+        + Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1.NodeClaim, error)
+        + Delete(ctx context.Context, nodeClaim *v1.NodeClaim) error
+        + Get(ctx context.Context, providerID string) (*v1.NodeClaim, error)
+        + List(ctx context.Context) ([]*v1.NodeClaim, error)
+        + GetInstanceTypes(ctx context.Context, nodePool *v1.NodePool) ([]*cloudprovider.InstanceType, error)
+        + DisruptionReasons() []v1.DisruptionReason
+        + IsDrifted(ctx context.Context, nodeClaim *v1.NodeClaim) (cloudprovider.DriftReason, error)
+        + Name() string
+        + GetSupportedNodeClasses() []status.Object
+
+    }
+}
+
+
+namespace iks {
+    class ACKKubeletConfig << (S,Aquamarine) >> {
+        + MaxPods *int32
+
+    }
+    class DefaultProvider << (S,Aquamarine) >> {
+        - clusterID string
+        - ackClient *client.Client
+
+        - resolveUserData(respStr string, labels <font color=blue>map</font>[string]string, kubeletCfg *v1alpha1.KubeletConfiguration) string
+
+        + GetNodeRegisterScript(ctx context.Context, labels <font color=blue>map</font>[string]string, kubeletCfg *v1alpha1.KubeletConfiguration) (string, error)
+
+    }
+    class NodeConfig << (S,Aquamarine) >> {
+        + KubeletConfig *ACKKubeletConfig
+
+    }
+    interface Provider  {
+        + GetNodeRegisterScript( context.Context,  <font color=blue>map</font>[string]string,  *v1alpha1.KubeletConfiguration) (string, error)
+
+    }
+}
+
+"iks.Provider" <|-- "iks.DefaultProvider"
+
+namespace instancetype {
+    class Controller << (S,Aquamarine) >> {
+        - instancetypeProvider instancetype.Provider
+
+        + Reconcile(ctx context.Context) (reconcile.Result, error)
+        + Register(_ context.Context, m manager.Manager) error
+
+    }
+}
+
+
+namespace main {
+    class IBMCloudReconciler << (S,Aquamarine) >> {
+        + CloudProvider *ibmcloud.CloudProvider
+
+        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+
+    }
+    class IBMInstanceType << (S,Aquamarine) >> {
+        + Name string
+        + Architecture string
+        + OperatingSystems []v1.OSName
+        + Resources v1.ResourceList
+        + Offerings []IBMOffering
+
+    }
+    class IBMOffering << (S,Aquamarine) >> {
+        + Requirements []v1.NodeSelectorRequirement
+        + Offering cloudprovider.Offering
+
+    }
+}
+"client.Client" *-- "main.IBMCloudReconciler"
+
+
+namespace pricing {
+    class Controller << (S,Aquamarine) >> {
+        - pricingProvider pricing.Provider
+
+        + Reconcile(ctx context.Context) (reconcile.Result, error)
+        + Register(_ context.Context, m manager.Manager) error
+
+    }
+}
+
+
+namespace v1alpha1 {
+    class IBMNodeClass << (S,Aquamarine) >> {
+        + Status IBMNodeClassStatus
+
+        + StatusConditions() status.ConditionSet
+        + GetConditions() []status.Condition
+        + SetConditions(conditions []status.Condition) 
+        + DeepCopyInto(out *IBMNodeClass) 
+        + DeepCopy() *IBMNodeClass
+        + DeepCopyObject() runtime.Object
+
+    }
+    class IBMNodeClassList << (S,Aquamarine) >> {
+        + Items []IBMNodeClass
+
+        + DeepCopyInto(out *IBMNodeClassList) 
+        + DeepCopy() *IBMNodeClassList
+        + DeepCopyObject() runtime.Object
+
+    }
+    class IBMNodeClassStatus << (S,Aquamarine) >> {
+        + Conditions []status.Condition
+
+        + DeepCopyInto(out *IBMNodeClassStatus) 
+        + DeepCopy() *IBMNodeClassStatus
+
+    }
+}
+"v1.ObjectMeta" *-- "v1alpha1.IBMNodeClass"
+"v1.TypeMeta" *-- "v1alpha1.IBMNodeClass"
+"v1.ListMeta" *-- "v1alpha1.IBMNodeClassList"
+"v1.TypeMeta" *-- "v1alpha1.IBMNodeClassList"
+
+
+@enduml
