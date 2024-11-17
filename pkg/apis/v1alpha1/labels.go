@@ -17,7 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/apis"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 

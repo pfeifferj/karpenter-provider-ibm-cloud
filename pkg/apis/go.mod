@@ -1,4 +1,4 @@
-module github.com/pfeifferj/karpenter-provider-ibm-cloud/apis
+module github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis
 
 go 1.23.3
 

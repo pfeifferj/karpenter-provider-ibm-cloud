@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/apis"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
 )
 
 func init() {

@@ -131,4 +131,4 @@ require (
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
 
-replace github.com/pfeifferj/karpenter-provider-ibm-cloud/apis => ./pkg/apis
+replace github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis => ./pkg/apis
