@@ -5,7 +5,8 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"github.com/awslabs/operatorpkg/controller/runtime"
+	"	github.com/awslabs/operatorpkg/controller/runtime
+"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
