@@ -1,4 +1,18 @@
 @startuml
+namespace cache {
+    class UnavailableOfferings << (S,Aquamarine) >> {
+        - mu sync.RWMutex
+        - offerings <font color=blue>map</font>[string]time.Time
+
+        + Add(offeringID string, expiry time.Time) 
+        + Remove(offeringID string) 
+        + IsUnavailable(offeringID string) bool
+        + Cleanup() 
+
+    }
+}
+
+
 namespace cloudprovider {
     class CloudProvider << (S,Aquamarine) >> {
         - kubeClient client.Client
@@ -12,11 +26,11 @@ namespace cloudprovider {
 
         - resolveInstanceTypeFromInstance(ctx context.Context, instance *instance.Instance) (*cloudprovider.InstanceType, error)
         - resolveNodePoolFromInstance(ctx context.Context, instance *instance.Instance) (*v1.NodePool, error)
-        - resolveNodeClassFromInstance(ctx context.Context, instance *instance.Instance) (*v1alpha1.ECSNodeClass, error)
-        - resolveNodeClassFromNodePool(ctx context.Context, nodePool *v1.NodePool) (*v1alpha1.ECSNodeClass, error)
-        - instanceToNodeClaim(i *instance.Instance, instanceType *cloudprovider.InstanceType, _ *v1alpha1.ECSNodeClass) *v1.NodeClaim
-        - resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1alpha1.ECSNodeClass, error)
-        - resolveInstanceTypes(ctx context.Context, nodeClaim *v1.NodeClaim, nodeClass *v1alpha1.ECSNodeClass) ([]*cloudprovider.InstanceType, error)
+        - resolveNodeClassFromInstance(ctx context.Context, instance *instance.Instance) (*v1alpha1.IBMNodeClass, error)
+        - resolveNodeClassFromNodePool(ctx context.Context, nodePool *v1.NodePool) (*v1alpha1.IBMNodeClass, error)
+        - instanceToNodeClaim(i *instance.Instance, instanceType *cloudprovider.InstanceType, _ *v1alpha1.IBMNodeClass) *v1.NodeClaim
+        - resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1alpha1.IBMNodeClass, error)
+        - resolveInstanceTypes(ctx context.Context, nodeClaim *v1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) ([]*cloudprovider.InstanceType, error)
         - resolveInstanceTypeFromInstance(ctx context.Context, instance *instance.Instance) (*cloudprovider.InstanceType, error)
         - resolveNodePoolFromInstance(ctx context.Context, instance *instance.Instance) (*v1.NodePool, error)
         - resolveNodeClassFromInstance(ctx context.Context, instance *instance.Instance) (*v1alpha1.ECSNodeClass, error)
@@ -72,46 +86,9 @@ namespace ibmcloud {
 }
 
 
-namespace iks {
-    class ACKKubeletConfig << (S,Aquamarine) >> {
-        + MaxPods *int32
-
-    }
-    class DefaultProvider << (S,Aquamarine) >> {
-        - clusterID string
-        - ackClient *client.Client
-
-        - resolveUserData(respStr string, labels <font color=blue>map</font>[string]string, kubeletCfg *v1alpha1.KubeletConfiguration) string
-
-        + GetNodeRegisterScript(ctx context.Context, labels <font color=blue>map</font>[string]string, kubeletCfg *v1alpha1.KubeletConfiguration) (string, error)
-
-    }
-    class NodeConfig << (S,Aquamarine) >> {
-        + KubeletConfig *ACKKubeletConfig
-
-    }
-    interface Provider  {
-        + GetNodeRegisterScript( context.Context,  <font color=blue>map</font>[string]string,  *v1alpha1.KubeletConfiguration) (string, error)
-
-    }
-}
-
-"iks.Provider" <|-- "iks.DefaultProvider"
-
-namespace instancetype {
-    class Controller << (S,Aquamarine) >> {
-        - instancetypeProvider instancetype.Provider
-
-        + Reconcile(ctx context.Context) (reconcile.Result, error)
-        + Register(_ context.Context, m manager.Manager) error
-
-    }
-}
-
-
 namespace main {
     class IBMCloudReconciler << (S,Aquamarine) >> {
-        + CloudProvider *ibmcloud.CloudProvider
+        + CloudProvider *cloudprovider.CloudProvider
 
         + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
 
@@ -134,11 +111,17 @@ namespace main {
 
 
 namespace pricing {
-    class Controller << (S,Aquamarine) >> {
-        - pricingProvider pricing.Provider
+    class Price << (S,Aquamarine) >> {
+        + InstanceType string
+        + Zone string
+        + HourlyPrice float64
+        + Currency string
 
-        + Reconcile(ctx context.Context) (reconcile.Result, error)
-        + Register(_ context.Context, m manager.Manager) error
+    }
+    interface Provider  {
+        + GetPrice(ctx context.Context, instanceType string, zone string) (float64, error)
+        + GetPrices(ctx context.Context, zone string) (<font color=blue>map</font>[string]float64, error)
+        + Refresh(ctx context.Context) error
 
     }
 }
@@ -146,6 +129,8 @@ namespace pricing {
 
 namespace v1alpha1 {
     class IBMNodeClass << (S,Aquamarine) >> {
+        + Status IBMNodeClassStatus
+        + Spec IBMNodeClassSpec
         + Status IBMNodeClassStatus
 
         + StatusConditions() status.ConditionSet
@@ -158,14 +143,27 @@ namespace v1alpha1 {
     }
     class IBMNodeClassList << (S,Aquamarine) >> {
         + Items []IBMNodeClass
+        + Items []IBMNodeClass
 
         + DeepCopyInto(out *IBMNodeClassList) 
         + DeepCopy() *IBMNodeClassList
         + DeepCopyObject() runtime.Object
 
     }
+    class IBMNodeClassSpec << (S,Aquamarine) >> {
+        + Region string
+        + Zone string
+        + InstanceProfile string
+        + Image string
+        + VPC string
+        + Subnet string
+        + SecurityGroups []string
+        + Tags <font color=blue>map</font>[string]string
+
+    }
     class IBMNodeClassStatus << (S,Aquamarine) >> {
         + Conditions []status.Condition
+        + SpecHash uint64
 
         + DeepCopyInto(out *IBMNodeClassStatus) 
         + DeepCopy() *IBMNodeClassStatus

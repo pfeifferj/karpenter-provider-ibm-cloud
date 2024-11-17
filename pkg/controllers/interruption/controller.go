@@ -78,6 +78,8 @@ func isNodeInterrupted(node *v1.Node) bool {
 	// TODO: Implement logic to check for IBM Cloud interruption events
 	// This would involve checking node conditions, labels, or annotations
 	// that indicate an interruption event
+
+	
 	return false
 }
 

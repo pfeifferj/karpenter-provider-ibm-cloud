@@ -24,6 +24,7 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/reconcile"
     v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
     "sigs.k8s.io/karpenter/pkg/cloudprovider"
+    ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 )
 
 type IBMCloudReconciler struct {
@@ -41,7 +42,7 @@ func NewIBMCloudReconciler(kubeClient client.Client, provider *ibmcloud.CloudPro
 func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
     var nodeClaim v1.NodeClaim
     if err := r.Get(ctx, req.NamespacedName, &nodeClaim); err != nil {
-        // handle not found error, if necessary
+        // handle not found error
         return reconcile.Result{}, client.IgnoreNotFound(err)
     }
 
