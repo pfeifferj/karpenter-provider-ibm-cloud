@@ -5,7 +5,8 @@ import (
 	"fmt"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"github.com/awslabs/operatorpkg/controller/runtime"
+	"	github.com/awslabs/operatorpkg/controller/runtime
+"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
