@@ -4,7 +4,8 @@ import (
 	"context"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"github.com/awslabs/operatorpkg/controller/runtime"
+	"	github.com/awslabs/operatorpkg/controller/runtime
+"
 	"github.com/mitchellh/hashstructure/v2"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
