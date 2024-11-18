@@ -1,3 +1,19 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package cloudprovider
 
 import (
@@ -26,9 +42,10 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
-	cloudproviderevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/utils"
 )
 
 const CloudProviderName = "ibmcloud"
@@ -60,7 +77,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	nodeClass, err := c.resolveNodeClassFromNodeClaim(ctx, nodeClaim)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			c.recorder.Publish(cloudproviderevents.NodeClaimFailedToResolveNodeClass(nodeClaim))
+			c.recorder.Publish(events.NodeClaimFailedToResolveNodeClass(nodeClaim))
 		}
 		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("resolving node class, %w", err))
 	}
@@ -118,7 +135,7 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 }
 
 func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.NodeClaim, error) {
-	id, err := ParseInstanceID(providerID)
+	id, err := utils.ParseInstanceID(providerID)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "parsing instance ID")
 		return nil, fmt.Errorf("getting instance ID, %w", err)
@@ -154,7 +171,7 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 	nodeClass, err := c.resolveNodeClassFromNodePool(ctx, nodePool)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			c.recorder.Publish(cloudproviderevents.NodePoolFailedToResolveNodeClass(nodePool))
+			c.recorder.Publish(events.NodePoolFailedToResolveNodeClass(nodePool))
 		}
 		log.FromContext(ctx).Error(err, "resolving node class")
 		return nil, err
@@ -168,7 +185,7 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 }
 
 func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim) error {
-	id, err := ParseInstanceID(nodeClaim.Status.ProviderID)
+	id, err := utils.ParseInstanceID(nodeClaim.Status.ProviderID)
 	if err != nil {
 		return fmt.Errorf("getting instance ID, %w", err)
 	}
@@ -191,7 +208,7 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCla
 	nodeClass, err := c.resolveNodeClassFromNodePool(ctx, nodePool)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			c.recorder.Publish(cloudproviderevents.NodePoolFailedToResolveNodeClass(nodePool))
+			c.recorder.Publish(events.NodePoolFailedToResolveNodeClass(nodePool))
 		}
 		return "", client.IgnoreNotFound(fmt.Errorf("resolving node class, %w", err))
 	}
@@ -264,7 +281,7 @@ func (c *CloudProvider) instanceToNodeClaim(i *instance.Instance, instanceType *
 	annotations := map[string]string{}
 
 	if instanceType != nil {
-		labels = GetAllSingleValuedRequirementLabels(instanceType)
+		labels = utils.GetAllSingleValuedRequirementLabels(instanceType)
 		resourceFilter := func(n corev1.ResourceName, v resource.Quantity) bool {
 			return !resources.IsZero(v)
 		}
@@ -312,21 +329,4 @@ func (c *CloudProvider) resolveInstanceTypes(ctx context.Context, nodeClaim *kar
 			len(i.Offerings.Compatible(reqs).Available()) > 0 &&
 			resources.Fits(nodeClaim.Spec.Resources.Requests, i.Allocatable())
 	}), nil
-}
-
-func ParseInstanceID(providerID string) (string, error) {
-	if providerID == "" {
-		return "", fmt.Errorf("provider ID is empty")
-	}
-	return providerID, nil
-}
-
-func GetAllSingleValuedRequirementLabels(instanceType *cloudprovider.InstanceType) map[string]string {
-	labels := map[string]string{}
-	for _, req := range instanceType.Requirements {
-		if len(req.Values) == 1 && req.Operator == corev1.NodeSelectorOpIn {
-			labels[req.Key] = req.Values[0]
-		}
-	}
-	return labels
 }

@@ -19,7 +19,7 @@ package instance
 import (
 	"context"
 
-	"sigs.k8s.io/karpenter/pkg/apis/v1"
+	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
 
@@ -30,15 +30,15 @@ func NewProvider() *Provider {
 	return &Provider{}
 }
 
-func (p *Provider) Create(ctx context.Context, node *v1alpha5.Machine) (*v1alpha5.Machine, error) {
+func (p *Provider) Create(ctx context.Context, node *v1.Machine) (*v1.Machine, error) {
 	return node, nil
 }
 
-func (p *Provider) Delete(ctx context.Context, node *v1alpha5.Machine) error {
+func (p *Provider) Delete(ctx context.Context, node *v1.Machine) error {
 	return nil
 }
 
-func (p *Provider) List(ctx context.Context) ([]*v1alpha5.Machine, error) {
+func (p *Provider) List(ctx context.Context) ([]*v1.Machine, error) {
 	return nil, nil
 }
 

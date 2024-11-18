@@ -14,23 +14,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package apis
+package utils
 
 import (
-	_ "embed"
-
-	"github.com/awslabs/operatorpkg/object"
-	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"fmt"
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
 
-const (
-	Group = "karpenter.ibm.sh"
-)
-
-var (
-	//go:embed crds/apis/crds/karpenter.ibm_cloud.sh_ibm_cloudnodeclasses.yaml
-	IBMNodeClassCRD []byte
-	CRDs             = []*v1.CustomResourceDefinition{
-		object.Unmarshal[v1.CustomResourceDefinition](IBMNodeClassCRD),
+func ParseInstanceID(providerID string) (string, error) {
+	if providerID == "" {
+		return "", fmt.Errorf("provider ID is empty")
 	}
-)
+	return providerID, nil
+}
+
+func GetAllSingleValuedRequirementLabels(instanceType *cloudprovider.InstanceType) map[string]string {
+	labels := map[string]string{}
+	for _, req := range instanceType.Requirements {
+		values := req.Values()
+		if len(values) == 1 && req.Operator() == corev1.NodeSelectorOpIn {
+			labels[req.Key] = values[0]
+		}
+	}
+	return labels
+}

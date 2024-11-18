@@ -38,10 +38,10 @@ func (p *Provider) List(ctx context.Context) ([]*cloudprovider.InstanceType, err
 	return nil, nil
 }
 
-func (p *Provider) Create(ctx context.Context, instanceType *v1alpha5.InstanceType) error {
+func (p *Provider) Create(ctx context.Context, instanceType *v1.InstanceType) error {
 	return nil
 }
 
-func (p *Provider) Delete(ctx context.Context, instanceType *v1alpha5.InstanceType) error {
+func (p *Provider) Delete(ctx context.Context, instanceType *v1.InstanceType) error {
 	return nil
 }
