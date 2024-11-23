@@ -18,30 +18,75 @@ package instance
 
 import (
 	"context"
+	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
-	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
-type Provider struct {
+type IBMCloudInstanceProvider struct {
+	client *ibm.Client
 }
 
-func NewProvider() *Provider {
-	return &Provider{}
+func NewProvider() (*IBMCloudInstanceProvider, error) {
+	client, err := ibm.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("creating IBM Cloud client: %w", err)
+	}
+	return &IBMCloudInstanceProvider{
+		client: client,
+	}, nil
 }
 
-func (p *Provider) Create(ctx context.Context, node *v1.Machine) (*v1.Machine, error) {
+func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
+	_, err := p.client.GetVPCClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC client: %w", err)
+	}
+
+	// TODO: Use VPC client to create instance
+	// For now returning a mock node
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        nodeClaim.Name,
+			Labels:      nodeClaim.Labels,
+			Annotations: nodeClaim.Annotations,
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: nodeClaim.Status.ProviderID,
+		},
+	}
 	return node, nil
 }
 
-func (p *Provider) Delete(ctx context.Context, node *v1.Machine) error {
+func (p *IBMCloudInstanceProvider) Delete(ctx context.Context, node *corev1.Node) error {
+	_, err := p.client.GetVPCClient()
+	if err != nil {
+		return fmt.Errorf("getting VPC client: %w", err)
+	}
+
+	// TODO: Use VPC client to delete instance
 	return nil
 }
 
-func (p *Provider) List(ctx context.Context) ([]*v1.Machine, error) {
-	return nil, nil
-}
+func (p *IBMCloudInstanceProvider) GetInstance(ctx context.Context, node *corev1.Node) (*Instance, error) {
+	_, err := p.client.GetVPCClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC client: %w", err)
+	}
 
-func (p *Provider) GetInstanceTypes(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
-	return nil, nil
+	// TODO: Use VPC client to get instance details
+	// For now returning a mock instance
+	return &Instance{
+		ID:           "mock-id",
+		Type:         "mock-type",
+		Zone:         "mock-zone",
+		Region:       p.client.GetRegion(),
+		CapacityType: "on-demand",
+		ImageID:      "mock-image",
+		Tags:         make(map[string]string),
+	}, nil
 }

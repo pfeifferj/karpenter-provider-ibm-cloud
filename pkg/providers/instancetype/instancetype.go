@@ -18,30 +18,53 @@ package instancetype
 
 import (
 	"context"
+	"fmt"
 
-	"sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
 type Provider struct {
+	client *ibm.Client
 }
 
-func NewProvider() *Provider {
-	return &Provider{}
+func NewProvider() (*Provider, error) {
+	client, err := ibm.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("creating IBM Cloud client: %w", err)
+	}
+	return &Provider{
+		client: client,
+	}, nil
 }
 
 func (p *Provider) Get(ctx context.Context, name string) (*cloudprovider.InstanceType, error) {
-	return nil, nil
+	_, err := p.client.GetGlobalCatalogClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting Global Catalog client: %w", err)
+	}
+
+	// TODO: Use Global Catalog client to get instance type details
+	return nil, fmt.Errorf("instance type not found: %s", name)
 }
 
 func (p *Provider) List(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
-	return nil, nil
+	_, err := p.client.GetGlobalCatalogClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting Global Catalog client: %w", err)
+	}
+
+	// TODO: Use Global Catalog client to list instance types
+	return []*cloudprovider.InstanceType{}, nil
 }
 
-func (p *Provider) Create(ctx context.Context, instanceType *v1.InstanceType) error {
+func (p *Provider) Create(ctx context.Context, instanceType *cloudprovider.InstanceType) error {
+	// Instance types are predefined in IBM Cloud, so this is a no-op
 	return nil
 }
 
-func (p *Provider) Delete(ctx context.Context, instanceType *v1.InstanceType) error {
+func (p *Provider) Delete(ctx context.Context, instanceType *cloudprovider.InstanceType) error {
+	// Instance types are predefined in IBM Cloud, so this is a no-op
 	return nil
 }

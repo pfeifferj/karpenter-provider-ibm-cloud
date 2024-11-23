@@ -16,8 +16,13 @@ limitations under the License.
 
 package v1alpha1
 
-import (
-	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
-)
+const (
+	// IBMNodeClassHashVersion is the version of the hash function used to compute the hash of the IBMNodeClass
+	IBMNodeClassHashVersion = "1"
 
-const DisruptionReasonExampleReason v1.DisruptionReason = "ExampleReason"
+	// AnnotationIBMNodeClassHash is the annotation key for the hash of the IBMNodeClass
+	AnnotationIBMNodeClassHash = Group + "/nodeclass-hash"
+
+	// AnnotationIBMNodeClassHashVersion is the annotation key for the version of the hash function
+	AnnotationIBMNodeClassHashVersion = Group + "/nodeclass-hash-version"
+)

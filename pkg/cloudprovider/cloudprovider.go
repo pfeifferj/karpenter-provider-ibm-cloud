@@ -42,7 +42,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
+	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/utils"
@@ -77,7 +77,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	nodeClass, err := c.resolveNodeClassFromNodeClaim(ctx, nodeClaim)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			c.recorder.Publish(events.NodeClaimFailedToResolveNodeClass(nodeClaim))
+			c.recorder.Publish(ibmevents.NodeClaimFailedToResolveNodeClass(nodeClaim))
 		}
 		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("resolving node class, %w", err))
 	}
@@ -89,61 +89,52 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	if nodeClassReady.IsUnknown() {
 		return nil, fmt.Errorf("resolving NodeClass readiness, NodeClass is in Ready=Unknown, %s", nodeClassReady.Message)
 	}
-	instanceTypes, err := c.resolveInstanceTypes(ctx, nodeClaim, nodeClass)
+	instanceTypes, err := c.resolveInstanceTypes(ctx, nodeClaim)
 	if err != nil {
 		return nil, fmt.Errorf("resolving instance types, %w", err)
 	}
 	if len(instanceTypes) == 0 {
 		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("all requested instance types were unavailable during launch"))
 	}
-	instance, err := c.instanceProvider.Create(ctx, nodeClass, nodeClaim, instanceTypes)
+
+	node, err := c.instanceProvider.Create(ctx, nodeClaim)
 	if err != nil {
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
+
 	instanceType, _ := lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool {
-		return i.Name == instance.Type
+		return i.Name == node.Labels["node.kubernetes.io/instance-type"]
 	})
-	nc := c.instanceToNodeClaim(instance, instanceType, nodeClass)
+	
+	nc := &karpv1.NodeClaim{
+		ObjectMeta: nodeClaim.ObjectMeta,
+		Spec:      nodeClaim.Spec,
+		Status: karpv1.NodeClaimStatus{
+			ProviderID: node.Spec.ProviderID,
+		},
+	}
+
+	if instanceType != nil {
+		nc.Status.Capacity = instanceType.Capacity
+		nc.Status.Allocatable = instanceType.Allocatable()
+	}
+
 	nc.Annotations = lo.Assign(nc.Annotations, map[string]string{
-		v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Hash(),
+		v1alpha1.AnnotationIBMNodeClassHash:        fmt.Sprintf("%d", nodeClass.Status.SpecHash),
 		v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
 	})
 	return nc, nil
 }
 
-func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
-	instances, err := c.instanceProvider.List(ctx)
-	if err != nil {
-		log.FromContext(ctx).Error(err, "listing instances")
-		return nil, fmt.Errorf("listing instances, %w", err)
-	}
-	var nodeClaims []*karpv1.NodeClaim
-	for i := range instances {
-		instanceType, err := c.resolveInstanceTypeFromInstance(ctx, instances[i])
-		if err != nil {
-			log.FromContext(ctx).Error(err, "resolving instance type")
-			return nil, fmt.Errorf("resolving instance type, %w", err)
-		}
-		nc, err := c.resolveNodeClassFromInstance(ctx, instances[i])
-		if client.IgnoreNotFound(err) != nil {
-			log.FromContext(ctx).Error(err, "resolving nodeclass")
-			return nil, fmt.Errorf("resolving nodeclass, %w", err)
-		}
-		nodeClaims = append(nodeClaims, c.instanceToNodeClaim(instances[i], instanceType, nc))
-	}
-	return nodeClaims, nil
-}
-
 func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.NodeClaim, error) {
-	id, err := utils.ParseInstanceID(providerID)
-	if err != nil {
-		log.FromContext(ctx).Error(err, "parsing instance ID")
-		return nil, fmt.Errorf("getting instance ID, %w", err)
+	// Create a Node object to pass to GetInstance
+	node := &corev1.Node{
+		Spec: corev1.NodeSpec{
+			ProviderID: providerID,
+		},
 	}
 
-	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("id", id))
-
-	instance, err := c.instanceProvider.Get(ctx, id)
+	instance, err := c.instanceProvider.GetInstance(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("getting instance, %w", err)
 	}
@@ -163,20 +154,61 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 	return c.instanceToNodeClaim(instance, instanceType, nc), nil
 }
 
+func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
+	// Get all nodes in the cluster
+	nodeList := &corev1.NodeList{}
+	if err := c.kubeClient.List(ctx, nodeList); err != nil {
+		return nil, fmt.Errorf("listing nodes, %w", err)
+	}
+
+	var nodeClaims []*karpv1.NodeClaim
+	for _, node := range nodeList.Items {
+		// Skip nodes without provider IDs
+		if node.Spec.ProviderID == "" {
+			continue
+		}
+
+		// Get instance details for each node
+		instance, err := c.instanceProvider.GetInstance(ctx, &node)
+		if err != nil {
+			// Log error but continue with other nodes
+			log.FromContext(ctx).Error(err, "getting instance for node", "node", node.Name)
+			continue
+		}
+
+		instanceType, err := c.resolveInstanceTypeFromInstance(ctx, instance)
+		if err != nil {
+			// Log error but continue with other nodes
+			log.FromContext(ctx).Error(err, "resolving instance type", "node", node.Name)
+			continue
+		}
+
+		nc, err := c.resolveNodeClassFromInstance(ctx, instance)
+		if client.IgnoreNotFound(err) != nil {
+			// Log error but continue with other nodes
+			log.FromContext(ctx).Error(err, "resolving nodeclass", "node", node.Name)
+			continue
+		}
+
+		nodeClaims = append(nodeClaims, c.instanceToNodeClaim(instance, instanceType, nc))
+	}
+
+	return nodeClaims, nil
+}
+
 func (c *CloudProvider) LivenessProbe(req *http.Request) error {
-	return c.instanceTypeProvider.LivenessProbe(req)
+	return nil
 }
 
 func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.NodePool) ([]*cloudprovider.InstanceType, error) {
-	nodeClass, err := c.resolveNodeClassFromNodePool(ctx, nodePool)
-	if err != nil {
+	if _, err := c.resolveNodeClassFromNodePool(ctx, nodePool); err != nil {
 		if errors.IsNotFound(err) {
-			c.recorder.Publish(events.NodePoolFailedToResolveNodeClass(nodePool))
+			c.recorder.Publish(ibmevents.NodePoolFailedToResolveNodeClass(nodePool))
 		}
 		log.FromContext(ctx).Error(err, "resolving node class")
 		return nil, err
 	}
-	instanceTypes, err := c.instanceTypeProvider.List(ctx, nodeClass.Spec.KubeletConfiguration, nodeClass)
+	instanceTypes, err := c.instanceTypeProvider.List(ctx)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "listing instance types")
 		return nil, err
@@ -185,12 +217,16 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 }
 
 func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim) error {
-	id, err := utils.ParseInstanceID(nodeClaim.Status.ProviderID)
-	if err != nil {
-		return fmt.Errorf("getting instance ID, %w", err)
+	// Create a Node object from the NodeClaim
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nodeClaim.Name,
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: nodeClaim.Status.ProviderID,
+		},
 	}
-	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("id", id))
-	return c.instanceProvider.Delete(ctx, id)
+	return c.instanceProvider.Delete(ctx, node)
 }
 
 func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeClaim) (cloudprovider.DriftReason, error) {
@@ -205,10 +241,9 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCla
 	if nodePool.Spec.Template.Spec.NodeClassRef == nil {
 		return "", nil
 	}
-	nodeClass, err := c.resolveNodeClassFromNodePool(ctx, nodePool)
-	if err != nil {
+	if _, err := c.resolveNodeClassFromNodePool(ctx, nodePool); err != nil {
 		if errors.IsNotFound(err) {
-			c.recorder.Publish(events.NodePoolFailedToResolveNodeClass(nodePool))
+			c.recorder.Publish(ibmevents.NodePoolFailedToResolveNodeClass(nodePool))
 		}
 		return "", client.IgnoreNotFound(fmt.Errorf("resolving node class, %w", err))
 	}
@@ -318,8 +353,8 @@ func (c *CloudProvider) resolveNodeClassFromNodeClaim(ctx context.Context, nodeC
 	return nodeClass, nil
 }
 
-func (c *CloudProvider) resolveInstanceTypes(ctx context.Context, nodeClaim *karpv1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) ([]*cloudprovider.InstanceType, error) {
-	instanceTypes, err := c.instanceTypeProvider.List(ctx, nodeClass.Spec.KubeletConfiguration, nodeClass)
+func (c *CloudProvider) resolveInstanceTypes(ctx context.Context, nodeClaim *karpv1.NodeClaim) ([]*cloudprovider.InstanceType, error) {
+	instanceTypes, err := c.instanceTypeProvider.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting instance types, %w", err)
 	}

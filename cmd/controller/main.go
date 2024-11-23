@@ -19,12 +19,20 @@ package main
 import (
     "context"
     "fmt"
+    "os"
+
     "sigs.k8s.io/controller-runtime/pkg/client"
+    "sigs.k8s.io/controller-runtime/pkg/client/config"
     "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+    "sigs.k8s.io/controller-runtime/pkg/manager"
+    "sigs.k8s.io/controller-runtime/pkg/manager/signals"
     "sigs.k8s.io/controller-runtime/pkg/reconcile"
+    "sigs.k8s.io/controller-runtime/pkg/builder"
     v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
-    "sigs.k8s.io/karpenter/pkg/cloudprovider"
     ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
+    "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+    "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+    "sigs.k8s.io/karpenter/pkg/events"
 )
 
 type IBMCloudReconciler struct {
@@ -78,4 +86,50 @@ func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Reques
         }
     }
     return reconcile.Result{}, nil
+}
+
+func main() {
+    // Get a config to talk to the apiserver
+    cfg, err := config.GetConfig()
+    if err != nil {
+        fmt.Printf("Error getting config: %v\n", err)
+        os.Exit(1)
+    }
+
+    // Create a new manager to provide shared dependencies and start components
+    mgr, err := manager.New(cfg, manager.Options{})
+    if err != nil {
+        fmt.Printf("Error creating manager: %v\n", err)
+        os.Exit(1)
+    }
+
+    // Initialize providers
+    instanceTypeProvider := instancetype.NewProvider()
+    instanceProvider := instance.NewProvider()
+    recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
+
+    // Create the cloud provider
+    cloudProvider := ibmcloud.New(
+        mgr.GetClient(),
+        recorder,
+        *instanceTypeProvider,
+        instanceProvider,
+    )
+
+    // Create the reconciler
+    reconciler := NewIBMCloudReconciler(mgr.GetClient(), cloudProvider)
+
+    // Create a new controller
+    if err := builder.ControllerManagedBy(mgr).
+        For(&v1.NodeClaim{}).
+        Complete(reconciler); err != nil {
+        fmt.Printf("Error creating controller: %v\n", err)
+        os.Exit(1)
+    }
+
+    fmt.Println("Starting manager")
+    if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
+        fmt.Printf("Error running manager: %v\n", err)
+        os.Exit(1)
+    }
 }

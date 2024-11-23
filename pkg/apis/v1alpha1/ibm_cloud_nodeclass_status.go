@@ -20,12 +20,6 @@ import (
 	"github.com/awslabs/operatorpkg/status"
 )
 
-// IBMNodeClassStatus contains the resolved state of the IBMNodeClass
-type IBMNodeClassStatus struct {
-	// Conditions contains signals for health and readiness
-	Conditions []status.Condition `json:"conditions,omitempty"`
-}
-
 func (in *IBMNodeClass) StatusConditions() status.ConditionSet {
 	return status.NewReadyConditions().For(in)
 }

@@ -36,6 +36,8 @@ const (
 type Instance struct {
 	// ID is the instance ID
 	ID string
+	// Name is the instance name
+	Name string
 	// Type is the instance type
 	Type string
 	// Region is the region where the instance is located
@@ -44,10 +46,14 @@ type Instance struct {
 	Zone string
 	// Status is the current status of the instance
 	Status InstanceStatus
+	// State represents the current state of the instance
+	State string
 	// ImageID is the ID of the image used to create the instance
 	ImageID string
 	// CreationTime is when the instance was created
 	CreationTime time.Time
+	// LaunchTime is when the instance was created (string format)
+	LaunchTime string
 	// CapacityType represents the type of capacity (on-demand, spot, etc)
 	CapacityType string
 	// Tags are key/value pairs attached to the instance

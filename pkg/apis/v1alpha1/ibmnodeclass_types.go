@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"github.com/awslabs/operatorpkg/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -60,6 +61,10 @@ type IBMNodeClassStatus struct {
 	// SpecHash is a hash of the IBMNodeClass spec
 	// +optional
 	SpecHash uint64 `json:"specHash,omitempty"`
+
+	// Conditions contains signals for health and readiness
+	// +optional
+	Conditions []status.Condition `json:"conditions,omitempty"`
 }
 
 // IBMNodeClassList contains a list of IBMNodeClass

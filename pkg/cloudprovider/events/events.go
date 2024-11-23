@@ -20,18 +20,19 @@ import (
 	"fmt"
 	corev1 "k8s.io/api/core/v1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/events"
 )
 
-func NodeClaimFailedToResolveNodeClass(nodeClaim *karpv1.NodeClaim) *corev1.Event {
-	return &corev1.Event{
+func NodeClaimFailedToResolveNodeClass(nodeClaim *karpv1.NodeClaim) events.Event {
+	return events.Event{
 		Type:    corev1.EventTypeWarning,
 		Reason:  "FailedToResolveNodeClass",
 		Message: fmt.Sprintf("Failed to resolve NodeClass for NodeClaim %s", nodeClaim.Name),
 	}
 }
 
-func NodePoolFailedToResolveNodeClass(nodePool *karpv1.NodePool) *corev1.Event {
-	return &corev1.Event{
+func NodePoolFailedToResolveNodeClass(nodePool *karpv1.NodePool) events.Event {
+	return events.Event{
 		Type:    corev1.EventTypeWarning,
 		Reason:  "FailedToResolveNodeClass",
 		Message: fmt.Sprintf("Failed to resolve NodeClass for NodePool %s", nodePool.Name),
