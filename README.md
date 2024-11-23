@@ -80,29 +80,7 @@ spec:
   instanceProfile: bx2-2x8
 ```
 
-## Development
-
-### Building from Source
-
-1. Clone the repository:
-
-   ```bash
-   git clone https://github.com/[org]/karpenter-ibm-cloud.git
-   cd karpenter-ibm-cloud
-   ```
-
-2. Install development dependencies:
-
-   ```bash
-   make deps
-   ```
-
-3. Build:
-   ```bash
-   make build
-   ```
-
-### Generating Instance Types
+## Generating Instance Types
 
 To update the instance types catalog:
 
@@ -118,4 +96,4 @@ Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTIN
 
 ## License
 
-This project is licensed under the [LICENSE](LICENSE) file in the repository.
+This project is licensed under the [Apache 2](LICENSE) License.

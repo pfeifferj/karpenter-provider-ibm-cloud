@@ -104,15 +104,30 @@ func main() {
     }
 
     // Initialize providers
-    instanceTypeProvider := instancetype.NewProvider()
-    instanceProvider := instance.NewProvider()
+    var instanceTypeProvider instancetype.Provider
+    var instanceProvider instance.Provider
+
+    instanceTypeProviderImpl, err := instancetype.NewProvider()
+    if err != nil {
+        fmt.Printf("Error creating instance type provider: %v\n", err)
+        os.Exit(1)
+    }
+    instanceTypeProvider = instanceTypeProviderImpl
+
+    instanceProviderImpl, err := instance.NewProvider()
+    if err != nil {
+        fmt.Printf("Error creating instance provider: %v\n", err)
+        os.Exit(1)
+    }
+    instanceProvider = instanceProviderImpl
+
     recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
 
     // Create the cloud provider
     cloudProvider := ibmcloud.New(
         mgr.GetClient(),
         recorder,
-        *instanceTypeProvider,
+        instanceTypeProvider,
         instanceProvider,
     )
 
