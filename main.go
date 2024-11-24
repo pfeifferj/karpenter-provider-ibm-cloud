@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
@@ -31,11 +32,14 @@ import (
 )
 
 func main() {
+	// Initialize the logger
+	log.SetLogger(zap.New())
+
 	ctx, op := operator.NewOperator()
 
 	// Ensure IBM Cloud API key is set
-	if os.Getenv("IBMCLOUD_API_KEY") == "" {
-		log.FromContext(ctx).Error(fmt.Errorf("IBMCLOUD_API_KEY environment variable is required"), "failed to initialize provider")
+	if os.Getenv("IBM_API_KEY") == "" {
+		log.FromContext(ctx).Error(fmt.Errorf("IBM_API_KEY environment variable is required"), "failed to initialize provider")
 		os.Exit(1)
 	}
 
@@ -64,15 +68,14 @@ func main() {
 		instanceProvider,
 	)
 
-	// Add health check endpoints
-	if err := op.GetManager().AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		log.FromContext(ctx).Error(err, "unable to set up health check")
-		os.Exit(1)
-	}
-	if err := op.GetManager().AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		log.FromContext(ctx).Error(err, "unable to set up ready check")
-		os.Exit(1)
-	}
+	// Configure health check endpoint
+	op.GetManager().AddHealthzCheck("healthz", healthz.Ping)
+	op.GetManager().AddReadyzCheck("readyz", healthz.Ping)
+
+	// Set health probe bind address
+	op.GetManager().GetConfig().HealthProbeBindAddress = ":8081"
+	// Set metrics bind address
+	op.GetManager().GetConfig().MetricsBindAddress = ":8080"
 
 	// Register controllers and start the operator
 	op.

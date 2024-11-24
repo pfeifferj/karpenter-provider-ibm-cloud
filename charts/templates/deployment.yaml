@@ -37,7 +37,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
-                  key: ibm_api_key
+                  key: IBM_API_KEY
             - name: IBM_REGION
               valueFrom:
                 secretKeyRef:
@@ -69,17 +69,24 @@ spec:
                   name: {{ include "karpenter.fullname" . }}-credentials
                   key: global_catalog_apikey
           ports:
-            - name: http
+            - name: metrics
               containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
               protocol: TCP
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}
