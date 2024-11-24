@@ -5,11 +5,10 @@ import (
 	"fmt"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"	github.com/awslabs/operatorpkg/controller/runtime
-"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
@@ -86,7 +85,7 @@ func (c *Controller) Name() string {
 }
 
 // Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) runtime.Builder {
-	return runtime.NewBuilder(m).
+func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
+	return builder.ControllerManagedBy(m).
 		For(&v1alpha1.IBMNodeClass{})
 }

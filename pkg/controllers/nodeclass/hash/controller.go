@@ -4,13 +4,13 @@ import (
 	"context"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"	github.com/awslabs/operatorpkg/controller/runtime
-"
 	"github.com/mitchellh/hashstructure/v2"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
@@ -60,8 +60,10 @@ func (c *Controller) Name() string {
 }
 
 // Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) runtime.Builder {
-	return runtime.NewBuilder(m).
+func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
+	return builder.ControllerManagedBy(m).
 		For(&v1alpha1.IBMNodeClass{}).
-		WithEventFilter(runtime.IgnoreAllEventsPredicate{}) // Only reconcile on spec changes
+		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
+			return true // Only reconcile on spec changes
+		}))
 }

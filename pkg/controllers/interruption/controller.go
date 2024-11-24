@@ -5,11 +5,10 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"	github.com/awslabs/operatorpkg/controller/runtime
-"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/karpenter/pkg/events"
 
@@ -78,8 +77,6 @@ func isNodeInterrupted(node *v1.Node) bool {
 	// TODO: Implement logic to check for IBM Cloud interruption events
 	// This would involve checking node conditions, labels, or annotations
 	// that indicate an interruption event
-
-	
 	return false
 }
 
@@ -96,7 +93,7 @@ func (c *Controller) Name() string {
 }
 
 // Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) runtime.Builder {
-	return runtime.NewBuilder(m).
+func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
+	return builder.ControllerManagedBy(m).
 		For(&v1.Node{})
 }

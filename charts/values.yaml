@@ -7,7 +7,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/pfeifferj/karpenter-provider-ibm-cloud
   tag: latest
-  digest: "sha256:02cc50fedec2714f15f839d82852f8a97424ba6a3ccb59639a0241948ac94e22"
+  digest: "sha256:25579d5fdebe28c0e37168bf02c7b4eb968fd9494bfe353497553b553e653481"
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
 

@@ -5,9 +5,8 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"	github.com/awslabs/operatorpkg/controller/runtime
-"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/pricing"
@@ -44,9 +43,6 @@ func (c *Controller) Name() string {
 }
 
 // Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) runtime.Builder {
-	return runtime.NewBuilder(m).
-		// This controller doesn't watch any resources
-		// It runs on a timer-based reconciliation
-		Complete()
+func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
+	return builder.ControllerManagedBy(m)
 }

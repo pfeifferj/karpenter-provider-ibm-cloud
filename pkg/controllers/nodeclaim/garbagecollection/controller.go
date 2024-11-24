@@ -4,11 +4,10 @@ import (
 	"context"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"	github.com/awslabs/operatorpkg/controller/runtime
-"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/karpenter/pkg/apis/v1beta1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -79,8 +78,8 @@ func (c *Controller) Name() string {
 }
 
 // Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) runtime.Builder {
-	return runtime.NewBuilder(m).
+func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
+	return builder.ControllerManagedBy(m).
 		For(&v1beta1.NodeClaim{})
 }
 

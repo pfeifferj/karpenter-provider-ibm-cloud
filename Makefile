@@ -13,6 +13,16 @@
 # limitations under the License.
 
 PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
+VERSION ?= $(shell git describe --tags --always --dirty)
+
+# Build settings
+BINARY_NAME = karpenter-clusterapi-controller
+BUILD_DIR = bin
+PLATFORMS = linux/amd64 linux/arm64
+
+# Build flags
+LDFLAGS = -ldflags "-X main.version=${VERSION}"
+CGO_ENABLED = 0
 
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.29
@@ -21,13 +31,26 @@ ENVTEST = go run ${PROJECT_DIR}/vendor/sigs.k8s.io/controller-runtime/tools/setu
 GINKGO = go run ${PROJECT_DIR}/vendor/github.com/onsi/ginkgo/v2/ginkgo
 GINKGO_ARGS = -v --randomize-all --randomize-suites --keep-going --race --trace --timeout=30m
 
-# CONTROLLER_GEN = go run ${PROJECT_DIR}/vendor/sigs.k8s.io/controller-tools/cmd/controller-gen
 CONTROLLER_GEN = ~/.local/share/go/bin/controller-gen
 
-all: help
+.PHONY: all
+all: build
 
 .PHONY: build
-build: karpenter-clusterapi-controller ## build all binaries
+build: generate ## Build binary for current platform
+	CGO_ENABLED=$(CGO_ENABLED) go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/controller/main.go
+
+.PHONY: build-multiarch
+build-multiarch: generate ## Build binaries for all supported platforms
+	@for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; \
+		arch=$${platform#*/}; \
+		echo "Building for $$os/$$arch..."; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=$(CGO_ENABLED) \
+			go build $(LDFLAGS) \
+			-o $(BUILD_DIR)/$(BINARY_NAME)-$$os-$$arch \
+			cmd/controller/main.go || exit 1; \
+	done
 
 .PHONY: help
 help: ## Display help
@@ -39,9 +62,6 @@ gen-objects: ## generate the controller-gen related objects
 
 .PHONY: generate
 generate: gen-objects manifests ## generate all controller-gen files
-
-karpenter-clusterapi-controller: ## build the main karpenter controller
-	go build -o bin/karpenter-clusterapi-controller cmd/controller/main.go
 
 .PHONY: manifests
 manifests: ## generate the controller-gen kubernetes manifests
@@ -61,3 +81,7 @@ vendor: ## update modules and populate local vendor directory
 	go mod tidy
 	go mod vendor
 	go mod verify
+
+.PHONY: clean
+clean: ## Clean build artifacts
+	rm -rf $(BUILD_DIR)
