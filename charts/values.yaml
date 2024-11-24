@@ -6,7 +6,8 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/pfeifferj/karpenter-provider-ibm-cloud
-  tag: "sha256:02cc50fedec2714f15f839d82852f8a97424ba6a3ccb59639a0241948ac94e22"
+  tag: latest
+  digest: "sha256:02cc50fedec2714f15f839d82852f8a97424ba6a3ccb59639a0241948ac94e22"
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
 
@@ -54,6 +55,13 @@ tolerations: []
 
 affinity: {}
 
+# Pod Disruption Budget configuration
+podDisruptionBudget:
+  # The name of the PDB. If not set, it will use the release name
+  name: ""
+  # Maximum number of pods that can be unavailable
+  maxUnavailable: 1
+
 # IBM Cloud credentials configuration
 credentials:
   # Required: IBM Cloud API Key for general operations
@@ -71,8 +79,15 @@ credentials:
   # Required: Global Catalog API Key for catalog operations
   globalCatalogApiKey: ""
 
+# Controller configuration
+controller:
+  metrics:
+    port: 8080
+
 # Metrics configuration
 metrics:
   # Enable ServiceMonitor creation
   serviceMonitor:
     enabled: false
+    additionalLabels: {}
+    endpointConfig: {}

@@ -1,4 +1,4 @@
-{{- if.Values.serviceMonitor.enabled -}}
+{{- if .Values.metrics.serviceMonitor.enabled -}}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -6,7 +6,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "karpenter.labels" . | nindent 4 }}
-  {{- with .Values.serviceMonitor.additionalLabels }}
+  {{- with .Values.metrics.serviceMonitor.additionalLabels }}
     {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- with .Values.additionalAnnotations }}
@@ -23,7 +23,7 @@ spec:
   endpoints:
     - port: http-metrics
       path: /metrics
-    {{- with .Values.serviceMonitor.endpointConfig }}
+    {{- with .Values.metrics.serviceMonitor.endpointConfig }}
       {{- toYaml . | nindent 6 }}
     {{- end }}
 {{- end -}}

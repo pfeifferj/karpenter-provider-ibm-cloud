@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
@@ -62,6 +63,16 @@ func main() {
 		instanceTypeProvider,
 		instanceProvider,
 	)
+
+	// Add health check endpoints
+	if err := op.GetManager().AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		log.FromContext(ctx).Error(err, "unable to set up health check")
+		os.Exit(1)
+	}
+	if err := op.GetManager().AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		log.FromContext(ctx).Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
 
 	// Register controllers and start the operator
 	op.
