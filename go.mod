@@ -7,11 +7,14 @@ require (
 	github.com/IBM/platform-services-go-sdk v0.69.1
 	github.com/IBM/vpc-go-sdk v0.59.0
 	github.com/awslabs/operatorpkg v0.0.0-20241115011931-885371bcf05d
+	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis v0.0.0-00010101000000-000000000000
 	github.com/samber/lo v1.47.0
 	go.uber.org/multierr v1.11.0
 	k8s.io/api v0.31.2
 	k8s.io/apimachinery v0.31.2
+	k8s.io/client-go v0.31.2
+	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20240711033017-18e509b52bc8
 	sigs.k8s.io/controller-runtime v0.19.1
 	sigs.k8s.io/controller-tools v0.16.3
@@ -68,7 +71,6 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
@@ -111,11 +113,9 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.31.2 // indirect
-	k8s.io/client-go v0.31.2 // indirect
 	k8s.io/cloud-provider v0.31.1 // indirect
 	k8s.io/component-base v0.31.2 // indirect
 	k8s.io/csi-translation-lib v0.30.3 // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20240228011516-70dd3763d340 // indirect
 	knative.dev/pkg v0.0.0-20230712131115-7051d301e7f4 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect

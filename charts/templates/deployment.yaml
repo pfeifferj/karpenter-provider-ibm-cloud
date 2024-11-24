@@ -70,23 +70,19 @@ spec:
                   key: global_catalog_apikey
           ports:
             - name: metrics
-              containerPort: 8080
+              containerPort: {{ .Values.controller.metrics.port }}
               protocol: TCP
             - name: health
               containerPort: 8081
               protocol: TCP
+          {{- with .Values.controller.livenessProbe }}
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 15
-            periodSeconds: 20
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.controller.readinessProbe }}
           readinessProbe:
-            httpGet:
-              path: /readyz
-              port: health
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}
