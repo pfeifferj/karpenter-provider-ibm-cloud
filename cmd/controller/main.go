@@ -32,6 +32,7 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/reconcile"
     "sigs.k8s.io/controller-runtime/pkg/builder"
     "sigs.k8s.io/controller-runtime/pkg/healthz"
+    "sigs.k8s.io/controller-runtime/pkg/metrics/server"
     v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
     ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
     "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
@@ -114,7 +115,9 @@ func main() {
 
     // Create a new manager to provide shared dependencies and start components
     mgr, err := manager.New(cfg, manager.Options{
-        metricsAddr:            ":8080",
+        Metrics: server.Options{
+            BindAddress: ":8080",
+        },
         HealthProbeBindAddress: ":8081",
     })
     if err != nil {

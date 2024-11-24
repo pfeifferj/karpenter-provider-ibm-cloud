@@ -7,8 +7,8 @@ replicaCount: 1
 image:
   repository: ghcr.io/pfeifferj/karpenter-provider-ibm-cloud/controller
   tag: latest
-  digest: "sha256:e0a1c820e643498c726fe1b89cbf37dd14edc4e170b1d246c66285927bdc3382"
   pullPolicy: IfNotPresent
+  digest: "sha256:"
   # Overrides the image tag whose default is the chart appVersion.
 
 imagePullSecrets: []
@@ -83,6 +83,18 @@ credentials:
 controller:
   metrics:
     port: 8080
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8081
+    initialDelaySeconds: 5
+    timeoutSeconds: 1
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8081
+    initialDelaySeconds: 5
+    timeoutSeconds: 1
 
 # Metrics configuration
 metrics:
