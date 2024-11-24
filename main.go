@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -31,10 +32,14 @@ import (
 	"sigs.k8s.io/karpenter/pkg/operator"
 )
 
-func main() {
-	// Initialize the logger
-	log.SetLogger(zap.New())
+func init() {
+	// Initialize the logger before anything else
+	klog.InitFlags(nil)
+	logger := zap.New(zap.UseDevMode(true))
+	log.SetLogger(logger)
+}
 
+func main() {
 	ctx, op := operator.NewOperator()
 
 	// Ensure IBM Cloud API key is set

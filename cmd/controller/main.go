@@ -21,6 +21,9 @@ import (
     "fmt"
     "os"
 
+    "k8s.io/klog/v2"
+    "sigs.k8s.io/controller-runtime/pkg/log"
+    "sigs.k8s.io/controller-runtime/pkg/log/zap"
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/client/config"
     "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -28,12 +31,23 @@ import (
     "sigs.k8s.io/controller-runtime/pkg/manager/signals"
     "sigs.k8s.io/controller-runtime/pkg/reconcile"
     "sigs.k8s.io/controller-runtime/pkg/builder"
+    "sigs.k8s.io/controller-runtime/pkg/healthz"
     v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
     ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
     "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
     "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
     "sigs.k8s.io/karpenter/pkg/events"
 )
+
+func init() {
+    // Initialize klog and zap logger
+    klog.InitFlags(nil)
+    opts := zap.Options{
+        Development: true,
+    }
+    logger := zap.New(zap.UseFlagOptions(&opts))
+    log.SetLogger(logger)
+}
 
 type IBMCloudReconciler struct {
     client.Client
@@ -89,17 +103,32 @@ func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 }
 
 func main() {
+    logger := log.FromContext(context.Background())
+    
     // Get a config to talk to the apiserver
     cfg, err := config.GetConfig()
     if err != nil {
-        fmt.Printf("Error getting config: %v\n", err)
+        logger.Error(err, "Error getting config")
         os.Exit(1)
     }
 
     // Create a new manager to provide shared dependencies and start components
-    mgr, err := manager.New(cfg, manager.Options{})
+    mgr, err := manager.New(cfg, manager.Options{
+        metricsAddr:            ":8080",
+        HealthProbeBindAddress: ":8081",
+    })
     if err != nil {
-        fmt.Printf("Error creating manager: %v\n", err)
+        logger.Error(err, "Error creating manager")
+        os.Exit(1)
+    }
+
+    // Add health check endpoints
+    if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+        logger.Error(err, "Error setting up health check")
+        os.Exit(1)
+    }
+    if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+        logger.Error(err, "Error setting up ready check")
         os.Exit(1)
     }
 
@@ -109,14 +138,14 @@ func main() {
 
     instanceTypeProviderImpl, err := instancetype.NewProvider()
     if err != nil {
-        fmt.Printf("Error creating instance type provider: %v\n", err)
+        logger.Error(err, "Error creating instance type provider")
         os.Exit(1)
     }
     instanceTypeProvider = instanceTypeProviderImpl
 
     instanceProviderImpl, err := instance.NewProvider()
     if err != nil {
-        fmt.Printf("Error creating instance provider: %v\n", err)
+        logger.Error(err, "Error creating instance provider")
         os.Exit(1)
     }
     instanceProvider = instanceProviderImpl
@@ -138,13 +167,13 @@ func main() {
     if err := builder.ControllerManagedBy(mgr).
         For(&v1.NodeClaim{}).
         Complete(reconciler); err != nil {
-        fmt.Printf("Error creating controller: %v\n", err)
+        logger.Error(err, "Error creating controller")
         os.Exit(1)
     }
 
-    fmt.Println("Starting manager")
+    logger.Info("Starting manager")
     if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
-        fmt.Printf("Error running manager: %v\n", err)
+        logger.Error(err, "Error running manager")
         os.Exit(1)
     }
 }
