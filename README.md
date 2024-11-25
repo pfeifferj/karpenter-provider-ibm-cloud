@@ -24,21 +24,11 @@ Before installing the provider, ensure you have:
 
 ### Creating Required API Keys
 
-1. Create an IBM Cloud API key:
+Create an IBM Cloud API key:
 
-   ```bash
-   ibmcloud iam api-key-create MyKey -d "Karpenter IBM Cloud Provider Key" --file key_file
-   ```
-
-2. Set up the required environment variables:
-   ```bash
-   export VPC_URL=https://us-south.iaas.cloud.ibm.com/v1
-   export VPC_AUTH_TYPE=iam
-   export GLOBAL_CATALOG_AUTH_TYPE=iam
-   export VPC_APIKEY=<your-vpc-api-key>
-   export GLOBAL_CATALOG_APIKEY=<your-global-catalog-api-key>
-   export IBM_CLOUD_API_KEY=<your-ibm-cloud-api-key>
-   ```
+```bash
+ibmcloud iam api-key-create MyKey -d "Karpenter IBM Cloud Provider Key" --file key_file
+```
 
 ## Installation
 
@@ -47,7 +37,7 @@ Before installing the provider, ensure you have:
 1. Add the Helm repository:
 
    ```bash
-   helm repo add karpenter-ibm-cloud https://[repository-url]
+   helm repo add karpenter-ibm-cloud https://pfeifferj.github.io/karpenter-provider-ibm-cloud/index.yaml
    helm repo update
    ```
 
@@ -58,6 +48,8 @@ Before installing the provider, ensure you have:
      --create-namespace \
      --set ibmCloud.apiKey=<your-api-key>
    ```
+
+The required API keys and configuration can be set either through the values file or using the Helm CLI's --set flag during installation.
 
 ## Configuration
 
@@ -79,16 +71,6 @@ spec:
   zone: us-south-1
   instanceProfile: bx2-2x8
 ```
-
-## Generating Instance Types
-
-To update the instance types catalog:
-
-1. Set up the required environment variables as shown in the Prerequisites section
-2. Run the generation tool:
-   ```bash
-   go run tools/gen_instance_types.go
-   ```
 
 ## Contributing
 

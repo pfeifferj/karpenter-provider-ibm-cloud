@@ -19,6 +19,7 @@ package instancetype
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	corev1 "k8s.io/api/core/v1"
@@ -104,42 +105,55 @@ func convertCatalogEntryToInstanceType(entry *globalcatalogv1.CatalogEntry) (*cl
 		return nil, fmt.Errorf("catalog entry is nil")
 	}
 
-	// Extract instance type details from catalog entry metadata
-	var cpus int64 = 2    // Default values, replace with actual parsing
-	var memory int64 = 8   // Default values, replace with actual parsing
-	var gpus int64 = 0    // Default values, replace with actual parsing
+	// Extract instance type details from catalog entry metadata using reflection
+	vcpuCount := 0
+	memoryValue := 0
+	gpuCount := 0
 
-	// TODO: Parse actual values from entry.Metadata or appropriate field
-	// The exact field to use depends on IBM Cloud's catalog structure
+	// Extract values from metadata using reflection
+	if entry.Metadata != nil {
+		metadataValue := reflect.ValueOf(entry.Metadata).Elem()
+
+		// Extract CPU count
+		if vcpuField := metadataValue.FieldByName("VcpuCount"); vcpuField.IsValid() {
+			if vcpuInterface := vcpuField.Interface(); vcpuInterface != nil {
+				vcpuValue := reflect.ValueOf(vcpuInterface).Elem().FieldByName("Count")
+				if vcpuValue.IsValid() && vcpuValue.Kind() == reflect.Ptr && !vcpuValue.IsNil() {
+					vcpuCount = int(vcpuValue.Elem().Int())
+				}
+			}
+		}
+
+		// Extract memory
+		if memField := metadataValue.FieldByName("Memory"); memField.IsValid() {
+			if memInterface := memField.Interface(); memInterface != nil {
+				memValue := reflect.ValueOf(memInterface).Elem().FieldByName("Value")
+				if memValue.IsValid() && memValue.Kind() == reflect.Ptr && !memValue.IsNil() {
+					memoryValue = int(memValue.Elem().Int())
+				}
+			}
+		}
+
+		// Extract GPU count if available
+		if gpuField := metadataValue.FieldByName("GpuCount"); gpuField.IsValid() {
+			if gpuInterface := gpuField.Interface(); gpuInterface != nil {
+				gpuValue := reflect.ValueOf(gpuInterface).Elem().FieldByName("Count")
+				if gpuValue.IsValid() && gpuValue.Kind() == reflect.Ptr && !gpuValue.IsNil() {
+					gpuCount = int(gpuValue.Elem().Int())
+				}
+			}
+		}
+	}
 
 	return &cloudprovider.InstanceType{
 		Name: *entry.Name,
 		Capacity: corev1.ResourceList{
-			corev1.ResourceCPU:    *resource.NewQuantity(cpus, resource.DecimalSI),
-			corev1.ResourceMemory: *resource.NewQuantity(memory*1024*1024*1024, resource.BinarySI),
-			"gpu":                 *resource.NewQuantity(gpus, resource.DecimalSI),
+			corev1.ResourceCPU:    *resource.NewQuantity(int64(vcpuCount), resource.DecimalSI),
+			corev1.ResourceMemory: *resource.NewQuantity(int64(memoryValue)*1024*1024*1024, resource.BinarySI),
+			"gpu":                 *resource.NewQuantity(int64(gpuCount), resource.DecimalSI),
 		},
 		Requirements: scheduling.NewRequirements(
 			scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, *entry.Name),
 		),
 	}, nil
-}
-
-// Helper functions to parse CPU, memory, and GPU values from catalog entry metadata
-func parseCPU(s string) int64 {
-	// Implementation would parse CPU value from string
-	// For example: "2" -> 2
-	return 0 // Placeholder
-}
-
-func parseMemory(s string) int64 {
-	// Implementation would parse memory value from string
-	// For example: "8GB" -> 8589934592 (bytes)
-	return 0 // Placeholder
-}
-
-func parseGPU(s string) int64 {
-	// Implementation would parse GPU value from string
-	// For example: "1" -> 1
-	return 0 // Placeholder
 }
