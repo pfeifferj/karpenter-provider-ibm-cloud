@@ -2,6 +2,7 @@ package tagging
 
 import (
 	"context"
+	"strings"
 
 	"github.com/awslabs/operatorpkg/controller"
 	v1 "k8s.io/api/core/v1"
@@ -12,19 +13,20 @@ import (
 	"sigs.k8s.io/karpenter/pkg/apis/v1beta1"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
 // Controller reconciles NodeClaim objects to ensure proper tagging of IBM Cloud instances
 type Controller struct {
 	kubeClient       client.Client
-	instanceProvider instance.Provider
+	instanceProvider *instance.IBMCloudInstanceProvider
 }
 
 // NewController constructs a controller instance
 func NewController(kubeClient client.Client, instanceProvider instance.Provider) controller.Controller {
 	return controller.NewWithOptions(&Controller{
 		kubeClient:       kubeClient,
-		instanceProvider: instanceProvider,
+		instanceProvider: instanceProvider.(*instance.IBMCloudInstanceProvider),
 	}, controller.Options{
 		Name: "nodeclaim.tagging.karpenter.ibm.cloud",
 	})
@@ -48,11 +50,11 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Get the instance
-	instance, err := c.instanceProvider.GetInstance(ctx, node)
-	if err != nil {
-		return reconcile.Result{}, err
+	// Extract instance ID from provider ID
+	if node.Spec.ProviderID == "" {
+		return reconcile.Result{}, nil
 	}
+	instanceID := strings.TrimPrefix(node.Spec.ProviderID, "ibm://")
 
 	// Build tags map
 	tags := map[string]string{
@@ -65,11 +67,16 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		tags[key] = value
 	}
 
-	// TODO: Implement tag update logic using IBM Cloud SDK
-	// This would involve:
-	// 1. Getting current tags
-	// 2. Computing the difference
-	// 3. Adding/removing tags as needed
+	// Get the VPC client
+	vpcClient, err := c.instanceProvider.Client.GetVPCClient()
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Update the instance tags
+	if err := vpcClient.UpdateInstanceTags(ctx, instanceID, tags); err != nil {
+		return reconcile.Result{}, err
+	}
 
 	return reconcile.Result{}, nil
 }

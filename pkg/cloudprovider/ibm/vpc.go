@@ -90,3 +90,29 @@ func (c *VPCClient) ListInstances(ctx context.Context) ([]vpcv1.Instance, error)
 
 	return instances.Instances, nil
 }
+
+func (c *VPCClient) UpdateInstanceTags(ctx context.Context, id string, tags map[string]string) error {
+	if c.client == nil {
+		return fmt.Errorf("VPC client not initialized")
+	}
+
+	// Convert tags map to patch data
+	patchData := make(map[string]interface{})
+	tagsList := make([]string, 0, len(tags))
+	for key, value := range tags {
+		tagsList = append(tagsList, fmt.Sprintf("%s:%s", key, value))
+	}
+	patchData["user_tags"] = tagsList
+
+	options := &vpcv1.UpdateInstanceOptions{
+		ID:              &id,
+		InstancePatch:   patchData,
+	}
+
+	_, _, err := c.client.UpdateInstanceWithContext(ctx, options)
+	if err != nil {
+		return fmt.Errorf("updating instance tags: %w", err)
+	}
+
+	return nil
+}
