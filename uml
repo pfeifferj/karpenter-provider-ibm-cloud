@@ -42,8 +42,78 @@ namespace cloudprovider {
 }
 
 
+namespace garbagecollection {
+    class Controller << (S,Aquamarine) >> {
+        - kubeClient client.Client
+        - cloudProvider cloudprovider.CloudProvider
+
+        - removeFinalizer(ctx context.Context, nodeClaim *v1beta1.NodeClaim) error
+
+        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Name() string
+        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+
+    }
+}
+
+
+namespace hash {
+    class Controller << (S,Aquamarine) >> {
+        - kubeClient client.Client
+
+        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Name() string
+        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+
+    }
+}
+
+
+namespace ibm {
+    class Client << (S,Aquamarine) >> {
+        - vpcURL string
+        - vpcAuthType string
+        - vpcAPIKey string
+        - globalCatalogAPIKey string
+        - globalCatalogAuthType string
+        - ibmAPIKey string
+        - region string
+
+        + GetVPCClient() (*VPCClient, error)
+        + GetGlobalCatalogClient() (*GlobalCatalogClient, error)
+        + GetRegion() string
+
+    }
+    class GlobalCatalogClient << (S,Aquamarine) >> {
+        - authType string
+        - apiKey string
+        - client *globalcatalogv1.GlobalCatalogV1
+
+        + GetInstanceType(ctx context.Context, id string) (*globalcatalogv1.CatalogEntry, error)
+        + ListInstanceTypes(ctx context.Context) ([]globalcatalogv1.CatalogEntry, error)
+
+    }
+    class VPCClient << (S,Aquamarine) >> {
+        - baseURL string
+        - authType string
+        - apiKey string
+        - region string
+        - client *vpcv1.VpcV1
+
+        + CreateInstance(ctx context.Context, instancePrototype *vpcv1.InstancePrototype) (*vpcv1.Instance, error)
+        + DeleteInstance(ctx context.Context, id string) error
+        + GetInstance(ctx context.Context, id string) (*vpcv1.Instance, error)
+        + ListInstances(ctx context.Context) ([]vpcv1.Instance, error)
+        + UpdateInstanceTags(ctx context.Context, id string, tags <font color=blue>map</font>[string]string) error
+
+    }
+}
+
+
 namespace instance {
     class IBMCloudInstanceProvider << (S,Aquamarine) >> {
+        - client *ibm.Client
+
         + Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1.Node, error)
         + Delete(ctx context.Context, node *v1.Node) error
         + GetInstance(ctx context.Context, node *v1.Node) (*Instance, error)
@@ -84,6 +154,28 @@ namespace instance {
 "instance.Provider" <|-- "instance.IBMCloudInstanceProvider"
 
 namespace instancetype {
+    class Controller << (S,Aquamarine) >> {
+        - instanceTypeProvider instancetype.Provider
+        - instancetypeProvider instancetype.Provider
+
+        - refreshInstanceTypes(ctx context.Context) error
+
+        + Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error)
+        + Name() string
+        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+        + Reconcile(ctx context.Context) (reconcile.Result, error)
+        + Register(_ context.Context, m manager.Manager) error
+
+    }
+    class IBMInstanceTypeProvider << (S,Aquamarine) >> {
+        - client *ibm.Client
+
+        + Get(ctx context.Context, name string) (*cloudprovider.InstanceType, error)
+        + List(ctx context.Context) ([]*cloudprovider.InstanceType, error)
+        + Create(ctx context.Context, instanceType *cloudprovider.InstanceType) error
+        + Delete(ctx context.Context, instanceType *cloudprovider.InstanceType) error
+
+    }
     class InstanceTypeCapabilities << (S,Aquamarine) >> {
         + CPU int
         + Memory int
@@ -100,11 +192,26 @@ namespace instancetype {
         + GPU bool
 
     }
-    class Provider << (S,Aquamarine) >> {
+    interface Provider  {
         + Get(ctx context.Context, name string) (*cloudprovider.InstanceType, error)
         + List(ctx context.Context) ([]*cloudprovider.InstanceType, error)
         + Create(ctx context.Context, instanceType *cloudprovider.InstanceType) error
         + Delete(ctx context.Context, instanceType *cloudprovider.InstanceType) error
+
+    }
+}
+
+"instancetype.Provider" <|-- "instancetype.IBMInstanceTypeProvider"
+
+namespace interruption {
+    class Controller << (S,Aquamarine) >> {
+        - kubeClient client.Client
+        - recorder events.Recorder
+        - unavailableOfferings *cache.UnavailableOfferings
+
+        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Name() string
+        + Builder(_ context.Context, m manager.Manager) *builder.Builder
 
     }
 }
@@ -134,7 +241,54 @@ namespace main {
 "client.Client" *-- "main.IBMCloudReconciler"
 
 
+namespace operator {
+    class Operator << (S,Aquamarine) >> {
+        - kubeClient client.Client
+        - kubeClientSet *kubernetes.Clientset
+        - instanceTypeProvider instancetype.Provider
+        - unavailableOfferings *cache.UnavailableOfferings
+        - recorder events.Recorder
+
+        + WithControllers() []controller.Controller
+        + WithWebhooks() []manager.Runnable
+        + WithCustomResourceDefinitions() []client.Object
+        + Cleanup(ctx context.Context) error
+        + Name() string
+        + Ready() bool
+        + LivenessProbe() error
+
+    }
+}
+
+
+namespace options {
+    class Key << (S,Aquamarine) >> {
+    }
+    class Options << (S,Aquamarine) >> {
+        + Interruption bool
+        + APIKey string
+        + Region string
+        + Zone string
+        + ResourceGroupID string
+
+        + Validate() error
+
+    }
+}
+
+
 namespace pricing {
+    class Controller << (S,Aquamarine) >> {
+        - pricingProvider pricing.Provider
+        - pricingProvider pricing.Provider
+
+        + Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error)
+        + Name() string
+        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+        + Reconcile(ctx context.Context) (reconcile.Result, error)
+        + Register(_ context.Context, m manager.Manager) error
+
+    }
     class Price << (S,Aquamarine) >> {
         + InstanceType string
         + Zone string
@@ -146,6 +300,46 @@ namespace pricing {
         + GetPrice(ctx context.Context, instanceType string, zone string) (float64, error)
         + GetPrices(ctx context.Context, zone string) (<font color=blue>map</font>[string]float64, error)
         + Refresh(ctx context.Context) error
+
+    }
+}
+
+
+namespace status {
+    class Controller << (S,Aquamarine) >> {
+        - kubeClient client.Client
+
+        - validateNodeClass(ctx context.Context, nc *v1alpha1.IBMNodeClass) error
+
+        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Name() string
+        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+
+    }
+}
+
+
+namespace tagging {
+    class Controller << (S,Aquamarine) >> {
+        - kubeClient client.Client
+        - instanceProvider *instance.IBMCloudInstanceProvider
+
+        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Name() string
+        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+
+    }
+}
+
+
+namespace termination {
+    class Controller << (S,Aquamarine) >> {
+        - kubeClient client.Client
+        - recorder events.Recorder
+
+        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Name() string
+        + Builder(_ context.Context, m manager.Manager) *builder.Builder
 
     }
 }
@@ -181,6 +375,9 @@ namespace v1alpha1 {
         + Subnet string
         + SecurityGroups []string
         + Tags <font color=blue>map</font>[string]string
+
+        + DeepCopyInto(out *IBMNodeClassSpec) 
+        + DeepCopy() *IBMNodeClassSpec
 
     }
     class IBMNodeClassStatus << (S,Aquamarine) >> {
