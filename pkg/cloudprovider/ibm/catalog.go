@@ -5,25 +5,52 @@ import (
 	"fmt"
 
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
+	"github.com/IBM/go-sdk-core/v5/core"
 )
 
 // GlobalCatalogClient handles interactions with the IBM Cloud Global Catalog API
 type GlobalCatalogClient struct {
-	authType string
-	apiKey   string
-	client   *globalcatalogv1.GlobalCatalogV1
+	iamClient *IAMClient
+	client    *globalcatalogv1.GlobalCatalogV1
 }
 
-func NewGlobalCatalogClient(authType, apiKey string) *GlobalCatalogClient {
+func NewGlobalCatalogClient(iamClient *IAMClient) *GlobalCatalogClient {
 	return &GlobalCatalogClient{
-		authType: authType,
-		apiKey:   apiKey,
+		iamClient: iamClient,
 	}
 }
 
+func (c *GlobalCatalogClient) ensureClient(ctx context.Context) error {
+	if c.client != nil {
+		return nil
+	}
+
+	// Get a fresh token
+	token, err := c.iamClient.GetToken(ctx)
+	if err != nil {
+		return fmt.Errorf("getting IAM token: %w", err)
+	}
+
+	// Initialize the Global Catalog client with the token
+	authenticator := &core.BearerTokenAuthenticator{
+		BearerToken: token,
+	}
+
+	options := &globalcatalogv1.GlobalCatalogV1Options{
+		Authenticator: authenticator,
+	}
+
+	c.client, err = globalcatalogv1.NewGlobalCatalogV1(options)
+	if err != nil {
+		return fmt.Errorf("initializing Global Catalog client: %w", err)
+	}
+
+	return nil
+}
+
 func (c *GlobalCatalogClient) GetInstanceType(ctx context.Context, id string) (*globalcatalogv1.CatalogEntry, error) {
-	if c.client == nil {
-		return nil, fmt.Errorf("Global Catalog client not initialized")
+	if err := c.ensureClient(ctx); err != nil {
+		return nil, err
 	}
 
 	options := &globalcatalogv1.GetCatalogEntryOptions{
@@ -39,8 +66,8 @@ func (c *GlobalCatalogClient) GetInstanceType(ctx context.Context, id string) (*
 }
 
 func (c *GlobalCatalogClient) ListInstanceTypes(ctx context.Context) ([]globalcatalogv1.CatalogEntry, error) {
-	if c.client == nil {
-		return nil, fmt.Errorf("Global Catalog client not initialized")
+	if err := c.ensureClient(ctx); err != nil {
+		return nil, err
 	}
 
 	// Filter for instance profiles

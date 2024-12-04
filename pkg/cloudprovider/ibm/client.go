@@ -7,13 +7,12 @@ import (
 
 // Client represents an IBM Cloud API client
 type Client struct {
-	vpcURL              string
-	vpcAuthType         string
-	vpcAPIKey           string
-	globalCatalogAPIKey string
-	globalCatalogAuthType string
-	ibmAPIKey           string
-	region              string
+	vpcURL      string
+	vpcAuthType string
+	vpcAPIKey   string
+	ibmAPIKey   string
+	region      string
+	iamClient   *IAMClient
 }
 
 // NewClient creates a new IBM Cloud client using environment variables
@@ -33,16 +32,6 @@ func NewClient() (*Client, error) {
 		return nil, fmt.Errorf("VPC_APIKEY environment variable is required")
 	}
 
-	globalCatalogAuthType := os.Getenv("GLOBAL_CATALOG_AUTH_TYPE")
-	if globalCatalogAuthType == "" {
-		globalCatalogAuthType = "iam" // default value
-	}
-
-	globalCatalogAPIKey := os.Getenv("GLOBAL_CATALOG_APIKEY")
-	if globalCatalogAPIKey == "" {
-		return nil, fmt.Errorf("GLOBAL_CATALOG_APIKEY environment variable is required")
-	}
-
 	ibmAPIKey := os.Getenv("IBM_API_KEY")
 	if ibmAPIKey == "" {
 		return nil, fmt.Errorf("IBM_API_KEY environment variable is required")
@@ -53,15 +42,18 @@ func NewClient() (*Client, error) {
 		return nil, fmt.Errorf("IBM_REGION environment variable is required")
 	}
 
-	return &Client{
-		vpcURL:               vpcURL,
-		vpcAuthType:          vpcAuthType,
-		vpcAPIKey:            vpcAPIKey,
-		globalCatalogAuthType: globalCatalogAuthType,
-		globalCatalogAPIKey:  globalCatalogAPIKey,
-		ibmAPIKey:            ibmAPIKey,
-		region:               region,
-	}, nil
+	client := &Client{
+		vpcURL:      vpcURL,
+		vpcAuthType: vpcAuthType,
+		vpcAPIKey:   vpcAPIKey,
+		ibmAPIKey:   ibmAPIKey,
+		region:      region,
+	}
+
+	// Initialize the IAM client
+	client.iamClient = NewIAMClient(ibmAPIKey)
+
+	return client, nil
 }
 
 // GetVPCClient returns a configured VPC API client
@@ -71,7 +63,7 @@ func (c *Client) GetVPCClient() (*VPCClient, error) {
 
 // GetGlobalCatalogClient returns a configured Global Catalog API client
 func (c *Client) GetGlobalCatalogClient() (*GlobalCatalogClient, error) {
-	return NewGlobalCatalogClient(c.globalCatalogAuthType, c.globalCatalogAPIKey), nil
+	return NewGlobalCatalogClient(c.iamClient), nil
 }
 
 // GetRegion returns the configured region
