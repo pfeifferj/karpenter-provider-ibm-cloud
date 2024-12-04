@@ -72,12 +72,10 @@ credentials:
   vpcUrl: "https://us-south.iaas.cloud.ibm.com/v1"
   # Optional: VPC authentication type
   vpcAuthType: "iam"
-  # Optional: Global Catalog authentication type
-  globalCatalogAuthType: "iam"
   # Required: VPC API Key for VPC operations
   vpcApiKey: ""
-  # Required: Global Catalog API Key for catalog operations
-  globalCatalogApiKey: ""
+  # Optional: Global Catalog authentication type
+  globalCatalogAuthType: "iam"
 
 # Controller configuration
 controller:
