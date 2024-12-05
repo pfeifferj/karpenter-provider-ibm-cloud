@@ -19,8 +19,10 @@ Before installing the provider, ensure you have:
 2. IBM Cloud CLI installed
 3. A Kubernetes cluster running on IBM Cloud
 4. Required API keys:
-   - IBM Cloud API key (for general IBM Cloud operations)
-   - IAM API key (for VPC and Global Catalog APIs)
+   - IBM Cloud API key (for general IBM Cloud operations and Global Catalog access)
+   - VPC API key (for VPC operations)
+
+The provider uses the IBM Cloud API key to automatically generate short-lived tokens for Global Catalog API access, improving security by avoiding the need for a separate long-lived API key.
 
 ### Creating Required API Keys
 
@@ -46,10 +48,18 @@ ibmcloud iam api-key-create MyKey -d "Karpenter IBM Cloud Provider Key" --file k
    helm install karpenter-ibm-cloud karpenter-ibm-cloud/karpenter-ibm-cloud \
      --namespace karpenter \
      --create-namespace \
-     --set ibmCloud.apiKey=<your-api-key>
+     --set credentials.ibmApiKey=<your-ibm-api-key> \
+     --set credentials.vpcApiKey=<your-vpc-api-key> \
+     --set credentials.region=<your-region>
    ```
 
-The required API keys and configuration can be set either through the values file or using the Helm CLI's --set flag during installation.
+The provider uses the IBM Cloud API key to authenticate with various IBM Cloud services:
+
+- For VPC operations, it uses the VPC API key directly
+- For Global Catalog operations, it automatically generates and manages short-lived tokens using the IBM Cloud API key
+  - Tokens are generated on-demand and cached
+  - Tokens are automatically refreshed 5 minutes before expiry
+  - This approach improves security by avoiding long-lived API keys
 
 ## Configuration
 
