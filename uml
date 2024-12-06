@@ -74,10 +74,9 @@ namespace ibm {
         - vpcURL string
         - vpcAuthType string
         - vpcAPIKey string
-        - globalCatalogAPIKey string
-        - globalCatalogAuthType string
         - ibmAPIKey string
         - region string
+        - iamClient *IAMClient
 
         + GetVPCClient() (*VPCClient, error)
         + GetGlobalCatalogClient() (*GlobalCatalogClient, error)
@@ -85,12 +84,22 @@ namespace ibm {
 
     }
     class GlobalCatalogClient << (S,Aquamarine) >> {
-        - authType string
-        - apiKey string
+        - iamClient *IAMClient
         - client *globalcatalogv1.GlobalCatalogV1
+
+        - ensureClient(ctx context.Context) error
 
         + GetInstanceType(ctx context.Context, id string) (*globalcatalogv1.CatalogEntry, error)
         + ListInstanceTypes(ctx context.Context) ([]globalcatalogv1.CatalogEntry, error)
+
+    }
+    class IAMClient << (S,Aquamarine) >> {
+        - apiKey string
+        - client *iamidentityv1.IamIdentityV1
+        - token string
+        - expiry time.Time
+
+        + GetToken(ctx context.Context) (string, error)
 
     }
     class VPCClient << (S,Aquamarine) >> {

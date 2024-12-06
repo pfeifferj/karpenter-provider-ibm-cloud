@@ -53,21 +53,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
                   key: vpc_auth_type
-            - name: GLOBAL_CATALOG_AUTH_TYPE
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "karpenter.fullname" . }}-credentials
-                  key: global_catalog_auth_type
             - name: VPC_APIKEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
                   key: vpc_apikey
-            - name: GLOBAL_CATALOG_APIKEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "karpenter.fullname" . }}-credentials
-                  key: global_catalog_apikey
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metrics.port }}
