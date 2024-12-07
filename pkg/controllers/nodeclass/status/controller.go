@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/awslabs/operatorpkg/controller"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -20,12 +20,13 @@ type Controller struct {
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client) controller.Controller {
-	return controller.NewWithOptions(&Controller{
+func NewController(kubeClient client.Client) (*Controller, error) {
+	if kubeClient == nil {
+		return nil, fmt.Errorf("kubeClient cannot be nil")
+	}
+	return &Controller{
 		kubeClient: kubeClient,
-	}, controller.Options{
-		Name: "nodeclass.status.karpenter.ibm.cloud",
-	})
+	}, nil
 }
 
 // Reconcile executes a control loop for the resource
@@ -79,13 +80,10 @@ func (c *Controller) validateNodeClass(ctx context.Context, nc *v1alpha1.IBMNode
 	return nil
 }
 
-// Name returns the name of the controller
-func (c *Controller) Name() string {
-	return "nodeclass.status"
-}
-
-// Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
-	return builder.ControllerManagedBy(m).
-		For(&v1alpha1.IBMNodeClass{})
+// Register registers the controller with the manager
+func (c *Controller) Register(_ context.Context, m manager.Manager) error {
+	return controllerruntime.NewControllerManagedBy(m).
+		Named("nodeclass.status").
+		For(&v1alpha1.IBMNodeClass{}).
+		Complete(c)
 }
