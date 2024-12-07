@@ -23,7 +23,7 @@ jobs:
         credentials:
           ibm_api_key: "ci-test-key"
           region: "us-south"
-          vpc_apikey: "ci-test-vpc-key"
+          vpc_api_key: "ci-test-vpc-key"
           vpc_url: "https://us-south.iaas.cloud.ibm.com/v1"
         EOF
 
