@@ -48,8 +48,8 @@ ibmcloud iam api-key-create MyKey -d "Karpenter IBM Cloud Provider Key" --file k
    helm install karpenter-ibm-cloud karpenter-ibm-cloud/karpenter-ibm-cloud \
      --namespace karpenter \
      --create-namespace \
-     --set credentials.ibmApiKey=<your-ibm-api-key> \
-     --set credentials.vpcApiKey=<your-vpc-api-key> \
+     --set credentials.ibm_api_key=<your-ibm-api-key> \
+     --set credentials.vpc_apikey=<your-vpc-api-key> \
      --set credentials.region=<your-region>
    ```
 
@@ -60,6 +60,8 @@ The provider uses the IBM Cloud API key to authenticate with various IBM Cloud s
   - Tokens are generated on-demand and cached
   - Tokens are automatically refreshed 5 minutes before expiry
   - This approach improves security by avoiding long-lived API keys
+
+The VPC API endpoint URL is automatically constructed using your region (e.g., https://us-south.iaas.cloud.ibm.com/v1 for us-south region). You can override this by setting the `credentials.vpc_url` value if needed.
 
 ## Configuration
 
