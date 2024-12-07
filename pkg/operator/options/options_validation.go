@@ -2,30 +2,7 @@ package options
 
 import (
 	"fmt"
-	"os"
 )
-
-// Options defines the configuration options for the IBM Cloud provider
-type Options struct {
-	// APIKey is the IBM Cloud API key used for authentication
-	APIKey string
-	// Region is the IBM Cloud region to operate in
-	Region string
-	// Zone is the availability zone within the region
-	Zone string
-	// ResourceGroupID is the ID of the resource group to use
-	ResourceGroupID string
-}
-
-// NewOptions creates a new Options instance with values from environment variables
-func NewOptions() *Options {
-	return &Options{
-		APIKey:          os.Getenv("IBMCLOUD_API_KEY"),
-		Region:          os.Getenv("IBMCLOUD_REGION"),
-		Zone:            os.Getenv("IBMCLOUD_ZONE"),
-		ResourceGroupID: os.Getenv("IBMCLOUD_RESOURCE_GROUP_ID"),
-	}
-}
 
 // Validate checks if all required options are properly set
 func (o *Options) Validate() error {
