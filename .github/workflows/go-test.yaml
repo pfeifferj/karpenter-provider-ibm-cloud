@@ -1,0 +1,62 @@
+name: Go Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+        cache: true
+
+    - name: Install controller-gen
+      run: |
+        go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+        mkdir -p ~/.local/share/go/bin
+        mv ~/go/bin/controller-gen ~/.local/share/go/bin/
+
+    - name: Run tests
+      run: |
+        go test -v -race ./pkg/cloudprovider/ibm/...
+
+    - name: Run tests with coverage
+      run: |
+        go test -v -race -coverprofile=coverage.txt -covermode=atomic ./pkg/cloudprovider/ibm/...
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.txt
+        flags: unittests
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+        cache: true
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=5m
+        skip-cache: true
+        skip-pkg-cache: true
+        skip-build-cache: true

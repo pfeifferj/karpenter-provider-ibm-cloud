@@ -27,9 +27,9 @@ func NewClient() (*Client, error) {
 		vpcAuthType = "iam" // default value
 	}
 
-	vpcAPIKey := os.Getenv("VPC_APIKEY")
+	vpcAPIKey := os.Getenv("VPC_API_KEY")
 	if vpcAPIKey == "" {
-		return nil, fmt.Errorf("VPC_APIKEY environment variable is required")
+		return nil, fmt.Errorf("VPC_API_KEY environment variable is required")
 	}
 
 	ibmAPIKey := os.Getenv("IBM_API_KEY")
