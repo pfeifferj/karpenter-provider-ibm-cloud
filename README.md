@@ -84,6 +84,29 @@ spec:
   instanceProfile: bx2-2x8
 ```
 
+## Development
+
+### Testing and CI
+
+The project includes automated testing and continuous integration workflows:
+
+#### Helm Chart Testing
+
+Pull requests that modify the Helm chart trigger automated tests that:
+
+- Lint the chart for syntax and best practices
+- Validate template rendering with test values
+- Verify Kubernetes manifest validity
+- Validate Custom Resource Definitions (CRDs)
+
+#### Chart Publishing
+
+When changes to the chart are merged to main:
+
+- The chart is automatically packaged
+- The Helm repository index is updated
+- Changes are published to GitHub Pages
+
 ## Contributing
 
 Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) for details on how to submit pull requests.
