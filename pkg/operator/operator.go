@@ -51,6 +51,21 @@ func NewOperator(ctx context.Context, config *rest.Config) (*Operator, error) {
 	}, nil
 }
 
+// GetClient returns the kubernetes client
+func (o *Operator) GetClient() client.Client {
+	return o.kubeClient
+}
+
+// GetEventRecorder returns the event recorder
+func (o *Operator) GetEventRecorder() record.EventRecorder {
+	return o.recorder
+}
+
+// GetUnavailableOfferings returns the unavailable offerings cache
+func (o *Operator) GetUnavailableOfferings() *cache.UnavailableOfferings {
+	return o.unavailableOfferings
+}
+
 func (o *Operator) WithControllers() []controller.Controller {
 	instanceTypeCtrl, err := instancetypecontroller.NewController()
 	if err != nil {
