@@ -1,0 +1,44 @@
+name: Test Helm Chart
+
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install Helm
+      run: |
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        chmod +x get_helm.sh
+        ./get_helm.sh
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+
+    - name: Run tests
+      working-directory: charts
+      run: |
+        # Lint chart
+        helm lint .
+
+        # Validate templates
+        helm template . \
+          --set credentials.ibm_api_key=dummy-key \
+          --set credentials.region=us-south \
+          --set credentials.vpc_apikey=dummy-vpc-key > rendered.yaml
+
+        # Validate Kubernetes manifests
+        kubectl create -f rendered.yaml --dry-run=client
+        rm rendered.yaml
+
+        # Validate CRDs
+        for crd in crds/*.yaml; do
+          echo "Validating $crd"
+          kubectl create -f "$crd" --dry-run=client
+        done
