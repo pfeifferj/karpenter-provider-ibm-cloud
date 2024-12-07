@@ -3,7 +3,7 @@ package garbagecollection
 import (
 	"context"
 
-	"github.com/awslabs/operatorpkg/controller"
+	"github.com/awslabs/operatorpkg/singleton"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -20,46 +20,62 @@ type Controller struct {
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) controller.Controller {
-	return controller.NewWithOptions(&Controller{
+func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) *Controller {
+	return &Controller{
 		kubeClient:    kubeClient,
 		cloudProvider: cloudProvider,
-	}, controller.Options{
-		Name: "nodeclaim.garbagecollection.karpenter.ibm.cloud",
-	})
+	}
 }
 
 // Reconcile executes a control loop for the resource
-func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	nodeClaim := &v1beta1.NodeClaim{}
-	if err := c.kubeClient.Get(ctx, req.NamespacedName, nodeClaim); err != nil {
-		return reconcile.Result{}, client.IgnoreNotFound(err)
+func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
+	// List all NodeClaims
+	nodeClaimList := &v1beta1.NodeClaimList{}
+	if err := c.kubeClient.List(ctx, nodeClaimList); err != nil {
+		return reconcile.Result{}, err
 	}
 
-	// If nodeclaim is not being deleted, do nothing
-	if nodeClaim.DeletionTimestamp == nil {
-		return reconcile.Result{}, nil
-	}
+	for _, nodeClaim := range nodeClaimList.Items {
+		// If nodeclaim is not being deleted, skip it
+		if nodeClaim.DeletionTimestamp == nil {
+			continue
+		}
 
-	// Get the associated node
-	node := &v1.Node{}
-	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Status.NodeName}, node); err != nil {
-		if !client.IgnoreNotFound(err) {
+		// Get the associated node
+		if nodeClaim.Status.NodeName == "" {
+			// No node associated, remove finalizer
+			if err := c.removeFinalizer(ctx, &nodeClaim); err != nil {
+				return reconcile.Result{}, err
+			}
+			continue
+		}
+
+		node := &v1.Node{}
+		if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Status.NodeName}, node); err != nil {
+			if client.IgnoreNotFound(err) == nil {
+				// Node doesn't exist, remove finalizer from nodeclaim
+				if err := c.removeFinalizer(ctx, &nodeClaim); err != nil {
+					return reconcile.Result{}, err
+				}
+				continue
+			}
 			return reconcile.Result{}, err
 		}
-		// Node doesn't exist, remove finalizer from nodeclaim
-		return reconcile.Result{}, c.removeFinalizer(ctx, nodeClaim)
-	}
 
-	// Delete the node if it exists
-	if err := c.kubeClient.Delete(ctx, node); err != nil {
-		if !client.IgnoreNotFound(err) {
+		// Delete the node if it exists
+		if err := c.kubeClient.Delete(ctx, node); err != nil {
+			if client.IgnoreNotFound(err) != nil {
+				return reconcile.Result{}, err
+			}
+		}
+
+		// Remove the finalizer from nodeclaim
+		if err := c.removeFinalizer(ctx, &nodeClaim); err != nil {
 			return reconcile.Result{}, err
 		}
 	}
 
-	// Remove the finalizer from nodeclaim
-	return reconcile.Result{}, c.removeFinalizer(ctx, nodeClaim)
+	return reconcile.Result{}, nil
 }
 
 func (c *Controller) removeFinalizer(ctx context.Context, nodeClaim *v1beta1.NodeClaim) error {
@@ -77,10 +93,11 @@ func (c *Controller) Name() string {
 	return "nodeclaim.garbagecollection"
 }
 
-// Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
+// Register registers the controller with the manager
+func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	return builder.ControllerManagedBy(m).
-		For(&v1beta1.NodeClaim{})
+		For(&v1beta1.NodeClaim{}).
+		Complete(singleton.AsReconciler(c))
 }
 
 func containsString(slice []string, s string) bool {
