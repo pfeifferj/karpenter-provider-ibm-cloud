@@ -17,19 +17,24 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/karpenter/pkg/events"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	instancetypepkg "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-	"sigs.k8s.io/karpenter/pkg/operator"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator"
 )
 
 func init() {
@@ -40,7 +45,7 @@ func init() {
 }
 
 func main() {
-	ctx, op := operator.NewOperator()
+	ctx := context.Background()
 
 	// Ensure IBM Cloud API key is set
 	if os.Getenv("IBM_API_KEY") == "" {
@@ -48,52 +53,73 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create instance type provider
-	instanceTypeProvider, instanceTypeErr := instancetypepkg.NewProvider()
-	if instanceTypeErr != nil {
-		log.FromContext(ctx).Error(instanceTypeErr, "failed to create instance type provider")
+	// Get the in-cluster config
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to get in-cluster config")
 		os.Exit(1)
 	}
 
-	// Create instance type controller
-	instanceTypeController, err := instancetype.NewController()
+	// Create operator
+	op, err := operator.NewOperator(ctx, config)
 	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to create instance type controller")
+		log.FromContext(ctx).Error(err, "failed to create operator")
+		os.Exit(1)
+	}
+
+	// Create instance type provider
+	instanceTypeProvider, err := instancetypepkg.NewProvider()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to create instance type provider")
 		os.Exit(1)
 	}
 
 	// Create instance provider
-	instanceProvider, instanceErr := instance.NewProvider()
-	if instanceErr != nil {
-		log.FromContext(ctx).Error(instanceErr, "failed to create instance provider")
+	instanceProvider, err := instance.NewProvider()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to create instance provider")
 		os.Exit(1)
 	}
+
+	// Create event recorder
+	recorder := events.NewRecorder(op.GetEventRecorder())
 
 	// Create cloud provider
 	cloudProvider := cloudprovider.New(
 		op.GetClient(),
-		op.EventRecorder,
+		recorder,
 		instanceTypeProvider,
 		instanceProvider,
 	)
 
+	// Create manager
+	mgr, err := manager.New(config, manager.Options{})
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to create manager")
+		os.Exit(1)
+	}
+
 	// Configure health check endpoint
-	if err := op.Manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		log.FromContext(ctx).Error(err, "failed to add healthz check")
 		os.Exit(1)
 	}
-	if err := op.Manager.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		log.FromContext(ctx).Error(err, "failed to add readyz check")
 		os.Exit(1)
 	}
 
-	// Register controllers and cloud provider
-	op.RegisterController(ctx, instanceTypeController)
-	op.RegisterCloudProvider("ibm", cloudProvider)
+	// Add controllers
+	for _, c := range controllers.NewControllers(ctx, mgr, clock.RealClock{}, op.GetClient(), recorder, op.GetUnavailableOfferings(), cloudProvider, instanceProvider, instanceTypeProvider, nil) {
+		if err := c.SetupWithManager(mgr); err != nil {
+			log.FromContext(ctx).Error(err, "failed to setup controller with manager")
+			os.Exit(1)
+		}
+	}
 
-	// Start the operator
-	if err := op.Start(ctx); err != nil {
-		log.FromContext(ctx).Error(err, "failed to start operator")
+	// Start the manager
+	if err := mgr.Start(ctx); err != nil {
+		log.FromContext(ctx).Error(err, "failed to start manager")
 		os.Exit(1)
 	}
 }
