@@ -1,5 +1,11 @@
 # Karpenter Provider for IBM Cloud
 
+[![Go Tests](https://github.com/pfeifferj/karpenter-provider-ibm-cloud/actions/workflows/go-test.yaml/badge.svg)](https://github.com/pfeifferj/karpenter-provider-ibm-cloud/actions/workflows/go-test.yaml)
+[![codecov](https://codecov.io/gh/pfeifferj/karpenter-provider-ibm-cloud/branch/main/graph/badge.svg)](https://codecov.io/gh/pfeifferj/karpenter-provider-ibm-cloud)
+[![Go Report Card](https://goreportcard.com/badge/github.com/pfeifferj/karpenter-provider-ibm-cloud)](https://goreportcard.com/report/github.com/pfeifferj/karpenter-provider-ibm-cloud)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/pfeifferj/karpenter-provider-ibm-cloud)](https://github.com/pfeifferj/karpenter-provider-ibm-cloud/releases)
+
 This repository contains the Karpenter Provider implementation for IBM Cloud, enabling dynamic node provisioning in IBM Cloud Kubernetes clusters using Karpenter.
 
 ## Overview
@@ -111,6 +117,8 @@ After changes pass tests and are merged to main:
 - The chart is automatically packaged
 - The Helm repository index is updated
 - Changes are published to GitHub Pages
+
+These CI workflows ensure chart quality through pre-merge validation and maintain the Helm repository for easy installation.
 
 ## Contributing
 
