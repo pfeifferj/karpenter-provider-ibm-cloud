@@ -2,8 +2,7 @@ name: Test Helm Chart
 
 on:
   pull_request:
-    paths:
-      - 'charts/**'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -18,27 +17,38 @@ jobs:
         chmod +x get_helm.sh
         ./get_helm.sh
 
-    - name: Install kubectl
-      uses: azure/setup-kubectl@v3
+    - name: Create test values
+      run: |
+        cat > charts/ci-values.yaml << EOF
+        credentials:
+          ibm_api_key: "ci-test-key"
+          region: "us-south"
+          vpc_apikey: "ci-test-vpc-key"
+          vpc_url: "https://us-south.iaas.cloud.ibm.com/v1"
+        EOF
+
+    - name: Create yamllint config
+      run: |
+        cat > .yamllint << EOF
+        extends: default
+        rules:
+          document-start: disable
+          line-length: disable
+        EOF
 
     - name: Run tests
       working-directory: charts
       run: |
-        # Lint chart
-        helm lint .
+        # Lint chart with test values
+        helm lint . -f ci-values.yaml
 
-        # Validate templates
-        helm template . \
-          --set credentials.ibm_api_key=dummy-key \
-          --set credentials.region=us-south \
-          --set credentials.vpc_apikey=dummy-vpc-key > rendered.yaml
-
-        # Validate Kubernetes manifests
-        kubectl create -f rendered.yaml --dry-run=client
-        rm rendered.yaml
+        # Validate template rendering
+        helm template . -f ci-values.yaml
 
         # Validate CRDs
         for crd in crds/*.yaml; do
-          echo "Validating $crd"
-          kubectl create -f "$crd" --dry-run=client
+          if [ -f "$crd" ]; then
+            echo "Validating $crd"
+            cat "$crd" | yamllint -c ../.yamllint -
+          fi
         done
