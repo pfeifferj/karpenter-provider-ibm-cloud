@@ -74,7 +74,7 @@ credentials:
   # Optional: vpc authentication type
   vpc_auth_type: "iam"
   # Required: vpc api key for vpc operations
-  vpc_apikey: ""
+  vpc_api_key: ""
 
 # Controller configuration
 controller:

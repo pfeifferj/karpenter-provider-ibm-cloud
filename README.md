@@ -55,7 +55,7 @@ ibmcloud iam api-key-create MyKey -d "Karpenter IBM Cloud Provider Key" --file k
      --namespace karpenter \
      --create-namespace \
      --set credentials.ibm_api_key=<your-ibm-api-key> \
-     --set credentials.vpc_apikey=<your-vpc-api-key> \
+     --set credentials.vpc_api_key=<your-vpc-api-key> \
      --set credentials.region=<your-region>
    ```
 

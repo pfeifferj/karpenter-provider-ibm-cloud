@@ -53,11 +53,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
                   key: vpc_auth_type
-            - name: VPC_APIKEY
+            - name: VPC_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
-                  key: vpc_apikey
+                  key: vpc_api_key
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metrics.port }}
