@@ -58,11 +58,25 @@ jobs:
             echo "tags=pr-${{ github.event.number }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build and push multi-arch images
+      - name: Build images (PR)
+        if: github.event_name == 'pull_request'
+        env:
+          GOFLAGS: "-ldflags=-X=main.version=${{ steps.tags.outputs.tags }}"
+          KO_DOCKER_REPO: ko.local
+        run: |
+          # Build multi-arch images locally
+          ko build \
+            --platform=linux/amd64,linux/arm64 \
+            --bare \
+            --local \
+            ./cmd/controller
+
+      - name: Build and push images (non-PR)
+        if: github.event_name != 'pull_request'
         env:
           GOFLAGS: "-ldflags=-X=main.version=${{ steps.tags.outputs.tags }}"
         run: |
-          # Build multi-arch images
+          # Build and push multi-arch images
           ko build \
             --platform=linux/amd64,linux/arm64 \
             --bare \

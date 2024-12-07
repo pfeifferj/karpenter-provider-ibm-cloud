@@ -92,16 +92,21 @@ The project includes automated testing and continuous integration workflows:
 
 #### Helm Chart Testing
 
-Pull requests that modify the Helm chart trigger automated tests that:
+Tests run automatically on:
 
-- Lint the chart for syntax and best practices
-- Validate template rendering with test values
-- Verify Kubernetes manifest validity
-- Validate Custom Resource Definitions (CRDs)
+- All pull requests (validates changes before merge)
+- Manual trigger via GitHub Actions UI
+
+The tests perform:
+
+- Chart linting for syntax and best practices
+- Template rendering validation
+- Kubernetes manifest validation
+- Custom Resource Definition (CRD) verification
 
 #### Chart Publishing
 
-When changes to the chart are merged to main:
+After changes pass tests and are merged to main:
 
 - The chart is automatically packaged
 - The Helm repository index is updated
