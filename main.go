@@ -49,9 +49,9 @@ func main() {
 	}
 
 	// Create instance type provider
-	instanceTypeProvider, err := instancetypepkg.NewProvider()
-	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to create instance type provider")
+	instanceTypeProvider, instanceTypeErr := instancetypepkg.NewProvider()
+	if instanceTypeErr != nil {
+		log.FromContext(ctx).Error(instanceTypeErr, "failed to create instance type provider")
 		os.Exit(1)
 	}
 
@@ -63,7 +63,11 @@ func main() {
 	}
 
 	// Create instance provider
-	instanceProvider := instance.NewProvider()
+	instanceProvider, instanceErr := instance.NewProvider()
+	if instanceErr != nil {
+		log.FromContext(ctx).Error(instanceErr, "failed to create instance provider")
+		os.Exit(1)
+	}
 
 	// Create cloud provider
 	cloudProvider := cloudprovider.New(
@@ -74,20 +78,22 @@ func main() {
 	)
 
 	// Configure health check endpoint
-	op.GetManager().AddHealthzCheck("healthz", healthz.Ping)
-	op.GetManager().AddReadyzCheck("readyz", healthz.Ping)
+	if err := op.Manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		log.FromContext(ctx).Error(err, "failed to add healthz check")
+		os.Exit(1)
+	}
+	if err := op.Manager.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		log.FromContext(ctx).Error(err, "failed to add readyz check")
+		os.Exit(1)
+	}
 
-	// Set health probe bind address
-	op.GetManager().GetConfig().HealthProbeBindAddress = ":8081"
-	// Set metrics bind address
-	op.GetManager().GetConfig().MetricsBindAddress = ":8080"
+	// Register controllers and cloud provider
+	op.RegisterController(ctx, instanceTypeController)
+	op.RegisterCloudProvider("ibm", cloudProvider)
 
-	// Register controllers and start the operator
-	op.
-		WithControllers(
-			ctx,
-			instanceTypeController,
-		).
-		WithCloudProvider(cloudProvider).
-		Start(ctx)
+	// Start the operator
+	if err := op.Start(ctx); err != nil {
+		log.FromContext(ctx).Error(err, "failed to start operator")
+		os.Exit(1)
+	}
 }

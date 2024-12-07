@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/awslabs/operatorpkg/controller"
+	"github.com/awslabs/operatorpkg/singleton"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -13,7 +13,6 @@ import (
 	"sigs.k8s.io/karpenter/pkg/apis/v1beta1"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
 // Controller reconciles NodeClaim objects to ensure proper tagging of IBM Cloud instances
@@ -23,59 +22,64 @@ type Controller struct {
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client, instanceProvider instance.Provider) controller.Controller {
-	return controller.NewWithOptions(&Controller{
+func NewController(kubeClient client.Client, instanceProvider instance.Provider) *Controller {
+	return &Controller{
 		kubeClient:       kubeClient,
 		instanceProvider: instanceProvider.(*instance.IBMCloudInstanceProvider),
-	}, controller.Options{
-		Name: "nodeclaim.tagging.karpenter.ibm.cloud",
-	})
+	}
 }
 
 // Reconcile executes a control loop for the resource
-func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	nodeClaim := &v1beta1.NodeClaim{}
-	if err := c.kubeClient.Get(ctx, req.NamespacedName, nodeClaim); err != nil {
-		return reconcile.Result{}, client.IgnoreNotFound(err)
-	}
-
-	// Skip if node name is not set
-	if nodeClaim.Status.NodeName == "" {
-		return reconcile.Result{}, nil
-	}
-
-	// Get the node
-	node := &v1.Node{}
-	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Status.NodeName}, node); err != nil {
-		return reconcile.Result{}, client.IgnoreNotFound(err)
-	}
-
-	// Extract instance ID from provider ID
-	if node.Spec.ProviderID == "" {
-		return reconcile.Result{}, nil
-	}
-	instanceID := strings.TrimPrefix(node.Spec.ProviderID, "ibm://")
-
-	// Build tags map
-	tags := map[string]string{
-		"karpenter.ibm.cloud/nodeclaim": nodeClaim.Name,
-		"karpenter.ibm.cloud/nodepool":  nodeClaim.Labels["karpenter.sh/nodepool"],
-	}
-
-	// Add custom tags from nodeclaim
-	for key, value := range nodeClaim.Spec.Requirements.Tags() {
-		tags[key] = value
-	}
-
-	// Get the VPC client
-	vpcClient, err := c.instanceProvider.Client.GetVPCClient()
-	if err != nil {
+func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
+	// List all NodeClaims
+	nodeClaimList := &v1beta1.NodeClaimList{}
+	if err := c.kubeClient.List(ctx, nodeClaimList); err != nil {
 		return reconcile.Result{}, err
 	}
 
-	// Update the instance tags
-	if err := vpcClient.UpdateInstanceTags(ctx, instanceID, tags); err != nil {
-		return reconcile.Result{}, err
+	for _, nodeClaim := range nodeClaimList.Items {
+		// Skip if node name is not set
+		if nodeClaim.Status.NodeName == "" {
+			continue
+		}
+
+		// Get the node
+		node := &v1.Node{}
+		if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Status.NodeName}, node); err != nil {
+			if client.IgnoreNotFound(err) == nil {
+				continue
+			}
+			return reconcile.Result{}, err
+		}
+
+		// Extract instance ID from provider ID
+		if node.Spec.ProviderID == "" {
+			continue
+		}
+		instanceID := strings.TrimPrefix(node.Spec.ProviderID, "ibm://")
+
+		// Build tags map
+		tags := map[string]string{
+			"karpenter.ibm.cloud/nodeclaim": nodeClaim.Name,
+			"karpenter.ibm.cloud/nodepool":  nodeClaim.Labels["karpenter.sh/nodepool"],
+		}
+
+		// Add custom tags from nodeclaim requirements
+		for _, req := range nodeClaim.Spec.Requirements {
+			if req.Key == "karpenter.ibm.cloud/tags" {
+				for _, value := range req.Values {
+					parts := strings.SplitN(value, "=", 2)
+					if len(parts) == 2 {
+						tags[parts[0]] = parts[1]
+					}
+				}
+			}
+		}
+
+		// Update instance tags using the instance provider
+		if err := c.instanceProvider.TagInstance(ctx, instanceID, tags); err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	return reconcile.Result{}, nil
@@ -86,9 +90,10 @@ func (c *Controller) Name() string {
 	return "nodeclaim.tagging"
 }
 
-// Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
+// Register registers the controller with the manager
+func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	return builder.ControllerManagedBy(m).
 		For(&v1beta1.NodeClaim{}).
-		Owns(&v1.Node{})
+		Owns(&v1.Node{}).
+		Complete(singleton.AsReconciler(c))
 }
