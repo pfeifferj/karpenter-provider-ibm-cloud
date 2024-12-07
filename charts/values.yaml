@@ -64,18 +64,17 @@ podDisruptionBudget:
 
 # IBM Cloud credentials configuration
 credentials:
-  # Required: IBM Cloud API Key for general operations
-  ibmApiKey: ""
-  # Required: IBM Cloud Region
+  # Required: ibm cloud api key for general operations
+  ibm_api_key: ""
+  # Required: ibm cloud region (e.g., us-south, eu-de)
   region: ""
-  # Optional: VPC API endpoint URL
-  vpcUrl: "https://us-south.iaas.cloud.ibm.com/v1"
-  # Optional: VPC authentication type
-  vpcAuthType: "iam"
-  # Required: VPC API Key for VPC operations
-  vpcApiKey: ""
-  # Optional: Global Catalog authentication type
-  globalCatalogAuthType: "iam"
+  # Optional: vpc api endpoint url
+  # If not provided, defaults to https://{region}.iaas.cloud.ibm.com/v1
+  vpc_url: ""
+  # Optional: vpc authentication type
+  vpc_auth_type: "iam"
+  # Required: vpc api key for vpc operations
+  vpc_apikey: ""
 
 # Controller configuration
 controller:

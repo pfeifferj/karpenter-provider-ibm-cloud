@@ -37,7 +37,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
-                  key: IBM_API_KEY
+                  key: ibm_api_key
             - name: IBM_REGION
               valueFrom:
                 secretKeyRef:
