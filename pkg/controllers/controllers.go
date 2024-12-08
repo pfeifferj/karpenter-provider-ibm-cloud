@@ -5,9 +5,7 @@ import (
 	"fmt"
 
 	"github.com/awslabs/operatorpkg/controller"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -35,17 +33,32 @@ type RecorderAdapter struct {
 
 // Event implements record.EventRecorder
 func (r *RecorderAdapter) Event(object runtime.Object, eventtype, reason, message string) {
-	r.Publish(reason, message)
+	r.Publish(events.Event{
+		InvolvedObject: object,
+		Type:          eventtype,
+		Reason:        reason,
+		Message:       message,
+	})
 }
 
 // Eventf implements record.EventRecorder
 func (r *RecorderAdapter) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
-	r.Publish(reason, fmt.Sprintf(messageFmt, args...))
+	r.Publish(events.Event{
+		InvolvedObject: object,
+		Type:          eventtype,
+		Reason:        reason,
+		Message:       fmt.Sprintf(messageFmt, args...),
+	})
 }
 
 // AnnotatedEventf implements record.EventRecorder
 func (r *RecorderAdapter) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
-	r.Publish(reason, fmt.Sprintf(messageFmt, args...))
+	r.Publish(events.Event{
+		InvolvedObject: object,
+		Type:          eventtype,
+		Reason:        reason,
+		Message:       fmt.Sprintf(messageFmt, args...),
+	})
 }
 
 func NewControllers(ctx context.Context, mgr manager.Manager, clk clock.Clock,

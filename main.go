@@ -111,8 +111,8 @@ func main() {
 
 	// Add controllers
 	for _, c := range controllers.NewControllers(ctx, mgr, clock.RealClock{}, op.GetClient(), recorder, op.GetUnavailableOfferings(), cloudProvider, instanceProvider, instanceTypeProvider, nil) {
-		if err := c.SetupWithManager(mgr); err != nil {
-			log.FromContext(ctx).Error(err, "failed to setup controller with manager")
+		if err := c.Register(ctx, mgr); err != nil {
+			log.FromContext(ctx).Error(err, "failed to register controller with manager")
 			os.Exit(1)
 		}
 	}
