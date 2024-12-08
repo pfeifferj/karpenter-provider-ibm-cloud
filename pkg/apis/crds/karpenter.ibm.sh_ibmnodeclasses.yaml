@@ -138,10 +138,19 @@ spec:
                   - type
                   type: object
                 type: array
+              lastValidationTime:
+                description: LastValidationTime is the last time the nodeclass was
+                  validated
+                format: date-time
+                type: string
               specHash:
                 description: SpecHash is a hash of the IBMNodeClass spec
                 format: int64
                 type: integer
+              validationError:
+                description: ValidationError contains the error message from the last
+                  validation
+                type: string
             type: object
         type: object
     served: true

@@ -105,10 +105,10 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	instanceType, _ := lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool {
 		return i.Name == node.Labels["node.kubernetes.io/instance-type"]
 	})
-	
+
 	nc := &karpv1.NodeClaim{
 		ObjectMeta: nodeClaim.ObjectMeta,
-		Spec:      nodeClaim.Spec,
+		Spec:       nodeClaim.Spec,
 		Status: karpv1.NodeClaimStatus{
 			ProviderID: node.Spec.ProviderID,
 		},

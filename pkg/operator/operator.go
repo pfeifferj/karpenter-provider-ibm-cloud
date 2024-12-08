@@ -4,25 +4,25 @@ import (
 	"context"
 
 	"github.com/awslabs/operatorpkg/controller"
-	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/karpenter/pkg/events"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
-	instancetypecontroller "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 	interruptioncontroller "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	instancetypecontroller "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 )
 
 type Operator struct {
-	kubeClient          client.Client
-	kubeClientSet       *kubernetes.Clientset
-	instanceTypeProvider instancetype.Provider
+	kubeClient           client.Client
+	kubeClientSet        *kubernetes.Clientset
 	unavailableOfferings *cache.UnavailableOfferings
-	recorder            events.Recorder
+	recorder             record.EventRecorder
 }
 
 func NewOperator(ctx context.Context, config *rest.Config) (*Operator, error) {
@@ -36,22 +36,46 @@ func NewOperator(ctx context.Context, config *rest.Config) (*Operator, error) {
 		return nil, err
 	}
 
-	recorder := events.NewRecorder(kubeClient, "karpenter-ibm-cloud")
+	// Create event broadcaster
+	eventBroadcaster := record.NewBroadcaster()
+	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeClientSet.CoreV1().Events("")})
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: "karpenter-ibm-cloud"})
+
 	unavailableOfferings := cache.NewUnavailableOfferings()
-	instanceTypeProvider := instancetype.NewProvider()
 
 	return &Operator{
 		kubeClient:           kubeClient,
 		kubeClientSet:        kubeClientSet,
-		instanceTypeProvider: instanceTypeProvider,
 		unavailableOfferings: unavailableOfferings,
 		recorder:             recorder,
 	}, nil
 }
 
+// GetClient returns the kubernetes client
+func (o *Operator) GetClient() client.Client {
+	return o.kubeClient
+}
+
+// GetEventRecorder returns the event recorder
+func (o *Operator) GetEventRecorder() record.EventRecorder {
+	return o.recorder
+}
+
+// GetUnavailableOfferings returns the unavailable offerings cache
+func (o *Operator) GetUnavailableOfferings() *cache.UnavailableOfferings {
+	return o.unavailableOfferings
+}
+
 func (o *Operator) WithControllers() []controller.Controller {
+	instanceTypeCtrl, err := instancetypecontroller.NewController()
+	if err != nil {
+		// Since we can't return an error from this method, we'll panic
+		// This is consistent with how controller-runtime handles initialization errors
+		panic(err)
+	}
+
 	return []controller.Controller{
-		instancetypecontroller.NewController(o.instanceTypeProvider),
+		instanceTypeCtrl,
 		interruptioncontroller.NewController(o.kubeClient, o.recorder, o.unavailableOfferings),
 	}
 }

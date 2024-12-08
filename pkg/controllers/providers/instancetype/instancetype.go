@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/singleton"
-	lop "github.com/samber/lo/parallel"
-	"go.uber.org/multierr"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -17,7 +15,7 @@ import (
 )
 
 type Controller struct {
-	instancetypeProvider instancetype.Provider
+	instanceTypeProvider instancetype.Provider
 }
 
 func NewController() (*Controller, error) {
@@ -27,25 +25,16 @@ func NewController() (*Controller, error) {
 	}
 
 	return &Controller{
-		instancetypeProvider: provider,
+		instanceTypeProvider: provider,
 	}, nil
 }
 
 func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	ctx = injection.WithControllerName(ctx, "providers.instancetype")
 
-	work := []func(ctx context.Context) error{
-		c.instancetypeProvider.UpdateInstanceTypes,
-		c.instancetypeProvider.UpdateInstanceTypeOfferings,
-	}
-	errs := make([]error, len(work))
-	lop.ForEach(work, func(f func(ctx context.Context) error, i int) {
-		if err := f(ctx); err != nil {
-			errs[i] = err
-		}
-	})
-	if err := multierr.Combine(errs...); err != nil {
-		return reconcile.Result{}, fmt.Errorf("updating instancetype, %w", err)
+	// Refresh instance types by listing them
+	if _, err := c.instanceTypeProvider.List(ctx); err != nil {
+		return reconcile.Result{}, fmt.Errorf("refreshing instance types: %w", err)
 	}
 
 	// Reconcile every hour to refresh instance type information

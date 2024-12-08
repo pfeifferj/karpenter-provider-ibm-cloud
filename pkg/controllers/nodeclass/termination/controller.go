@@ -2,15 +2,15 @@ package termination
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/awslabs/operatorpkg/controller"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/tools/record"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/karpenter/pkg/events"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
@@ -18,17 +18,21 @@ import (
 // Controller reconciles IBMNodeClass deletion by terminating associated nodes
 type Controller struct {
 	kubeClient client.Client
-	recorder   events.Recorder
+	recorder   record.EventRecorder
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client, recorder events.Recorder) controller.Controller {
-	return controller.NewWithOptions(&Controller{
+func NewController(kubeClient client.Client, recorder record.EventRecorder) (*Controller, error) {
+	if kubeClient == nil {
+		return nil, fmt.Errorf("kubeClient cannot be nil")
+	}
+	if recorder == nil {
+		return nil, fmt.Errorf("recorder cannot be nil")
+	}
+	return &Controller{
 		kubeClient: kubeClient,
 		recorder:   recorder,
-	}, controller.Options{
-		Name: "nodeclass.termination.karpenter.ibm.cloud",
-	})
+	}, nil
 }
 
 // Reconcile executes a control loop for the resource
@@ -54,24 +58,21 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	// Delete all nodes
 	for _, node := range nodes.Items {
 		if err := c.kubeClient.Delete(ctx, &node); err != nil && !errors.IsNotFound(err) {
-			c.recorder.Eventf(nc, v1.EventTypeWarning, "FailedToDeleteNode", 
-				"Failed to delete node %s: %v", node.Name, err)
+			c.recorder.Event(nc, v1.EventTypeWarning, "FailedToDeleteNode",
+				fmt.Sprintf("Failed to delete node %s: %v", node.Name, err))
 			return reconcile.Result{}, err
 		}
-		c.recorder.Eventf(nc, v1.EventTypeNormal, "DeletedNode",
-			"Deleted node %s", node.Name)
+		c.recorder.Event(nc, v1.EventTypeNormal, "DeletedNode",
+			fmt.Sprintf("Deleted node %s", node.Name))
 	}
 
 	return reconcile.Result{}, nil
 }
 
-// Name returns the name of the controller
-func (c *Controller) Name() string {
-	return "nodeclass.termination"
-}
-
-// Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
-	return builder.ControllerManagedBy(m).
-		For(&v1alpha1.IBMNodeClass{})
+// Register registers the controller with the manager
+func (c *Controller) Register(_ context.Context, m manager.Manager) error {
+	return controllerruntime.NewControllerManagedBy(m).
+		Named("nodeclass.termination").
+		For(&v1alpha1.IBMNodeClass{}).
+		Complete(c)
 }

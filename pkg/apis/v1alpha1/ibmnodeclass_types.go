@@ -62,6 +62,14 @@ type IBMNodeClassStatus struct {
 	// +optional
 	SpecHash uint64 `json:"specHash,omitempty"`
 
+	// LastValidationTime is the last time the nodeclass was validated
+	// +optional
+	LastValidationTime metav1.Time `json:"lastValidationTime,omitempty"`
+
+	// ValidationError contains the error message from the last validation
+	// +optional
+	ValidationError string `json:"validationError,omitempty"`
+
 	// Conditions contains signals for health and readiness
 	// +optional
 	Conditions []status.Condition `json:"conditions,omitempty"`
