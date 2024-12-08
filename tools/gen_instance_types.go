@@ -48,17 +48,17 @@ var regionZones = map[string][]string{
 
 // IBMInstanceType defines the structure for instance types
 type IBMInstanceType struct {
-	Name             string                        `json:"name"`
-	Architecture     string                        `json:"architecture"`
-	OperatingSystems []corev1.OSName              `json:"operatingSystems"`
-	Resources        corev1.ResourceList          `json:"resources"`
-	Offerings        []IBMOffering                `json:"offerings"`
+	Name             string              `json:"name"`
+	Architecture     string              `json:"architecture"`
+	OperatingSystems []corev1.OSName     `json:"operatingSystems"`
+	Resources        corev1.ResourceList `json:"resources"`
+	Offerings        []IBMOffering       `json:"offerings"`
 }
 
 // IBMOffering defines the structure for IBM-specific offerings
 type IBMOffering struct {
 	Requirements []corev1.NodeSelectorRequirement `json:"requirements"`
-	Offering     cloudprovider.Offering          `json:"offering"`
+	Offering     cloudprovider.Offering           `json:"offering"`
 }
 
 // initializeVPCClient initializes the VPC client using external configuration
@@ -105,12 +105,10 @@ func fetchPricing(globalCatalog *globalcatalogv1.GlobalCatalogV1, profileName st
 
 	if catalogEntries == nil || len(catalogEntries.Resources) == 0 {
 		log.Printf("No catalog entries found for profile: %s with options: %+v", profileName, listOptions)
-	} else {
-		// make this conditional if debug true
-		// log.Printf("Catalog entries found for profile %s: %+v", profileName, catalogEntries.Resources)
+		return 0, fmt.Errorf("no catalog entries found for profile: %s", profileName)
 	}
 
-	// DEBUG
+	// Log catalog entries for debugging
 	for _, entry := range catalogEntries.Resources {
 		// Dereference the pointer values correctly
 		name := ""
@@ -128,7 +126,6 @@ func fetchPricing(globalCatalog *globalcatalogv1.GlobalCatalogV1, profileName st
 
 		log.Printf("Catalog Entry - Name: %s, ID: %s, CatalogCRN: %s", name, id, crn)
 	}
-	// END DEBUG
 
 	// Use the first matching catalog entry
 	catalogEntryID := *catalogEntries.Resources[0].ID
@@ -140,10 +137,6 @@ func fetchPricing(globalCatalog *globalcatalogv1.GlobalCatalogV1, profileName st
 	pricingData, _, err := globalCatalog.GetPricing(pricingOptions)
 	if err != nil {
 		return 0, fmt.Errorf("error fetching pricing data: %v", err)
-	}
-
-	if pricingData != nil {
-		// log.Printf("pricingData found for profile %s: %+v", profileName, pricingData)
 	}
 
 	// Access pricing data from Metrics field
@@ -176,10 +169,10 @@ func constructIBMInstanceTypes(vpcClient *vpcv1.VpcV1, globalCatalog *globalcata
 
 	var instanceTypes []IBMInstanceType
 	for _, profile := range instanceProfiles {
-		// handle vcpuCount using reflection to extract value
+		// handle vcpuCount using reflection
 		vcpuCount := 0
-		if vcpuInterface, ok := profile.VcpuCount.(vpcv1.InstanceProfileVcpuIntf); ok && vcpuInterface != nil {
-			vcpuValue := reflect.ValueOf(vcpuInterface).Elem().FieldByName("Count")
+		if profile.VcpuCount != nil {
+			vcpuValue := reflect.ValueOf(profile.VcpuCount).Elem().FieldByName("Count")
 			if vcpuValue.IsValid() && vcpuValue.Kind() == reflect.Ptr && !vcpuValue.IsNil() {
 				vcpuCount = int(vcpuValue.Elem().Int())
 			}
@@ -190,8 +183,8 @@ func constructIBMInstanceTypes(vpcClient *vpcv1.VpcV1, globalCatalog *globalcata
 
 		// handle memory using reflection
 		memoryValue := 0
-		if memInterface, ok := profile.Memory.(vpcv1.InstanceProfileMemoryIntf); ok && memInterface != nil {
-			memValue := reflect.ValueOf(memInterface).Elem().FieldByName("Value")
+		if profile.Memory != nil {
+			memValue := reflect.ValueOf(profile.Memory).Elem().FieldByName("Value")
 			if memValue.IsValid() && memValue.Kind() == reflect.Ptr && !memValue.IsNil() {
 				memoryValue = int(memValue.Elem().Int())
 			}
@@ -257,7 +250,7 @@ func main() {
 
 	// Write to the desired file
 	outputFilePath := filepath.Join("cloudprovider", "instance_types.json")
-	if err := os.WriteFile(outputFilePath, output, 0644); err != nil {
+	if err := os.WriteFile(outputFilePath, output, 0600); err != nil {
 		log.Fatalf("failed to write output to file: %v", err)
 	}
 	fmt.Printf("Instance types have been generated and written to %s\n", outputFilePath)

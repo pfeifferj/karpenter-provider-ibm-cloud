@@ -9,19 +9,19 @@ import (
 
 // VPCClient handles interactions with the IBM Cloud VPC API
 type VPCClient struct {
-	baseURL   string
-	authType  string
-	apiKey    string
-	region    string
-	client    *vpcv1.VpcV1
+	baseURL  string
+	authType string
+	apiKey   string
+	region   string
+	client   *vpcv1.VpcV1
 }
 
 func NewVPCClient(baseURL, authType, apiKey, region string) *VPCClient {
 	return &VPCClient{
-		baseURL:   baseURL,
-		authType:  authType,
-		apiKey:    apiKey,
-		region:    region,
+		baseURL:  baseURL,
+		authType: authType,
+		apiKey:   apiKey,
+		region:   region,
 	}
 }
 
@@ -105,8 +105,8 @@ func (c *VPCClient) UpdateInstanceTags(ctx context.Context, id string, tags map[
 	patchData["user_tags"] = tagsList
 
 	options := &vpcv1.UpdateInstanceOptions{
-		ID:              &id,
-		InstancePatch:   patchData,
+		ID:            &id,
+		InstancePatch: patchData,
 	}
 
 	_, _, err := c.client.UpdateInstanceWithContext(ctx, options)

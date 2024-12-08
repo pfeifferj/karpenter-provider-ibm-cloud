@@ -35,9 +35,9 @@ type RecorderAdapter struct {
 func (r *RecorderAdapter) Event(object runtime.Object, eventtype, reason, message string) {
 	r.Publish(events.Event{
 		InvolvedObject: object,
-		Type:          eventtype,
-		Reason:        reason,
-		Message:       message,
+		Type:           eventtype,
+		Reason:         reason,
+		Message:        message,
 	})
 }
 
@@ -45,9 +45,9 @@ func (r *RecorderAdapter) Event(object runtime.Object, eventtype, reason, messag
 func (r *RecorderAdapter) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
 	r.Publish(events.Event{
 		InvolvedObject: object,
-		Type:          eventtype,
-		Reason:        reason,
-		Message:       fmt.Sprintf(messageFmt, args...),
+		Type:           eventtype,
+		Reason:         reason,
+		Message:        fmt.Sprintf(messageFmt, args...),
 	})
 }
 
@@ -55,9 +55,9 @@ func (r *RecorderAdapter) Eventf(object runtime.Object, eventtype, reason, messa
 func (r *RecorderAdapter) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
 	r.Publish(events.Event{
 		InvolvedObject: object,
-		Type:          eventtype,
-		Reason:        reason,
-		Message:       fmt.Sprintf(messageFmt, args...),
+		Type:           eventtype,
+		Reason:         reason,
+		Message:        fmt.Sprintf(messageFmt, args...),
 	})
 }
 

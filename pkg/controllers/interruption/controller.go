@@ -7,9 +7,9 @@ import (
 	"github.com/awslabs/operatorpkg/singleton"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
@@ -17,16 +17,16 @@ import (
 
 // Controller handles instance interruption events from IBM Cloud
 type Controller struct {
-	kubeClient          client.Client
-	recorder            record.EventRecorder
+	kubeClient           client.Client
+	recorder             record.EventRecorder
 	unavailableOfferings *cache.UnavailableOfferings
 }
 
 // NewController constructs a controller instance
 func NewController(kubeClient client.Client, recorder record.EventRecorder, unavailableOfferings *cache.UnavailableOfferings) *Controller {
 	return &Controller{
-		kubeClient:          kubeClient,
-		recorder:            recorder,
+		kubeClient:           kubeClient,
+		recorder:             recorder,
 		unavailableOfferings: unavailableOfferings,
 	}
 }
