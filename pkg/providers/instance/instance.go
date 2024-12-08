@@ -149,3 +149,17 @@ func (p *IBMCloudInstanceProvider) GetInstance(ctx context.Context, node *corev1
 		Tags:         userTags,
 	}, nil
 }
+
+func (p *IBMCloudInstanceProvider) TagInstance(ctx context.Context, instanceID string, tags map[string]string) error {
+	vpcClient, err := p.client.GetVPCClient()
+	if err != nil {
+		return fmt.Errorf("getting VPC client: %w", err)
+	}
+
+	err = vpcClient.UpdateInstanceTags(ctx, instanceID, tags)
+	if err != nil {
+		return fmt.Errorf("updating instance tags: %w", err)
+	}
+
+	return nil
+}

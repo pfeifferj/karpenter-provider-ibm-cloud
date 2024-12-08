@@ -3,7 +3,7 @@ package instance
 import (
 	"context"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -17,4 +17,7 @@ type Provider interface {
 
 	// GetInstance retrieves instance information for the specified node
 	GetInstance(ctx context.Context, node *v1.Node) (*Instance, error)
+
+	// TagInstance adds or updates tags on an IBM Cloud instance
+	TagInstance(ctx context.Context, instanceID string, tags map[string]string) error
 }

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 )
 
 // GlobalCatalogClient handles interactions with the IBM Cloud Global Catalog API

@@ -2,15 +2,14 @@ package hash
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/awslabs/operatorpkg/controller"
 	"github.com/mitchellh/hashstructure/v2"
-	"k8s.io/apimachinery/pkg/types"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
@@ -21,12 +20,13 @@ type Controller struct {
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client) controller.Controller {
-	return controller.NewWithOptions(&Controller{
+func NewController(kubeClient client.Client) (*Controller, error) {
+	if kubeClient == nil {
+		return nil, fmt.Errorf("kubeClient cannot be nil")
+	}
+	return &Controller{
 		kubeClient: kubeClient,
-	}, controller.Options{
-		Name: "nodeclass.hash.karpenter.ibm.cloud",
-	})
+	}, nil
 }
 
 // Reconcile executes a control loop for the resource
@@ -54,16 +54,13 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	return reconcile.Result{}, nil
 }
 
-// Name returns the name of the controller
-func (c *Controller) Name() string {
-	return "nodeclass.hash"
-}
-
-// Builder implements controller.Builder
-func (c *Controller) Builder(_ context.Context, m manager.Manager) *builder.Builder {
-	return builder.ControllerManagedBy(m).
+// Register registers the controller with the manager
+func (c *Controller) Register(_ context.Context, m manager.Manager) error {
+	return controllerruntime.NewControllerManagedBy(m).
+		Named("nodeclass.hash").
 		For(&v1alpha1.IBMNodeClass{}).
 		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
 			return true // Only reconcile on spec changes
-		}))
+		})).
+		Complete(c)
 }
