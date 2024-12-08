@@ -2,6 +2,7 @@ package instancetype
 
 import (
 	"context"
+
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
 

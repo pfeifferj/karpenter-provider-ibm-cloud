@@ -7,9 +7,9 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/tools/record"
+	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
@@ -58,7 +58,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	// Delete all nodes
 	for _, node := range nodes.Items {
 		if err := c.kubeClient.Delete(ctx, &node); err != nil && !errors.IsNotFound(err) {
-			c.recorder.Event(nc, v1.EventTypeWarning, "FailedToDeleteNode", 
+			c.recorder.Event(nc, v1.EventTypeWarning, "FailedToDeleteNode",
 				fmt.Sprintf("Failed to delete node %s: %v", node.Name, err))
 			return reconcile.Result{}, err
 		}

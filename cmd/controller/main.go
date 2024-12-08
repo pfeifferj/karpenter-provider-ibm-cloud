@@ -17,166 +17,166 @@ limitations under the License.
 package main
 
 import (
-    "context"
-    "fmt"
-    "os"
+	"context"
+	"fmt"
+	"os"
 
-    "k8s.io/klog/v2"
-    "sigs.k8s.io/controller-runtime/pkg/log"
-    "sigs.k8s.io/controller-runtime/pkg/log/zap"
-    "sigs.k8s.io/controller-runtime/pkg/client"
-    "sigs.k8s.io/controller-runtime/pkg/client/config"
-    "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-    "sigs.k8s.io/controller-runtime/pkg/manager"
-    "sigs.k8s.io/controller-runtime/pkg/manager/signals"
-    "sigs.k8s.io/controller-runtime/pkg/reconcile"
-    "sigs.k8s.io/controller-runtime/pkg/builder"
-    "sigs.k8s.io/controller-runtime/pkg/healthz"
-    "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-    v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
-    ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
-    "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-    "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-    "sigs.k8s.io/karpenter/pkg/events"
+	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/events"
 )
 
 func init() {
-    // Initialize klog and zap logger
-    klog.InitFlags(nil)
-    opts := zap.Options{
-        Development: true,
-    }
-    logger := zap.New(zap.UseFlagOptions(&opts))
-    log.SetLogger(logger)
+	// Initialize klog and zap logger
+	klog.InitFlags(nil)
+	opts := zap.Options{
+		Development: true,
+	}
+	logger := zap.New(zap.UseFlagOptions(&opts))
+	log.SetLogger(logger)
 }
 
 type IBMCloudReconciler struct {
-    client.Client
-    CloudProvider *ibmcloud.CloudProvider 
+	client.Client
+	CloudProvider *ibmcloud.CloudProvider
 }
 
 func NewIBMCloudReconciler(kubeClient client.Client, provider *ibmcloud.CloudProvider) *IBMCloudReconciler {
-    return &IBMCloudReconciler{
-        Client:        kubeClient,
-        CloudProvider: provider,
-    }
+	return &IBMCloudReconciler{
+		Client:        kubeClient,
+		CloudProvider: provider,
+	}
 }
 
 func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-    var nodeClaim v1.NodeClaim
-    if err := r.Get(ctx, req.NamespacedName, &nodeClaim); err != nil {
-        // handle not found error
-        return reconcile.Result{}, client.IgnoreNotFound(err)
-    }
+	var nodeClaim v1.NodeClaim
+	if err := r.Get(ctx, req.NamespacedName, &nodeClaim); err != nil {
+		// handle not found error
+		return reconcile.Result{}, client.IgnoreNotFound(err)
+	}
 
-    // Check if the NodeClaim has a finalizer for cleanup purposes
-    if !controllerutil.ContainsFinalizer(&nodeClaim, "karpenter.sh/finalizer") {
-        controllerutil.AddFinalizer(&nodeClaim, "karpenter.sh/finalizer")
-        if err := r.Update(ctx, &nodeClaim); err != nil {
-            return reconcile.Result{}, err
-        }
-    }
+	// Check if the NodeClaim has a finalizer for cleanup purposes
+	if !controllerutil.ContainsFinalizer(&nodeClaim, "karpenter.sh/finalizer") {
+		controllerutil.AddFinalizer(&nodeClaim, "karpenter.sh/finalizer")
+		if err := r.Update(ctx, &nodeClaim); err != nil {
+			return reconcile.Result{}, err
+		}
+	}
 
-    // Handle NodeClaim provisioning or deletion
-    if nodeClaim.DeletionTimestamp.IsZero() {
-        if nodeClaim.Status.ProviderID == "" {
-            // Provision new instance using IBM Cloud Provider
-            createdNodeClaim, err := r.CloudProvider.Create(ctx, &nodeClaim)
-            if err != nil {
-                return reconcile.Result{}, fmt.Errorf("creating node claim: %w", err)
-            }
-            nodeClaim.Status = createdNodeClaim.Status
-            if err := r.Status().Update(ctx, &nodeClaim); err != nil {
-                return reconcile.Result{}, err
-            }
-        }
-    } else {
-        // Handle deletion
-        if err := r.CloudProvider.Delete(ctx, &nodeClaim); err != nil {
-            return reconcile.Result{}, fmt.Errorf("deleting node claim: %w", err)
-        }
-        controllerutil.RemoveFinalizer(&nodeClaim, "karpenter.sh/finalizer")
-        if err := r.Update(ctx, &nodeClaim); err != nil {
-            return reconcile.Result{}, err
-        }
-    }
-    return reconcile.Result{}, nil
+	// Handle NodeClaim provisioning or deletion
+	if nodeClaim.DeletionTimestamp.IsZero() {
+		if nodeClaim.Status.ProviderID == "" {
+			// Provision new instance using IBM Cloud Provider
+			createdNodeClaim, err := r.CloudProvider.Create(ctx, &nodeClaim)
+			if err != nil {
+				return reconcile.Result{}, fmt.Errorf("creating node claim: %w", err)
+			}
+			nodeClaim.Status = createdNodeClaim.Status
+			if err := r.Status().Update(ctx, &nodeClaim); err != nil {
+				return reconcile.Result{}, err
+			}
+		}
+	} else {
+		// Handle deletion
+		if err := r.CloudProvider.Delete(ctx, &nodeClaim); err != nil {
+			return reconcile.Result{}, fmt.Errorf("deleting node claim: %w", err)
+		}
+		controllerutil.RemoveFinalizer(&nodeClaim, "karpenter.sh/finalizer")
+		if err := r.Update(ctx, &nodeClaim); err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+	return reconcile.Result{}, nil
 }
 
 func main() {
-    logger := log.FromContext(context.Background())
-    
-    // Get a config to talk to the apiserver
-    cfg, err := config.GetConfig()
-    if err != nil {
-        logger.Error(err, "Error getting config")
-        os.Exit(1)
-    }
+	logger := log.FromContext(context.Background())
 
-    // Create a new manager to provide shared dependencies and start components
-    mgr, err := manager.New(cfg, manager.Options{
-        Metrics: server.Options{
-            BindAddress: ":8080",
-        },
-        HealthProbeBindAddress: ":8081",
-    })
-    if err != nil {
-        logger.Error(err, "Error creating manager")
-        os.Exit(1)
-    }
+	// Get a config to talk to the apiserver
+	cfg, err := config.GetConfig()
+	if err != nil {
+		logger.Error(err, "Error getting config")
+		os.Exit(1)
+	}
 
-    // Add health check endpoints
-    if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-        logger.Error(err, "Error setting up health check")
-        os.Exit(1)
-    }
-    if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-        logger.Error(err, "Error setting up ready check")
-        os.Exit(1)
-    }
+	// Create a new manager to provide shared dependencies and start components
+	mgr, err := manager.New(cfg, manager.Options{
+		Metrics: server.Options{
+			BindAddress: ":8080",
+		},
+		HealthProbeBindAddress: ":8081",
+	})
+	if err != nil {
+		logger.Error(err, "Error creating manager")
+		os.Exit(1)
+	}
 
-    // Initialize providers
-    var instanceTypeProvider instancetype.Provider
-    var instanceProvider instance.Provider
+	// Add health check endpoints
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		logger.Error(err, "Error setting up health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		logger.Error(err, "Error setting up ready check")
+		os.Exit(1)
+	}
 
-    instanceTypeProviderImpl, err := instancetype.NewProvider()
-    if err != nil {
-        logger.Error(err, "Error creating instance type provider")
-        os.Exit(1)
-    }
-    instanceTypeProvider = instanceTypeProviderImpl
+	// Initialize providers
+	var instanceTypeProvider instancetype.Provider
+	var instanceProvider instance.Provider
 
-    instanceProviderImpl, err := instance.NewProvider()
-    if err != nil {
-        logger.Error(err, "Error creating instance provider")
-        os.Exit(1)
-    }
-    instanceProvider = instanceProviderImpl
+	instanceTypeProviderImpl, err := instancetype.NewProvider()
+	if err != nil {
+		logger.Error(err, "Error creating instance type provider")
+		os.Exit(1)
+	}
+	instanceTypeProvider = instanceTypeProviderImpl
 
-    recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
+	instanceProviderImpl, err := instance.NewProvider()
+	if err != nil {
+		logger.Error(err, "Error creating instance provider")
+		os.Exit(1)
+	}
+	instanceProvider = instanceProviderImpl
 
-    // Create the cloud provider
-    cloudProvider := ibmcloud.New(
-        mgr.GetClient(),
-        recorder,
-        instanceTypeProvider,
-        instanceProvider,
-    )
+	recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
 
-    // Create the reconciler
-    reconciler := NewIBMCloudReconciler(mgr.GetClient(), cloudProvider)
+	// Create the cloud provider
+	cloudProvider := ibmcloud.New(
+		mgr.GetClient(),
+		recorder,
+		instanceTypeProvider,
+		instanceProvider,
+	)
 
-    // Create a new controller
-    if err := builder.ControllerManagedBy(mgr).
-        For(&v1.NodeClaim{}).
-        Complete(reconciler); err != nil {
-        logger.Error(err, "Error creating controller")
-        os.Exit(1)
-    }
+	// Create the reconciler
+	reconciler := NewIBMCloudReconciler(mgr.GetClient(), cloudProvider)
 
-    logger.Info("Starting manager")
-    if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
-        logger.Error(err, "Error running manager")
-        os.Exit(1)
-    }
+	// Create a new controller
+	if err := builder.ControllerManagedBy(mgr).
+		For(&v1.NodeClaim{}).
+		Complete(reconciler); err != nil {
+		logger.Error(err, "Error creating controller")
+		os.Exit(1)
+	}
+
+	logger.Info("Starting manager")
+	if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
+		logger.Error(err, "Error running manager")
+		os.Exit(1)
+	}
 }

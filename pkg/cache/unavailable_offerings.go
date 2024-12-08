@@ -7,7 +7,7 @@ import (
 
 // UnavailableOfferings tracks offerings that are currently unavailable
 type UnavailableOfferings struct {
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 	offerings map[string]time.Time
 }
 

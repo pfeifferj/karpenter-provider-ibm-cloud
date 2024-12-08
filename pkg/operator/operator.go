@@ -4,25 +4,25 @@ import (
 	"context"
 
 	"github.com/awslabs/operatorpkg/controller"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
-	instancetypecontroller "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 	interruptioncontroller "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
+	instancetypecontroller "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 )
 
 type Operator struct {
-	kubeClient          client.Client
-	kubeClientSet       *kubernetes.Clientset
+	kubeClient           client.Client
+	kubeClientSet        *kubernetes.Clientset
 	unavailableOfferings *cache.UnavailableOfferings
-	recorder            record.EventRecorder
+	recorder             record.EventRecorder
 }
 
 func NewOperator(ctx context.Context, config *rest.Config) (*Operator, error) {
