@@ -8,10 +8,21 @@ import (
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 )
 
+// iamClientInterface defines the interface for the IAM client
+type iamClientInterface interface {
+	GetToken(context.Context) (string, error)
+}
+
+// globalCatalogClientInterface defines the interface for the Global Catalog client
+type globalCatalogClientInterface interface {
+	GetCatalogEntryWithContext(context.Context, *globalcatalogv1.GetCatalogEntryOptions) (*globalcatalogv1.CatalogEntry, *core.DetailedResponse, error)
+	ListCatalogEntriesWithContext(context.Context, *globalcatalogv1.ListCatalogEntriesOptions) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error)
+}
+
 // GlobalCatalogClient handles interactions with the IBM Cloud Global Catalog API
 type GlobalCatalogClient struct {
-	iamClient *IAMClient
-	client    *globalcatalogv1.GlobalCatalogV1
+	iamClient iamClientInterface
+	client    globalCatalogClientInterface
 }
 
 func NewGlobalCatalogClient(iamClient *IAMClient) *GlobalCatalogClient {
@@ -40,11 +51,12 @@ func (c *GlobalCatalogClient) ensureClient(ctx context.Context) error {
 		Authenticator: authenticator,
 	}
 
-	c.client, err = globalcatalogv1.NewGlobalCatalogV1(options)
+	client, err := globalcatalogv1.NewGlobalCatalogV1(options)
 	if err != nil {
 		return fmt.Errorf("initializing Global Catalog client: %w", err)
 	}
 
+	c.client = client
 	return nil
 }
 
