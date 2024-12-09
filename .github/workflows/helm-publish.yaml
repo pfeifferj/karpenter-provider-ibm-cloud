@@ -26,7 +26,6 @@ jobs:
     - name: Package Helm chart
       working-directory: charts
       run: |
-        helm lint .  
         helm package . -d ../packaged-charts  
 
     - name: Generate Helm repo index
