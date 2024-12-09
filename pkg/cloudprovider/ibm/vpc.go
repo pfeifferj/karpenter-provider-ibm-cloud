@@ -4,8 +4,18 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 )
+
+// vpcClientInterface defines the interface for the VPC client
+type vpcClientInterface interface {
+	CreateInstanceWithContext(context.Context, *vpcv1.CreateInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
+	DeleteInstanceWithContext(context.Context, *vpcv1.DeleteInstanceOptions) (*core.DetailedResponse, error)
+	GetInstanceWithContext(context.Context, *vpcv1.GetInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
+	ListInstancesWithContext(context.Context, *vpcv1.ListInstancesOptions) (*vpcv1.InstanceCollection, *core.DetailedResponse, error)
+	UpdateInstanceWithContext(context.Context, *vpcv1.UpdateInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
+}
 
 // VPCClient handles interactions with the IBM Cloud VPC API
 type VPCClient struct {
@@ -13,7 +23,7 @@ type VPCClient struct {
 	authType string
 	apiKey   string
 	region   string
-	client   *vpcv1.VpcV1
+	client   vpcClientInterface
 }
 
 func NewVPCClient(baseURL, authType, apiKey, region string) *VPCClient {
