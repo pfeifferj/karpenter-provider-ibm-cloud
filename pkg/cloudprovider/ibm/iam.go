@@ -5,13 +5,19 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/platform-services-go-sdk/iamidentityv1"
 )
+
+// iamIdentityClientInterface defines the interface for the IAM Identity client
+type iamIdentityClientInterface interface {
+	CreateAPIKey(options *iamidentityv1.CreateAPIKeyOptions) (*iamidentityv1.APIKey, *core.DetailedResponse, error)
+}
 
 // IAMClient handles interactions with the IBM Cloud IAM API
 type IAMClient struct {
 	apiKey string
-	client *iamidentityv1.IamIdentityV1
+	client iamIdentityClientInterface
 	token  string
 	expiry time.Time
 }
@@ -33,10 +39,11 @@ func (c *IAMClient) GetToken(ctx context.Context) (string, error) {
 	if c.client == nil {
 		options := &iamidentityv1.IamIdentityV1Options{}
 		var err error
-		c.client, err = iamidentityv1.NewIamIdentityV1UsingExternalConfig(options)
+		client, err := iamidentityv1.NewIamIdentityV1UsingExternalConfig(options)
 		if err != nil {
 			return "", fmt.Errorf("initializing IAM client: %w", err)
 		}
+		c.client = client
 	}
 
 	// Create API key options
