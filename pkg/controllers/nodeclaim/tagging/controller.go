@@ -60,13 +60,13 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 
 		// Build tags map
 		tags := map[string]string{
-			"karpenter.ibm.cloud/nodeclaim": nodeClaim.Name,
-			"karpenter.ibm.cloud/nodepool":  nodeClaim.Labels["karpenter.sh/nodepool"],
+			"karpenter.ibm.sh/nodeclaim": nodeClaim.Name,
+			"karpenter.ibm.sh/nodepool":  nodeClaim.Labels["karpenter.sh/nodepool"],
 		}
 
 		// Add custom tags from nodeclaim requirements
 		for _, req := range nodeClaim.Spec.Requirements {
-			if req.Key == "karpenter.ibm.cloud/tags" {
+			if req.Key == "karpenter.ibm.sh/tags" {
 				for _, value := range req.Values {
 					parts := strings.SplitN(value, "=", 2)
 					if len(parts) == 2 {
