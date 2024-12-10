@@ -8,7 +8,7 @@ image:
   repository: ghcr.io/pfeifferj/karpenter-provider-ibm-cloud/controller
   tag: latest
   pullPolicy: IfNotPresent
-  digest: "sha256:2f97b9e74575a45c09e01dbb708bb8cb37b0ba8c4b62f3a7d27a3aec3a506128"
+  digest: "sha256:98e1441aa5d15f6e23e58a466c2526942e853d49281eefffa64e22361f7a19ad"
   # Overrides the image tag whose default is the chart appVersion.
 
 # Logging configuration
