@@ -11,6 +11,13 @@ image:
   digest: "sha256:2f97b9e74575a45c09e01dbb708bb8cb37b0ba8c4b62f3a7d27a3aec3a506128"
   # Overrides the image tag whose default is the chart appVersion.
 
+# Logging configuration
+logLevel: "debug"           # Options: debug, info, warn, error
+verboseLogLevel: "5"        # Verbosity level (1-5)
+debug: "true"               # Enable debug mode
+controllerVerbosity: "4"    # Controller manager verbosity (0-5)
+controllerLogLevel: "debug" # Controller manager log level
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""

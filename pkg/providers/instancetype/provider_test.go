@@ -83,7 +83,7 @@ func TestProviderGet(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			instance, err := provider.Get(ctx, tt.instanceName)
 			assert.NoError(t, err)
-			
+
 			if tt.expectInstance {
 				assert.NotNil(t, instance)
 				assert.Equal(t, tt.instanceName, instance.Name)

@@ -2,6 +2,7 @@ package instancetype
 
 import (
 	"testing"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,7 +18,7 @@ func TestInstanceTypeRequirements(t *testing.T) {
 				CPU:          4,
 				Memory:       8,
 				Architecture: "amd64",
-				GPU:         false,
+				GPU:          false,
 			},
 			validate: func(t *testing.T, req InstanceTypeRequirements) {
 				assert.Equal(t, 4, req.CPU)
@@ -32,7 +33,7 @@ func TestInstanceTypeRequirements(t *testing.T) {
 				CPU:          8,
 				Memory:       16,
 				Architecture: "amd64",
-				GPU:         true,
+				GPU:          true,
 			},
 			validate: func(t *testing.T, req InstanceTypeRequirements) {
 				assert.Equal(t, 8, req.CPU)
@@ -47,7 +48,7 @@ func TestInstanceTypeRequirements(t *testing.T) {
 				CPU:          2,
 				Memory:       4,
 				Architecture: "arm64",
-				GPU:         false,
+				GPU:          false,
 			},
 			validate: func(t *testing.T, req InstanceTypeRequirements) {
 				assert.Equal(t, 2, req.CPU)
@@ -77,9 +78,9 @@ func TestInstanceTypeCapabilities(t *testing.T) {
 				CPU:              4,
 				Memory:           8,
 				Architecture:     "amd64",
-				GPU:             false,
+				GPU:              false,
 				NetworkBandwidth: 10,
-				StorageType:     "ssd",
+				StorageType:      "ssd",
 			},
 			validate: func(t *testing.T, cap InstanceTypeCapabilities) {
 				assert.Equal(t, 4, cap.CPU)
@@ -96,9 +97,9 @@ func TestInstanceTypeCapabilities(t *testing.T) {
 				CPU:              32,
 				Memory:           128,
 				Architecture:     "amd64",
-				GPU:             true,
+				GPU:              true,
 				NetworkBandwidth: 100,
-				StorageType:     "nvme",
+				StorageType:      "nvme",
 			},
 			validate: func(t *testing.T, cap InstanceTypeCapabilities) {
 				assert.Equal(t, 32, cap.CPU)

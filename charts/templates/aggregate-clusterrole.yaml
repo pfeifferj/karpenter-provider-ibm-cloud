@@ -13,3 +13,6 @@ rules:
   - apiGroups: ["karpenter.sh"]
     resources: ["nodepools", "nodepools/status", "nodeclaims", "nodeclaims/status"]
     verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: ["karpenter.ibm.sh"]
+    resources: ["ibmnodeclasses", "ibmnodeclasses/status"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
