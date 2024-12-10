@@ -152,11 +152,11 @@ func TestReconcile(t *testing.T) {
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
 			Region:          "us-south",
-			Zone:           "us-south-1",
+			Zone:            "us-south-1",
 			InstanceProfile: "bx2-4x16",
-			Image:          "test-image",
-			VPC:            "test-vpc",
-			Subnet:         "test-subnet",
+			Image:           "test-image",
+			VPC:             "test-vpc",
+			Subnet:          "test-subnet",
 		},
 		Status: v1alpha1.IBMNodeClassStatus{
 			SpecHash: 12345,

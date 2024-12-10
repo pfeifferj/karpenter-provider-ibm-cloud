@@ -36,3 +36,10 @@ rules:
   - apiGroups: ["karpenter.kwok.sh"]
     resources: ["kwoknodeclasses", "kwoknodeclasses/status"]
     verbs: ["patch", "update"]
+  # IBM NodeClass permissions
+  - apiGroups: ["karpenter.ibm.sh"]
+    resources: ["ibmnodeclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["karpenter.ibm.sh"]
+    resources: ["ibmnodeclasses/status"]
+    verbs: ["patch", "update"]

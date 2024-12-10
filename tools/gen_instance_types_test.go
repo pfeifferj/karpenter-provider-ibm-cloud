@@ -26,7 +26,7 @@ func (m *mockVPCClient) ListInstanceProfiles(listInstanceProfilesOptions *vpcv1.
 	name := "test-profile"
 	vcpuCount := int64(4)
 	memoryValue := int64(8192)
-	
+
 	return &vpcv1.InstanceProfileCollection{
 		Profiles: []vpcv1.InstanceProfile{
 			{
@@ -113,7 +113,7 @@ func TestIBMInstanceTypeJSON(t *testing.T) {
 func TestFetchInstanceProfiles(t *testing.T) {
 	// Create a mock implementation
 	mock := &mockVPCClient{}
-	
+
 	profiles, err := fetchInstanceProfilesTest(mock)
 	assert.NoError(t, err)
 	assert.NotNil(t, profiles)

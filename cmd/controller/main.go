@@ -24,6 +24,7 @@ import (
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"go.uber.org/zap/zapcore"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,10 +42,11 @@ import (
 )
 
 func init() {
-	// Initialize klog and zap logger
+	// Initialize klog and zap logger with debug settings
 	klog.InitFlags(nil)
 	opts := zap.Options{
 		Development: true,
+		TimeEncoder: zapcore.ISO8601TimeEncoder,
 	}
 	logger := zap.New(zap.UseFlagOptions(&opts))
 	log.SetLogger(logger)
@@ -63,16 +65,27 @@ func NewIBMCloudReconciler(kubeClient client.Client, provider *ibmcloud.CloudPro
 }
 
 func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	logger := log.FromContext(ctx).WithValues("nodeclaim", req.NamespacedName)
+	logger.Info("Starting reconciliation")
+
 	var nodeClaim v1.NodeClaim
 	if err := r.Get(ctx, req.NamespacedName, &nodeClaim); err != nil {
-		// handle not found error
+		logger.Error(err, "Failed to get NodeClaim")
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
+	logger.Info("Processing NodeClaim",
+		"name", nodeClaim.Name,
+		"deletionTimestamp", nodeClaim.DeletionTimestamp,
+		"providerID", nodeClaim.Status.ProviderID,
+		"requirements", nodeClaim.Spec.Requirements)
+
 	// Check if the NodeClaim has a finalizer for cleanup purposes
 	if !controllerutil.ContainsFinalizer(&nodeClaim, "karpenter.sh/finalizer") {
+		logger.Info("Adding finalizer to NodeClaim")
 		controllerutil.AddFinalizer(&nodeClaim, "karpenter.sh/finalizer")
 		if err := r.Update(ctx, &nodeClaim); err != nil {
+			logger.Error(err, "Failed to add finalizer")
 			return reconcile.Result{}, err
 		}
 	}
@@ -80,31 +93,52 @@ func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 	// Handle NodeClaim provisioning or deletion
 	if nodeClaim.DeletionTimestamp.IsZero() {
 		if nodeClaim.Status.ProviderID == "" {
+			logger.Info("Provisioning new node")
 			// Provision new instance using IBM Cloud Provider
 			createdNodeClaim, err := r.CloudProvider.Create(ctx, &nodeClaim)
 			if err != nil {
+				logger.Error(err, "Failed to create node",
+					"requirements", nodeClaim.Spec.Requirements,
+					"labels", nodeClaim.Labels)
 				return reconcile.Result{}, fmt.Errorf("creating node claim: %w", err)
 			}
+			logger.Info("Successfully created node",
+				"providerID", createdNodeClaim.Status.ProviderID,
+				"requirements", nodeClaim.Spec.Requirements)
+
 			nodeClaim.Status = createdNodeClaim.Status
 			if err := r.Status().Update(ctx, &nodeClaim); err != nil {
+				logger.Error(err, "Failed to update NodeClaim status")
 				return reconcile.Result{}, err
 			}
+			logger.Info("Successfully updated NodeClaim status")
+		} else {
+			logger.Info("Node already exists", "providerID", nodeClaim.Status.ProviderID)
 		}
 	} else {
+		logger.Info("Deleting node", "providerID", nodeClaim.Status.ProviderID)
 		// Handle deletion
 		if err := r.CloudProvider.Delete(ctx, &nodeClaim); err != nil {
+			logger.Error(err, "Failed to delete node")
 			return reconcile.Result{}, fmt.Errorf("deleting node claim: %w", err)
 		}
+		logger.Info("Successfully deleted node")
+
 		controllerutil.RemoveFinalizer(&nodeClaim, "karpenter.sh/finalizer")
 		if err := r.Update(ctx, &nodeClaim); err != nil {
+			logger.Error(err, "Failed to remove finalizer")
 			return reconcile.Result{}, err
 		}
+		logger.Info("Successfully removed finalizer")
 	}
+
+	logger.Info("Completed reconciliation")
 	return reconcile.Result{}, nil
 }
 
 func main() {
 	logger := log.FromContext(context.Background())
+	logger.Info("Starting controller with debug logging enabled")
 
 	// Get a config to talk to the apiserver
 	cfg, err := config.GetConfig()
@@ -139,6 +173,7 @@ func main() {
 	var instanceTypeProvider instancetype.Provider
 	var instanceProvider instance.Provider
 
+	logger.Info("Initializing instance type provider")
 	instanceTypeProviderImpl, err := instancetype.NewProvider()
 	if err != nil {
 		logger.Error(err, "Error creating instance type provider")
@@ -146,6 +181,7 @@ func main() {
 	}
 	instanceTypeProvider = instanceTypeProviderImpl
 
+	logger.Info("Initializing instance provider")
 	instanceProviderImpl, err := instance.NewProvider()
 	if err != nil {
 		logger.Error(err, "Error creating instance provider")
@@ -156,6 +192,7 @@ func main() {
 	recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
 
 	// Create the cloud provider
+	logger.Info("Creating cloud provider")
 	cloudProvider := ibmcloud.New(
 		mgr.GetClient(),
 		recorder,
@@ -164,6 +201,7 @@ func main() {
 	)
 
 	// Create the reconciler
+	logger.Info("Creating reconciler")
 	reconciler := NewIBMCloudReconciler(mgr.GetClient(), cloudProvider)
 
 	// Create a new controller

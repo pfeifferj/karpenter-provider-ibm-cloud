@@ -33,6 +33,12 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            - name: KARPENTER_LOG_LEVEL
+              value: {{ .Values.logLevel | default "debug" | quote }}
+            - name: KARPENTER_VERBOSE_LOG_LEVEL
+              value: {{ .Values.verboseLogLevel | default "5" | quote }}
+            - name: KARPENTER_DEBUG
+              value: {{ .Values.debug | default "true" | quote }}
             - name: IBM_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -58,6 +64,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
                   key: vpc_api_key
+            - name: CONTROLLER_MANAGER_VERBOSITY
+              value: {{ .Values.controllerVerbosity | default "4" | quote }}
+            - name: CONTROLLER_MANAGER_LOG_LEVEL
+              value: {{ .Values.controllerLogLevel | default "debug" | quote }}
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metrics.port }}
