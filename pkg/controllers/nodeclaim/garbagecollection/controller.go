@@ -79,12 +79,12 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 }
 
 func (c *Controller) removeFinalizer(ctx context.Context, nodeClaim *v1beta1.NodeClaim) error {
-	if !containsString(nodeClaim.Finalizers, "karpenter.ibm.cloud/nodeclaim") {
+	if !containsString(nodeClaim.Finalizers, "karpenter.ibm.sh/nodeclaim") {
 		return nil
 	}
 
 	patch := client.MergeFrom(nodeClaim.DeepCopy())
-	nodeClaim.Finalizers = removeString(nodeClaim.Finalizers, "karpenter.ibm.cloud/nodeclaim")
+	nodeClaim.Finalizers = removeString(nodeClaim.Finalizers, "karpenter.ibm.sh/nodeclaim")
 	return c.kubeClient.Patch(ctx, nodeClaim, patch)
 }
 

@@ -50,7 +50,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	// List all nodes using this nodeclass
 	nodes := &v1.NodeList{}
 	if err := c.kubeClient.List(ctx, nodes, client.MatchingLabels{
-		"karpenter.ibm.cloud/nodeclass": nc.Name,
+		"karpenter.ibm.sh/nodeclass": nc.Name,
 	}); err != nil {
 		return reconcile.Result{}, err
 	}
