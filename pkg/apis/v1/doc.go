@@ -14,8 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// +k8s:openapi-gen=true
 // +k8s:deepcopy-gen=package
-// +k8s:defaulter-gen=TypeMeta
 // +groupName=karpenter.ibm.sh
-package v1alpha1 // import "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+package v1
