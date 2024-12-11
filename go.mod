@@ -11,6 +11,7 @@ require (
 	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis v0.0.0-00010101000000-000000000000
 	github.com/samber/lo v1.47.0
 	github.com/stretchr/testify v1.9.0
+	go.uber.org/zap v1.27.0
 	k8s.io/api v0.31.2
 	k8s.io/apimachinery v0.31.2
 	k8s.io/client-go v0.31.2
@@ -79,7 +80,6 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	go.mongodb.org/mongo-driver v1.17.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/crypto v0.28.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/mod v0.21.0 // indirect
