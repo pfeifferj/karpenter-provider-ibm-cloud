@@ -23,10 +23,6 @@ import (
 	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
-const (
-	Group = "karpenter.ibm.sh"
-)
-
 var (
 	//go:embed crds/apis/crds/karpenter.ibm_cloud.sh_ibm_cloudnodeclasses.yaml
 	IBMNodeClassCRD []byte

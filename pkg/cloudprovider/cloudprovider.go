@@ -40,7 +40,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
 
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/constants"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
@@ -90,14 +90,18 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 	log.Info("Resolved NodeClass", "nodeClass", nodeClass.Name)
 
-	nodeClassReady := nodeClass.StatusConditions().Get(status.ConditionReady)
-	if nodeClassReady.IsFalse() {
-		log.Error(stderrors.New(nodeClassReady.Message), "NodeClass not ready")
-		return nil, cloudprovider.NewNodeClassNotReadyError(stderrors.New(nodeClassReady.Message))
-	}
-	if nodeClassReady.IsUnknown() {
-		log.Error(stderrors.New(nodeClassReady.Message), "NodeClass readiness unknown")
-		return nil, fmt.Errorf("resolving NodeClass readiness, NodeClass is in Ready=Unknown, %s", nodeClassReady.Message)
+	nodeClassReady := lo.Find(nodeClass.Status.Conditions, func(c metav1.Condition) bool {
+		return c.Type == "Ready"
+	})
+	if nodeClassReady != nil {
+		if nodeClassReady.Status == metav1.ConditionFalse {
+			log.Error(stderrors.New(nodeClassReady.Message), "NodeClass not ready")
+			return nil, cloudprovider.NewNodeClassNotReadyError(stderrors.New(nodeClassReady.Message))
+		}
+		if nodeClassReady.Status == metav1.ConditionUnknown {
+			log.Error(stderrors.New(nodeClassReady.Message), "NodeClass readiness unknown")
+			return nil, fmt.Errorf("resolving NodeClass readiness, NodeClass is in Ready=Unknown, %s", nodeClassReady.Message)
+		}
 	}
 
 	log.Info("Resolving instance types")
@@ -398,7 +402,7 @@ func (c *CloudProvider) resolveNodeClassFromNodePool(ctx context.Context, nodePo
 }
 
 func newTerminatingNodeClassError(name string) *errors.StatusError {
-	qualifiedResource := schema.GroupResource{Group: apis.Group, Resource: "ibmnodeclasses"}
+	qualifiedResource := schema.GroupResource{Group: constants.Group, Resource: "ibmnodeclasses"}
 	err := errors.NewNotFound(qualifiedResource, name)
 	err.ErrStatus.Message = fmt.Sprintf("%s %q is terminating, treating as not found", qualifiedResource.String(), name)
 	return err
