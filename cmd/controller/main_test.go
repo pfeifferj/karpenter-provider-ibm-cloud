@@ -10,16 +10,17 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/events"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 
-	ibmv1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
@@ -47,15 +48,30 @@ func (m *mockInstanceTypeProvider) Get(ctx context.Context, name string) (*cloud
 		},
 		Requirements: scheduling.NewRequirements(
 			scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, "test-instance-type"),
+			scheduling.NewRequirement(v1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, v1.CapacityTypeOnDemand),
 			scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1"),
 		),
 		Offerings: []cloudprovider.Offering{
 			{
 				Requirements: scheduling.NewRequirements(
 					scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1"),
+					scheduling.NewRequirement(v1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, v1.CapacityTypeOnDemand),
 				),
 				Price:     1.0,
 				Available: true,
+			},
+		},
+		Overhead: &cloudprovider.InstanceTypeOverhead{
+			KubeReserved: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+			SystemReserved: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+			EvictionThreshold: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("500Mi"),
 			},
 		},
 	}, nil
@@ -77,7 +93,7 @@ func (m *mockInstanceTypeProvider) Delete(ctx context.Context, instanceType *clo
 // Mock Instance Provider
 type mockInstanceProvider struct{}
 
-func (m *mockInstanceProvider) Create(ctx context.Context, nodeClaim *ibmv1.NodeClaim) (*corev1.Node, error) {
+func (m *mockInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeClaim.Name,
@@ -106,18 +122,29 @@ func (m *mockInstanceProvider) GetInstance(ctx context.Context, node *corev1.Nod
 	}, nil
 }
 
+func (m *mockInstanceProvider) TagInstance(ctx context.Context, instanceID string, tags map[string]string) error {
+	return nil
+}
+
 func TestReconcile(t *testing.T) {
 	// Create a new scheme and register types
 	s := runtime.NewScheme()
 	if err := scheme.AddToScheme(s); err != nil {
 		t.Fatalf("Failed to add core scheme: %v", err)
 	}
-	if err := ibmv1.AddToScheme(s); err != nil {
-		t.Fatalf("Failed to add IBM v1 scheme: %v", err)
-	}
 	if err := v1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("Failed to add IBM v1alpha1 scheme: %v", err)
+		t.Fatalf("Failed to add ibm scheme: %v", err)
 	}
+
+	// Register NodeClaim types
+	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
+	s.AddKnownTypes(gv,
+		&v1.NodeClaim{},
+		&v1.NodeClaimList{},
+		&v1.NodePool{},
+		&v1.NodePoolList{},
+	)
+	metav1.AddToGroupVersion(s, gv)
 
 	nodeClass := &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{
@@ -142,18 +169,20 @@ func TestReconcile(t *testing.T) {
 		},
 	}
 
-	nodeClaim := &ibmv1.NodeClaim{
+	nodeClaim := &v1.NodeClaim{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "karpenter.sh/v1",
+			Kind:       "NodeClaim",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-node",
 			Namespace: "default",
 		},
-		Spec: ibmv1.NodeClaimSpec{
-			NodeClassRef: &ibmv1.NodeClassReference{
-				Name:     nodeClass.Name,
-				Kind:     "IBMNodeClass",
-				APIGroup: "karpenter.ibm.sh",
+		Spec: v1.NodeClaimSpec{
+			NodeClassRef: &v1.NodeClassReference{
+				Name: nodeClass.Name,
 			},
-			Requirements: []ibmv1.NodeSelectorRequirementWithMinValues{
+			Requirements: []v1.NodeSelectorRequirementWithMinValues{
 				{
 					NodeSelectorRequirement: corev1.NodeSelectorRequirement{
 						Key:      corev1.LabelInstanceTypeStable,
@@ -162,7 +191,7 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 			},
-			Resources: ibmv1.ResourceRequirements{
+			Resources: v1.ResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("1"),
 					corev1.ResourceMemory: resource.MustParse("1Gi"),
@@ -175,7 +204,7 @@ func TestReconcile(t *testing.T) {
 	client := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(nodeClass, nodeClaim).
-		WithStatusSubresource(&ibmv1.NodeClaim{}).
+		WithStatusSubresource(&v1.NodeClaim{}).
 		Build()
 
 	// Create CloudProvider with mocked dependencies
@@ -186,8 +215,7 @@ func TestReconcile(t *testing.T) {
 		&mockInstanceProvider{},
 	)
 
-	// Create the NodeClaimReconciler
-	reconciler := NewNodeClaimReconciler(client, cloudProvider)
+	reconciler := NewIBMCloudReconciler(client, cloudProvider)
 
 	_, err := reconciler.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{
@@ -198,10 +226,11 @@ func TestReconcile(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify nodeclaim was updated
-	var updatedNodeClaim ibmv1.NodeClaim
+	var updatedNodeClaim v1.NodeClaim
 	err = client.Get(context.Background(), types.NamespacedName{
 		Name:      nodeClaim.Name,
 		Namespace: nodeClaim.Namespace,
 	}, &updatedNodeClaim)
 	assert.NoError(t, err)
+	assert.Contains(t, updatedNodeClaim.Finalizers, "karpenter.sh/finalizer")
 }

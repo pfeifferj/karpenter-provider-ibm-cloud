@@ -28,10 +28,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 	"sigs.k8s.io/karpenter/pkg/events"
 
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator"
@@ -94,21 +92,8 @@ func main() {
 		instanceProvider,
 	)
 
-	// Create scheme builder and register types
-	schemeBuilder := &scheme.Builder{GroupVersion: v1alpha1.GroupVersion}
-	schemeBuilder.Register(&v1alpha1.IBMNodeClass{}, &v1alpha1.IBMNodeClassList{})
-
-	// Build the scheme
-	scheme, err := schemeBuilder.Build()
-	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to build scheme")
-		os.Exit(1)
-	}
-
-	// Create manager with scheme
-	mgr, err := manager.New(config, manager.Options{
-		Scheme: scheme,
-	})
+	// Create manager
+	mgr, err := manager.New(config, manager.Options{})
 	if err != nil {
 		log.FromContext(ctx).Error(err, "failed to create manager")
 		os.Exit(1)

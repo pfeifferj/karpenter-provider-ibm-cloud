@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,18 +14,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package interfaces
+package apis
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	_ "embed"
+
+	"github.com/awslabs/operatorpkg/object"
+	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
-// NodeClass defines the interface that all node class types must implement
-type NodeClass interface {
-	runtime.Object
-	metav1.Object
+const (
+	Group = "karpenter.ibm.sh"
+)
 
-	// StatusConditions returns the status conditions of the object
-	StatusConditions() *[]metav1.Condition
-}
+var (
+	//go:embed crds/apis/crds/karpenter.ibm_cloud.sh_ibm_cloudnodeclasses.yaml
+	IBMNodeClassCRD []byte
+	CRDs             = []*v1.CustomResourceDefinition{
+		object.Unmarshal[v1.CustomResourceDefinition](IBMNodeClassCRD),
+	}
+)
