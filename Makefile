@@ -67,6 +67,9 @@ generate: gen-objects manifests ## generate all controller-gen files
 manifests: ## generate the controller-gen kubernetes manifests
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=pkg/apis/crds
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./vendor/sigs.k8s.io/karpenter/..." output:crd:artifacts:config=pkg/apis/crds
+	@echo "Copying generated CRDs to Helm chart..."
+	@mkdir -p charts/crds
+	@cp pkg/apis/crds/*.yaml charts/crds/
 
 .PHONY: test
 test: vendor unit

@@ -14,21 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// +kubebuilder:object:generate=true
-// +groupName=karpenter.ibm.sh
-package v1alpha1 // doc.go is discovered by codegen
+package constants
 
-import (
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes/scheme"
+const (
+	// Group is the API group for IBM Cloud provider
+	Group = "karpenter.ibm.sh"
 )
-
-func init() {
-	gv := schema.GroupVersion{Group: Group, Version: "v1alpha1"}
-	v1.AddToGroupVersion(scheme.Scheme, gv)
-	scheme.Scheme.AddKnownTypes(gv,
-		&IBMNodeClass{},
-		&IBMNodeClassList{},
-	)
-}
