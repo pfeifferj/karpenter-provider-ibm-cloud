@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,7 +15,24 @@ limitations under the License.
 */
 
 // +k8s:openapi-gen=true
-// +k8s:deepcopy-gen=package
+// +k8s:deepcopy-gen=package,register
 // +k8s:defaulter-gen=TypeMeta
 // +groupName=karpenter.ibm.sh
-package v1alpha1 // import "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+package v1alpha1 // doc.go is discovered by codegen
+
+import (
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/scheme"
+
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
+)
+
+func init() {
+	gv := schema.GroupVersion{Group: apis.Group, Version: "v1alpha1"}
+	v1.AddToGroupVersion(scheme.Scheme, gv)
+	scheme.Scheme.AddKnownTypes(gv,
+		&IBMNodeClass{},
+		&IBMNodeClassList{},
+	)
+}

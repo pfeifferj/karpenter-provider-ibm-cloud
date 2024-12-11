@@ -40,8 +40,8 @@ import (
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
 
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/interfaces"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/constants"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
@@ -88,7 +88,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		}
 		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("resolving node class, %w", err))
 	}
-	log.Info("Resolved NodeClass", "nodeClass", nodeClass.GetName())
+	log.Info("Resolved NodeClass", "nodeClass", nodeClass.Name)
 
 	nodeClassReady := nodeClass.StatusConditions().Get(status.ConditionReady)
 	if nodeClassReady.IsFalse() {
@@ -141,8 +141,8 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 
 	nc.Annotations = lo.Assign(nc.Annotations, map[string]string{
-		constants.AnnotationIBMNodeClassHash:        fmt.Sprintf("%d", nodeClass.GetGeneration()),
-		constants.AnnotationIBMNodeClassHashVersion: constants.IBMNodeClassHashVersion,
+		v1alpha1.AnnotationIBMNodeClassHash:        fmt.Sprintf("%d", nodeClass.Status.SpecHash),
+		v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
 	})
 
 	log.Info("Node creation completed successfully",
@@ -185,7 +185,7 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 		return nil, fmt.Errorf("resolving nodeclass, %w", err)
 	}
 	if nc != nil {
-		log.Info("Resolved NodeClass", "name", nc.GetName())
+		log.Info("Resolved NodeClass", "name", nc.Name)
 	}
 
 	nodeClaim := c.instanceToNodeClaim(instance, instanceType, nc)
@@ -239,7 +239,7 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 			continue
 		}
 		if nc != nil {
-			nodeLog.Info("Resolved NodeClass", "name", nc.GetName())
+			nodeLog.Info("Resolved NodeClass", "name", nc.Name)
 		}
 
 		nodeClaim := c.instanceToNodeClaim(instance, instanceType, nc)
@@ -266,7 +266,7 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 		}
 		return nil, err
 	}
-	log.Info("Resolved NodeClass", "name", nodeClass.GetName())
+	log.Info("Resolved NodeClass", "name", nodeClass.Name)
 
 	instanceTypes, err := c.instanceTypeProvider.List(ctx)
 	if err != nil {
@@ -340,7 +340,7 @@ func (c *CloudProvider) Name() string {
 }
 
 func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
-	return []status.Object{&interfaces.NodeClass{}}
+	return []status.Object{&v1alpha1.IBMNodeClass{}}
 }
 
 func (c *CloudProvider) resolveInstanceTypeFromInstance(ctx context.Context, instance *instance.Instance) (*cloudprovider.InstanceType, error) {
@@ -378,7 +378,7 @@ func (c *CloudProvider) resolveNodePoolFromInstance(ctx context.Context, instanc
 	return nil, errors.NewNotFound(schema.GroupResource{Group: coreapis.Group, Resource: "nodepools"}, "")
 }
 
-func (c *CloudProvider) resolveNodeClassFromInstance(ctx context.Context, instance *instance.Instance) (interfaces.NodeClass, error) {
+func (c *CloudProvider) resolveNodeClassFromInstance(ctx context.Context, instance *instance.Instance) (*v1alpha1.IBMNodeClass, error) {
 	np, err := c.resolveNodePoolFromInstance(ctx, instance)
 	if err != nil {
 		return nil, fmt.Errorf("resolving nodepool, %w", err)
@@ -386,25 +386,25 @@ func (c *CloudProvider) resolveNodeClassFromInstance(ctx context.Context, instan
 	return c.resolveNodeClassFromNodePool(ctx, np)
 }
 
-func (c *CloudProvider) resolveNodeClassFromNodePool(ctx context.Context, nodePool *karpv1.NodePool) (interfaces.NodeClass, error) {
-	nodeClass := &interfaces.NodeClass{}
+func (c *CloudProvider) resolveNodeClassFromNodePool(ctx context.Context, nodePool *karpv1.NodePool) (*v1alpha1.IBMNodeClass, error) {
+	nodeClass := &v1alpha1.IBMNodeClass{}
 	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodePool.Spec.Template.Spec.NodeClassRef.Name}, nodeClass); err != nil {
 		return nil, err
 	}
-	if !nodeClass.GetDeletionTimestamp().IsZero() {
-		return nil, newTerminatingNodeClassError(nodeClass.GetName())
+	if !nodeClass.DeletionTimestamp.IsZero() {
+		return nil, newTerminatingNodeClassError(nodeClass.Name)
 	}
 	return nodeClass, nil
 }
 
 func newTerminatingNodeClassError(name string) *errors.StatusError {
-	qualifiedResource := schema.GroupResource{Group: constants.Group, Resource: "ibmnodeclasses"}
+	qualifiedResource := schema.GroupResource{Group: apis.Group, Resource: "ibmnodeclasses"}
 	err := errors.NewNotFound(qualifiedResource, name)
 	err.ErrStatus.Message = fmt.Sprintf("%s %q is terminating, treating as not found", qualifiedResource.String(), name)
 	return err
 }
 
-func (c *CloudProvider) instanceToNodeClaim(i *instance.Instance, instanceType *cloudprovider.InstanceType, nodeClass interfaces.NodeClass) *karpv1.NodeClaim {
+func (c *CloudProvider) instanceToNodeClaim(i *instance.Instance, instanceType *cloudprovider.InstanceType, _ *v1alpha1.IBMNodeClass) *karpv1.NodeClaim {
 	nodeClaim := &karpv1.NodeClaim{}
 	labels := map[string]string{}
 	annotations := map[string]string{}
@@ -436,13 +436,13 @@ func (c *CloudProvider) instanceToNodeClaim(i *instance.Instance, instanceType *
 	return nodeClaim
 }
 
-func (c *CloudProvider) resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *karpv1.NodeClaim) (interfaces.NodeClass, error) {
-	nodeClass := &interfaces.NodeClass{}
+func (c *CloudProvider) resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *karpv1.NodeClaim) (*v1alpha1.IBMNodeClass, error) {
+	nodeClass := &v1alpha1.IBMNodeClass{}
 	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
 		return nil, err
 	}
-	if !nodeClass.GetDeletionTimestamp().IsZero() {
-		return nil, newTerminatingNodeClassError(nodeClass.GetName())
+	if !nodeClass.DeletionTimestamp.IsZero() {
+		return nil, newTerminatingNodeClassError(nodeClass.Name)
 	}
 	return nodeClass, nil
 }

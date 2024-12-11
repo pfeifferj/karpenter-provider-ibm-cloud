@@ -18,11 +18,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 
-	ibmv1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1"
-	ibmv1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/scheme"
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
@@ -31,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -38,10 +37,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/events"
 )
 
 func init() {
+	// Initialize klog and zap logger with debug settings
 	klog.InitFlags(nil)
 	opts := zap.Options{
 		Development: true,
@@ -51,91 +52,87 @@ func init() {
 	log.SetLogger(logger)
 }
 
-// NodeClaimReconciler handles NodeClaim resources
-type NodeClaimReconciler struct {
+type IBMCloudReconciler struct {
 	client.Client
 	CloudProvider *ibmcloud.CloudProvider
 }
 
-// NodePoolReconciler handles NodePool resources
-type NodePoolReconciler struct {
-	client.Client
-	CloudProvider *ibmcloud.CloudProvider
-}
-
-// IBMNodeClassReconciler handles IBMNodeClass resources
-type IBMNodeClassReconciler struct {
-	client.Client
-	CloudProvider *ibmcloud.CloudProvider
-}
-
-func NewNodeClaimReconciler(kubeClient client.Client, provider *ibmcloud.CloudProvider) *NodeClaimReconciler {
-	return &NodeClaimReconciler{
+func NewIBMCloudReconciler(kubeClient client.Client, provider *ibmcloud.CloudProvider) *IBMCloudReconciler {
+	return &IBMCloudReconciler{
 		Client:        kubeClient,
 		CloudProvider: provider,
 	}
 }
 
-func NewNodePoolReconciler(kubeClient client.Client, provider *ibmcloud.CloudProvider) *NodePoolReconciler {
-	return &NodePoolReconciler{
-		Client:        kubeClient,
-		CloudProvider: provider,
-	}
-}
-
-func NewIBMNodeClassReconciler(kubeClient client.Client, provider *ibmcloud.CloudProvider) *IBMNodeClassReconciler {
-	return &IBMNodeClassReconciler{
-		Client:        kubeClient,
-		CloudProvider: provider,
-	}
-}
-
-func (r *NodeClaimReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithValues("nodeclaim", req.NamespacedName)
 	logger.Info("Starting reconciliation")
 
-	var nodeClaim ibmv1.NodeClaim
+	var nodeClaim v1.NodeClaim
 	if err := r.Get(ctx, req.NamespacedName, &nodeClaim); err != nil {
 		logger.Error(err, "Failed to get NodeClaim")
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Implement NodeClaim reconciliation logic
-	// This should handle node provisioning and lifecycle management
+	logger.Info("Processing NodeClaim",
+		"name", nodeClaim.Name,
+		"deletionTimestamp", nodeClaim.DeletionTimestamp,
+		"providerID", nodeClaim.Status.ProviderID,
+		"requirements", nodeClaim.Spec.Requirements)
 
-	return reconcile.Result{}, nil
-}
-
-func (r *NodePoolReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	logger := log.FromContext(ctx).WithValues("nodepool", req.NamespacedName)
-	logger.Info("Starting NodePool reconciliation")
-
-	var nodePool ibmv1.NodePool
-	if err := r.Get(ctx, req.NamespacedName, &nodePool); err != nil {
-		logger.Error(err, "Failed to get NodePool")
-		return reconcile.Result{}, client.IgnoreNotFound(err)
+	// Check if the NodeClaim has a finalizer for cleanup purposes
+	if !controllerutil.ContainsFinalizer(&nodeClaim, "karpenter.sh/finalizer") {
+		logger.Info("Adding finalizer to NodeClaim")
+		controllerutil.AddFinalizer(&nodeClaim, "karpenter.sh/finalizer")
+		if err := r.Update(ctx, &nodeClaim); err != nil {
+			logger.Error(err, "Failed to add finalizer")
+			return reconcile.Result{}, err
+		}
 	}
 
-	// Implement NodePool reconciliation logic
-	// This should handle scaling decisions based on pending pods
-	// and coordinate with the CloudProvider for node provisioning
+	// Handle NodeClaim provisioning or deletion
+	if nodeClaim.DeletionTimestamp.IsZero() {
+		if nodeClaim.Status.ProviderID == "" {
+			logger.Info("Provisioning new node")
+			// Provision new instance using IBM Cloud Provider
+			createdNodeClaim, err := r.CloudProvider.Create(ctx, &nodeClaim)
+			if err != nil {
+				logger.Error(err, "Failed to create node",
+					"requirements", nodeClaim.Spec.Requirements,
+					"labels", nodeClaim.Labels)
+				return reconcile.Result{}, fmt.Errorf("creating node claim: %w", err)
+			}
+			logger.Info("Successfully created node",
+				"providerID", createdNodeClaim.Status.ProviderID,
+				"requirements", nodeClaim.Spec.Requirements)
 
-	return reconcile.Result{}, nil
-}
+			nodeClaim.Status = createdNodeClaim.Status
+			if err := r.Status().Update(ctx, &nodeClaim); err != nil {
+				logger.Error(err, "Failed to update NodeClaim status")
+				return reconcile.Result{}, err
+			}
+			logger.Info("Successfully updated NodeClaim status")
+		} else {
+			logger.Info("Node already exists", "providerID", nodeClaim.Status.ProviderID)
+		}
+	} else {
+		logger.Info("Deleting node", "providerID", nodeClaim.Status.ProviderID)
+		// Handle deletion
+		if err := r.CloudProvider.Delete(ctx, &nodeClaim); err != nil {
+			logger.Error(err, "Failed to delete node")
+			return reconcile.Result{}, fmt.Errorf("deleting node claim: %w", err)
+		}
+		logger.Info("Successfully deleted node")
 
-func (r *IBMNodeClassReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	logger := log.FromContext(ctx).WithValues("ibmnodeclass", req.NamespacedName)
-	logger.Info("Starting IBMNodeClass reconciliation")
-
-	var nodeClass ibmv1alpha1.IBMNodeClass
-	if err := r.Get(ctx, req.NamespacedName, &nodeClass); err != nil {
-		logger.Error(err, "Failed to get IBMNodeClass")
-		return reconcile.Result{}, client.IgnoreNotFound(err)
+		controllerutil.RemoveFinalizer(&nodeClaim, "karpenter.sh/finalizer")
+		if err := r.Update(ctx, &nodeClaim); err != nil {
+			logger.Error(err, "Failed to remove finalizer")
+			return reconcile.Result{}, err
+		}
+		logger.Info("Successfully removed finalizer")
 	}
 
-	// Implement IBMNodeClass reconciliation logic
-	// This should validate and maintain the node class configuration
-
+	logger.Info("Completed reconciliation")
 	return reconcile.Result{}, nil
 }
 
@@ -143,12 +140,14 @@ func main() {
 	logger := log.FromContext(context.Background())
 	logger.Info("Starting controller with debug logging enabled")
 
+	// Get a config to talk to the apiserver
 	cfg, err := config.GetConfig()
 	if err != nil {
 		logger.Error(err, "Error getting config")
 		os.Exit(1)
 	}
 
+	// Create a new manager to provide shared dependencies and start components
 	mgr, err := manager.New(cfg, manager.Options{
 		Metrics: server.Options{
 			BindAddress: ":8080",
@@ -160,12 +159,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Add the IBM API schemes to the manager using the scheme package
-	if err := scheme.AddToScheme(mgr.GetScheme()); err != nil {
-		logger.Error(err, "Error adding IBM API schemes")
-		os.Exit(1)
-	}
-
+	// Add health check endpoints
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		logger.Error(err, "Error setting up health check")
 		os.Exit(1)
@@ -206,30 +200,15 @@ func main() {
 		instanceProvider,
 	)
 
-	// Create and set up the reconcilers
-	nodeClaimReconciler := NewNodeClaimReconciler(mgr.GetClient(), cloudProvider)
-	nodePoolReconciler := NewNodePoolReconciler(mgr.GetClient(), cloudProvider)
-	nodeClassReconciler := NewIBMNodeClassReconciler(mgr.GetClient(), cloudProvider)
+	// Create the reconciler
+	logger.Info("Creating reconciler")
+	reconciler := NewIBMCloudReconciler(mgr.GetClient(), cloudProvider)
 
-	// Set up controllers with their respective reconcilers
+	// Create a new controller
 	if err := builder.ControllerManagedBy(mgr).
-		For(&ibmv1.NodeClaim{}).
-		Complete(nodeClaimReconciler); err != nil {
-		logger.Error(err, "Error creating NodeClaim controller")
-		os.Exit(1)
-	}
-
-	if err := builder.ControllerManagedBy(mgr).
-		For(&ibmv1.NodePool{}).
-		Complete(nodePoolReconciler); err != nil {
-		logger.Error(err, "Error creating NodePool controller")
-		os.Exit(1)
-	}
-
-	if err := builder.ControllerManagedBy(mgr).
-		For(&ibmv1alpha1.IBMNodeClass{}).
-		Complete(nodeClassReconciler); err != nil {
-		logger.Error(err, "Error creating IBMNodeClass controller")
+		For(&v1.NodeClaim{}).
+		Complete(reconciler); err != nil {
+		logger.Error(err, "Error creating controller")
 		os.Exit(1)
 	}
 
