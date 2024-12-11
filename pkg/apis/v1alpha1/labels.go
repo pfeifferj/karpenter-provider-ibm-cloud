@@ -17,16 +17,16 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/constants"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 const (
 	// Labels that can be selected on and are propagated to the node
-	InstanceSizeLabelKey   = apis.Group + "/instance-size"
-	InstanceFamilyLabelKey = apis.Group + "/instance-family"
-	InstanceMemoryLabelKey = apis.Group + "/instance-memory"
-	InstanceCPULabelKey    = apis.Group + "/instance-cpu"
+	InstanceSizeLabelKey   = constants.Group + "/instance-size"
+	InstanceFamilyLabelKey = constants.Group + "/instance-family"
+	InstanceMemoryLabelKey = constants.Group + "/instance-memory"
+	InstanceCPULabelKey    = constants.Group + "/instance-cpu"
 
 	// Internal labels that are propagated to the node
 	IbmLabelKey          = "ibm.x-k8s.io/node"
@@ -36,7 +36,7 @@ const (
 )
 
 func init() {
-	v1.RestrictedLabelDomains = v1.RestrictedLabelDomains.Insert(apis.Group)
+	v1.RestrictedLabelDomains = v1.RestrictedLabelDomains.Insert(constants.Group)
 	v1.WellKnownLabels = v1.WellKnownLabels.Insert(
 		InstanceSizeLabelKey,
 		InstanceFamilyLabelKey,

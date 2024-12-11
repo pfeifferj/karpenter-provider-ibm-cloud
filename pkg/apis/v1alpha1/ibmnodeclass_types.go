@@ -7,6 +7,7 @@ import (
 
 // IBMNodeClass is the Schema for the IBMNodeClass API
 // +kubebuilder:object:root=true
+// +kubebuilder:object:generate=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
 type IBMNodeClass struct {
@@ -77,6 +78,7 @@ type IBMNodeClassStatus struct {
 
 // IBMNodeClassList contains a list of IBMNodeClass
 // +kubebuilder:object:root=true
+// +kubebuilder:object:generate=true
 type IBMNodeClassList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

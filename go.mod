@@ -8,7 +8,7 @@ require (
 	github.com/IBM/vpc-go-sdk v0.59.0
 	github.com/awslabs/operatorpkg v0.0.0-20241115011931-885371bcf05d
 	github.com/mitchellh/hashstructure/v2 v2.0.2
-	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis v0.0.0-00010101000000-000000000000
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis v0.0.0-20241211100634-c281d834aa94
 	github.com/samber/lo v1.47.0
 	github.com/stretchr/testify v1.9.0
 	go.uber.org/zap v1.27.0
@@ -108,6 +108,4 @@ require (
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
 
-replace github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis => ./pkg/apis
-
-replace github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider => ./pkg/cloudprovider
+replace github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/constants => ./pkg/constants
