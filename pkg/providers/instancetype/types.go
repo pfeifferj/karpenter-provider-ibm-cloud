@@ -20,7 +20,7 @@ import (
 	"context"
 
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
-	v1alpha1 "github.com/karpenter-ibm/pkg/apis/v1alpha1"
+	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
 
 // Provider defines the interface for managing IBM Cloud instance types
@@ -44,13 +44,13 @@ type Provider interface {
 	RankInstanceTypes(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType
 }
 
-// InstanceTypeRequirements defines the requirements for an instance type
+// InstanceTypeRequirements defines the requirements for instance type selection
 type InstanceTypeRequirements struct {
-	// CPU is the number of CPU cores required
+	// CPU is the minimum number of CPU cores required
 	CPU int
-	// Memory is the amount of memory required in GB
+	// Memory is the minimum amount of memory required in GB
 	Memory int
-	// Architecture is the CPU architecture (e.g., amd64, arm64)
+	// Architecture is the required CPU architecture
 	Architecture string
 	// GPU indicates if GPU is required
 	GPU bool

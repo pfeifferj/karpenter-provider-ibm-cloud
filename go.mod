@@ -7,16 +7,18 @@ require (
 	github.com/IBM/platform-services-go-sdk v0.69.1
 	github.com/IBM/vpc-go-sdk v0.59.0
 	github.com/awslabs/operatorpkg v0.0.0-20241115011931-885371bcf05d
+	github.com/go-logr/logr v1.4.2
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis v0.0.0-20241211100634-c281d834aa94
+	github.com/prometheus/client_golang v1.20.5
 	github.com/samber/lo v1.47.0
 	github.com/stretchr/testify v1.9.0
 	go.uber.org/zap v1.27.0
 	k8s.io/api v0.31.2
-	k8s.io/apimachinery v0.31.2
+	k8s.io/apimachinery v0.32.0
 	k8s.io/client-go v0.31.2
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/utils v0.0.0-20240711033017-18e509b52bc8
+	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738
 	sigs.k8s.io/controller-runtime v0.19.1
 	sigs.k8s.io/controller-tools v0.16.3
 	sigs.k8s.io/karpenter v1.0.5
@@ -33,13 +35,12 @@ require (
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.5 // indirect
-	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-openapi/errors v0.22.0 // indirect
-	github.com/go-openapi/jsonpointer v0.19.6 // indirect
+	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/strfmt v0.23.0 // indirect
-	github.com/go-openapi/swag v0.22.4 // indirect
+	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.22.1 // indirect
@@ -70,7 +71,6 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_golang v1.20.5 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
@@ -101,11 +101,20 @@ require (
 	k8s.io/cloud-provider v0.31.1 // indirect
 	k8s.io/component-base v0.31.2 // indirect
 	k8s.io/csi-translation-lib v0.30.3 // indirect
-	k8s.io/kube-openapi v0.0.0-20240228011516-70dd3763d340 // indirect
+	k8s.io/kube-openapi v0.0.0-20241105132330-32ad38e42d3f // indirect
 	knative.dev/pkg v0.0.0-20230712131115-7051d301e7f4 // indirect
-	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
-	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
+	sigs.k8s.io/json v0.0.0-20241010143419-9aa6b5e7a4b3 // indirect
+	sigs.k8s.io/structured-merge-diff/v4 v4.4.2 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
 
-replace github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/constants => ./pkg/constants
+replace (
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis => ./pkg/apis
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider => ./pkg/cloudprovider
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/constants => ./pkg/constants
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers => ./pkg/controllers
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance => ./pkg/providers/instance
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype => ./pkg/providers/instancetype
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet => ./pkg/providers/subnet
+	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/utils => ./pkg/utils
+)

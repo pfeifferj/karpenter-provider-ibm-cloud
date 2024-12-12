@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/awslabs/operatorpkg/status"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -90,6 +89,17 @@ func (m *mockInstanceTypeProvider) Delete(ctx context.Context, instanceType *clo
 	return nil
 }
 
+func (m *mockInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requirements *v1alpha1.InstanceTypeRequirements) ([]*cloudprovider.InstanceType, error) {
+	// For testing, just return a single instance type that meets all requirements
+	instanceType, _ := m.Get(ctx, "test-instance-type")
+	return []*cloudprovider.InstanceType{instanceType}, nil
+}
+
+func (m *mockInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
+	// For testing, just return the input slice unchanged
+	return instanceTypes
+}
+
 // Mock Instance Provider
 type mockInstanceProvider struct{}
 
@@ -146,6 +156,7 @@ func TestReconcile(t *testing.T) {
 	)
 	metav1.AddToGroupVersion(s, gv)
 
+	now := metav1.Now()
 	nodeClass := &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-nodeclass",
@@ -160,10 +171,13 @@ func TestReconcile(t *testing.T) {
 		},
 		Status: v1alpha1.IBMNodeClassStatus{
 			SpecHash: 12345,
-			Conditions: []status.Condition{
+			Conditions: []metav1.Condition{
 				{
-					Type:   "Ready",
-					Status: metav1.ConditionTrue,
+					Type:               "Ready",
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: now,
+					Reason:            "Ready",
+					Message:           "NodeClass is ready",
 				},
 			},
 		},
