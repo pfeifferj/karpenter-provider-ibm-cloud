@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +28,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 
+	v1alpha1 "github.com/karpenter-ibm/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
@@ -42,6 +44,28 @@ func NewProvider() (Provider, error) {
 	return &IBMInstanceTypeProvider{
 		client: client,
 	}, nil
+}
+
+// instanceTypeRanking holds data for ranking instance types
+type instanceTypeRanking struct {
+	instanceType *cloudprovider.InstanceType
+	score       float64
+}
+
+// calculateInstanceTypeScore computes a ranking score for an instance type
+// Lower scores are better (more cost-efficient)
+func calculateInstanceTypeScore(instanceType *cloudprovider.InstanceType) float64 {
+	cpuCount := float64(instanceType.Capacity.CPU().Value())
+	memoryGB := float64(instanceType.Capacity.Memory().Value()) / (1024 * 1024 * 1024) // Convert bytes to GB
+	hourlyPrice := instanceType.Price
+
+	// Calculate cost efficiency score (price per CPU and GB of memory)
+	cpuEfficiency := hourlyPrice / cpuCount
+	memoryEfficiency := hourlyPrice / memoryGB
+
+	// Combine scores with weights
+	// We weight CPU and memory equally in this implementation
+	return (cpuEfficiency + memoryEfficiency) / 2
 }
 
 func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudprovider.InstanceType, error) {
@@ -98,6 +122,72 @@ func (p *IBMInstanceTypeProvider) Create(ctx context.Context, instanceType *clou
 func (p *IBMInstanceTypeProvider) Delete(ctx context.Context, instanceType *cloudprovider.InstanceType) error {
 	// Instance types are predefined in IBM Cloud, so this is a no-op
 	return nil
+}
+
+// FilterInstanceTypes returns instance types that meet requirements
+func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requirements *v1alpha1.InstanceTypeRequirements) ([]*cloudprovider.InstanceType, error) {
+	// Get all instance types
+	allTypes, err := p.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []*cloudprovider.InstanceType
+
+	for _, it := range allTypes {
+		// Check architecture requirement
+		if requirements.Architecture != "" && it.Architecture != requirements.Architecture {
+			continue
+		}
+
+		// Check CPU requirement
+		if requirements.MinimumCPU > 0 && it.Capacity.CPU().Value() < int64(requirements.MinimumCPU) {
+			continue
+		}
+
+		// Check memory requirement
+		if requirements.MinimumMemory > 0 {
+			memoryGB := float64(it.Capacity.Memory().Value()) / (1024 * 1024 * 1024)
+			if memoryGB < float64(requirements.MinimumMemory) {
+				continue
+			}
+		}
+
+		// Check price requirement
+		if requirements.MaximumHourlyPrice > 0 && it.Price > requirements.MaximumHourlyPrice {
+			continue
+		}
+
+		filtered = append(filtered, it)
+	}
+
+	// Rank the filtered instances by cost efficiency
+	return p.RankInstanceTypes(filtered), nil
+}
+
+// RankInstanceTypes sorts instance types by cost efficiency
+func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
+	// Create ranking slice
+	rankings := make([]instanceTypeRanking, len(instanceTypes))
+	for i, it := range instanceTypes {
+		rankings[i] = instanceTypeRanking{
+			instanceType: it,
+			score:       calculateInstanceTypeScore(it),
+		}
+	}
+
+	// Sort by score (lower is better)
+	sort.Slice(rankings, func(i, j int) bool {
+		return rankings[i].score < rankings[j].score
+	})
+
+	// Extract sorted instance types
+	result := make([]*cloudprovider.InstanceType, len(rankings))
+	for i, r := range rankings {
+		result[i] = r.instanceType
+	}
+
+	return result
 }
 
 func convertCatalogEntryToInstanceType(entry *globalcatalogv1.CatalogEntry) (*cloudprovider.InstanceType, error) {
