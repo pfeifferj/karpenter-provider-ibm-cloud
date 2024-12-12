@@ -21,29 +21,9 @@ import (
 )
 
 const (
-	defaultRequeueTime = 5 * time.Second
-	maxRequeueTime    = 5 * time.Minute
-
 	// Condition types
 	ConditionTypeAutoPlacement = "AutoPlacement"
 )
-
-// typedRateLimiter wraps a workqueue.RateLimiter to implement TypedRateLimiter
-type typedRateLimiter struct {
-	workqueue.RateLimiter
-}
-
-func (t *typedRateLimiter) When(item reconcile.Request) time.Duration {
-	return t.RateLimiter.When(item)
-}
-
-func (t *typedRateLimiter) NumRequeues(item reconcile.Request) int {
-	return t.RateLimiter.NumRequeues(item)
-}
-
-func (t *typedRateLimiter) Forget(item reconcile.Request) {
-	t.RateLimiter.Forget(item)
-}
 
 // Controller reconciles IBMNodeClass resources
 type Controller struct {
@@ -58,13 +38,8 @@ func NewController(mgr manager.Manager, instanceTypes instancetype.Provider, sub
 	c := &Controller{
 		client:        mgr.GetClient(),
 		instanceTypes: instanceTypes,
-		subnets:      subnets,
-		log:          mgr.GetLogger().WithName("autoplacement-controller"),
-	}
-
-	// Create a typed rate limiter that wraps the default controller rate limiter
-	rateLimiter := &typedRateLimiter{
-		RateLimiter: workqueue.DefaultControllerRateLimiter(),
+		subnets:       subnets,
+		log:           mgr.GetLogger().WithName("autoplacement-controller"),
 	}
 
 	// Use builder pattern to create and configure the controller
@@ -72,7 +47,7 @@ func NewController(mgr manager.Manager, instanceTypes instancetype.Provider, sub
 		For(&v1alpha1.IBMNodeClass{}).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: 1,
-			RateLimiter:            rateLimiter,
+			RateLimiter:             workqueue.DefaultTypedControllerRateLimiter[reconcile.Request](),
 		}).
 		Complete(c)
 
@@ -81,6 +56,12 @@ func NewController(mgr manager.Manager, instanceTypes instancetype.Provider, sub
 	}
 
 	return c, nil
+}
+
+// Start implements manager.Runnable
+func (c *Controller) Start(ctx context.Context) error {
+	// No-op: reconciliation is handled by controller-runtime
+	return nil
 }
 
 // Reconcile handles IBMNodeClass reconciliation
@@ -93,58 +74,78 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, fmt.Errorf("getting nodeclass: %w", err)
 	}
 
-	nodeClass = nodeClass.DeepCopy()
-
 	// Initialize status if needed
 	if nodeClass.Status.Conditions == nil {
 		nodeClass.Status.Conditions = []metav1.Condition{}
 	}
-
-	// Track if any automatic placement was performed
-	autoPlacementPerformed := false
+	if nodeClass.Status.SelectedInstanceTypes == nil {
+		nodeClass.Status.SelectedInstanceTypes = []string{}
+	}
+	if nodeClass.Status.SelectedSubnets == nil {
+		nodeClass.Status.SelectedSubnets = []string{}
+	}
 
 	// Handle automatic instance type selection
 	if nodeClass.Spec.InstanceProfile == "" && nodeClass.Spec.InstanceRequirements != nil {
-		autoPlacementPerformed = true
 		start := time.Now()
 
-		if err := c.handleInstanceTypeSelection(ctx, nodeClass); err != nil {
+		c.log.Info("Starting instance type selection", "nodeclass", req.Name)
+
+		// Get instance types matching requirements
+		instanceTypes, err := c.instanceTypes.FilterInstanceTypes(ctx, nodeClass.Spec.InstanceRequirements)
+		if err != nil {
 			c.log.Error(err, "failed to select instance types", "nodeclass", req.Name)
-			instanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
+			InstanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
+			if err := c.client.Status().Update(ctx, nodeClass); err != nil {
+				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
+			}
 			return reconcile.Result{}, err
 		}
 
-		instanceTypeSelections.WithLabelValues(nodeClass.Name, "success").Inc()
-		instanceTypeSelectionLatency.WithLabelValues(nodeClass.Name).Observe(time.Since(start).Seconds())
-		selectedInstanceTypes.WithLabelValues(nodeClass.Name).Set(float64(len(nodeClass.Status.SelectedInstanceTypes)))
-	}
-
-	// Handle automatic subnet selection
-	if nodeClass.Spec.Subnet == "" && nodeClass.Spec.PlacementStrategy != nil {
-		autoPlacementPerformed = true
-		start := time.Now()
-
-		if err := c.handleSubnetSelection(ctx, nodeClass); err != nil {
-			c.log.Error(err, "failed to select subnets", "nodeclass", req.Name)
-			subnetSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
-			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "SubnetSelectionFailed", err.Error())
+		if len(instanceTypes) == 0 {
+			err := fmt.Errorf("no instance types found matching requirements")
+			c.log.Error(err, "instance type selection failed", "nodeclass", req.Name)
+			InstanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
+			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
+			if err := c.client.Status().Update(ctx, nodeClass); err != nil {
+				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
+			}
 			return reconcile.Result{}, err
 		}
 
-		subnetSelections.WithLabelValues(nodeClass.Name, "success").Inc()
-		subnetSelectionLatency.WithLabelValues(nodeClass.Name).Observe(time.Since(start).Seconds())
-		selectedSubnets.WithLabelValues(nodeClass.Name).Set(float64(len(nodeClass.Status.SelectedSubnets)))
-	}
+		// Update spec with selected instance type
+		nodeClass.Spec.InstanceProfile = instanceTypes[0].Name
+		if err := c.client.Update(ctx, nodeClass); err != nil {
+			return reconcile.Result{}, fmt.Errorf("updating nodeclass spec: %w", err)
+		}
 
-	// Update condition if auto-placement was performed
-	if autoPlacementPerformed {
-		c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionTrue, "AutoPlacementSucceeded", "Automatic placement completed successfully")
-	}
+		// Get fresh copy after spec update
+		if err := c.client.Get(ctx, req.NamespacedName, nodeClass); err != nil {
+			return reconcile.Result{}, fmt.Errorf("getting updated nodeclass: %w", err)
+		}
 
-	// Update status
-	if err := c.client.Status().Update(ctx, nodeClass); err != nil {
-		return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
+		// Update status with selected instance types
+		var selectedTypes []string
+		for _, it := range instanceTypes {
+			selectedTypes = append(selectedTypes, it.Name)
+		}
+		nodeClass.Status.SelectedInstanceTypes = selectedTypes
+
+		c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionTrue, "InstanceTypeSelectionSucceeded", "Instance type selection completed successfully")
+
+		if err := c.client.Status().Update(ctx, nodeClass); err != nil {
+			return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
+		}
+
+		c.log.Info("Instance type selection completed",
+			"nodeclass", req.Name,
+			"instanceProfile", nodeClass.Spec.InstanceProfile,
+			"selectedTypes", nodeClass.Status.SelectedInstanceTypes)
+
+		InstanceTypeSelections.WithLabelValues(nodeClass.Name, "success").Inc()
+		InstanceTypeSelectionLatency.WithLabelValues(nodeClass.Name).Observe(time.Since(start).Seconds())
+		SelectedInstanceTypes.WithLabelValues(nodeClass.Name).Set(float64(len(nodeClass.Status.SelectedInstanceTypes)))
 	}
 
 	return reconcile.Result{}, nil
@@ -174,59 +175,4 @@ func (c *Controller) updateCondition(nodeClass *v1alpha1.IBMNodeClass, condition
 
 	// Append new condition if not found
 	nodeClass.Status.Conditions = append(nodeClass.Status.Conditions, newCondition)
-}
-
-// handleInstanceTypeSelection implements automatic instance type selection
-func (c *Controller) handleInstanceTypeSelection(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass) error {
-	// Get instance types matching requirements
-	instanceTypes, err := c.instanceTypes.FilterInstanceTypes(ctx, nodeClass.Spec.InstanceRequirements)
-	if err != nil {
-		return fmt.Errorf("filtering instance types: %w", err)
-	}
-
-	if len(instanceTypes) == 0 {
-		return fmt.Errorf("no instance types found matching requirements")
-	}
-
-	// Update status with selected instance types
-	var selectedTypes []string
-	for _, it := range instanceTypes {
-		selectedTypes = append(selectedTypes, it.Name)
-	}
-	nodeClass.Status.SelectedInstanceTypes = selectedTypes
-
-	// Use the most cost-efficient instance type
-	nodeClass.Spec.InstanceProfile = instanceTypes[0].Name
-
-	return nil
-}
-
-// handleSubnetSelection implements automatic subnet selection
-func (c *Controller) handleSubnetSelection(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass) error {
-	// Select subnets based on placement strategy
-	selectedSubnets, err := c.subnets.SelectSubnets(ctx, nodeClass.Spec.VPC, nodeClass.Spec.PlacementStrategy)
-	if err != nil {
-		return fmt.Errorf("selecting subnets: %w", err)
-	}
-
-	if len(selectedSubnets) == 0 {
-		return fmt.Errorf("no subnets selected")
-	}
-
-	// Update status with selected subnets
-	var subnetIDs []string
-	for _, subnet := range selectedSubnets {
-		subnetIDs = append(subnetIDs, subnet.ID)
-	}
-	nodeClass.Status.SelectedSubnets = subnetIDs
-
-	// Use the first subnet (highest scored) as the primary
-	nodeClass.Spec.Subnet = selectedSubnets[0].ID
-
-	// If zone not specified, use the zone from selected subnet
-	if nodeClass.Spec.Zone == "" {
-		nodeClass.Spec.Zone = selectedSubnets[0].Zone
-	}
-
-	return nil
 }

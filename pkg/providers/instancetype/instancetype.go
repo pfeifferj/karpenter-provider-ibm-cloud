@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	corev1 "k8s.io/api/core/v1"
@@ -56,7 +57,7 @@ func NewProvider() (Provider, error) {
 // instanceTypeRanking holds data for ranking instance types
 type instanceTypeRanking struct {
 	instanceType *ExtendedInstanceType
-	score       float64
+	score        float64
 }
 
 // calculateInstanceTypeScore computes a ranking score for an instance type
@@ -154,7 +155,7 @@ func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requi
 	var extendedTypes []*ExtendedInstanceType
 	for _, it := range allTypes {
 		ext := &ExtendedInstanceType{
-			InstanceType:  it,
+			InstanceType: it,
 			Architecture: getArchitecture(it),
 			// TODO: Fetch actual price from IBM Cloud pricing API
 			Price: 0.0,
@@ -163,6 +164,16 @@ func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requi
 	}
 
 	var filtered []*ExtendedInstanceType
+
+	// Parse MaximumHourlyPrice if set
+	var maxPrice float64
+	if requirements.MaximumHourlyPrice != "" {
+		var err error
+		maxPrice, err = strconv.ParseFloat(requirements.MaximumHourlyPrice, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid MaximumHourlyPrice value: %w", err)
+		}
+	}
 
 	for _, it := range extendedTypes {
 		// Check architecture requirement
@@ -184,7 +195,7 @@ func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requi
 		}
 
 		// Check price requirement
-		if requirements.MaximumHourlyPrice > 0 && it.Price > requirements.MaximumHourlyPrice {
+		if requirements.MaximumHourlyPrice != "" && maxPrice > 0 && it.Price > maxPrice {
 			continue
 		}
 
@@ -210,7 +221,7 @@ func (p *IBMInstanceTypeProvider) rankInstanceTypes(instanceTypes []*ExtendedIns
 	for i, it := range instanceTypes {
 		rankings[i] = instanceTypeRanking{
 			instanceType: it,
-			score:       calculateInstanceTypeScore(it),
+			score:        calculateInstanceTypeScore(it),
 		}
 	}
 
@@ -234,7 +245,7 @@ func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovid
 	extended := make([]*ExtendedInstanceType, len(instanceTypes))
 	for i, it := range instanceTypes {
 		extended[i] = &ExtendedInstanceType{
-			InstanceType:  it,
+			InstanceType: it,
 			Architecture: getArchitecture(it),
 			// TODO: Fetch actual price from IBM Cloud pricing API
 			Price: 0.0,
