@@ -68,10 +68,10 @@ type InstanceTypeRequirements struct {
 	// +kubebuilder:validation:Minimum=1
 	MinimumMemory int32 `json:"minimumMemory,omitempty"`
 
-	// MaximumHourlyPrice specifies the maximum hourly price in USD
+	// MaximumHourlyPrice specifies the maximum hourly price in USD as a decimal string (e.g. "0.50")
 	// +optional
-	// +kubebuilder:validation:Minimum=0
-	MaximumHourlyPrice float64 `json:"maximumHourlyPrice,omitempty"`
+	// +kubebuilder:validation:Pattern=^\\d+\\.?\\d*$
+	MaximumHourlyPrice string `json:"maximumHourlyPrice,omitempty"`
 }
 
 // IBMNodeClassSpec defines the desired state of IBMNodeClass
@@ -160,11 +160,10 @@ func (in *IBMNodeClass) StatusConditions() status.ConditionSet {
 func (in *IBMNodeClass) GetConditions() []status.Condition {
 	conditions := make([]status.Condition, 0, len(in.Status.Conditions))
 	for _, c := range in.Status.Conditions {
-		lastTransitionTime := c.LastTransitionTime
 		conditions = append(conditions, status.Condition{
 			Type:               c.Type,
-			Status:             string(c.Status),
-			LastTransitionTime: &lastTransitionTime,
+			Status:             c.Status, // Use c.Status directly as it's already a string-like value
+			LastTransitionTime: c.LastTransitionTime,
 			Reason:             c.Reason,
 			Message:            c.Message,
 			ObservedGeneration: c.ObservedGeneration,
@@ -177,13 +176,13 @@ func (in *IBMNodeClass) GetConditions() []status.Condition {
 func (in *IBMNodeClass) SetConditions(conditions []status.Condition) {
 	metav1Conditions := make([]metav1.Condition, 0, len(conditions))
 	for _, c := range conditions {
-		if c.LastTransitionTime == nil {
+		if c.LastTransitionTime.IsZero() {
 			continue
 		}
 		metav1Conditions = append(metav1Conditions, metav1.Condition{
 			Type:               c.Type,
 			Status:             metav1.ConditionStatus(c.Status),
-			LastTransitionTime: *c.LastTransitionTime,
+			LastTransitionTime: c.LastTransitionTime,
 			Reason:             c.Reason,
 			Message:            c.Message,
 			ObservedGeneration: c.ObservedGeneration,

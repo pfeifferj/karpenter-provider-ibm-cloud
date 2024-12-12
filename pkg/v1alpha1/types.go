@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -84,26 +85,6 @@ type IBMNodeClassSpec struct {
 	Tags map[string]string `json:"tags,omitempty"`
 }
 
-// IBMNodeClassStatus contains the resolved state of the IBMNodeClass
-// +k8s:deepcopy-gen=true
-type IBMNodeClassStatus struct {
-	// Conditions contains signals for health and readiness
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// SpecHash is a hash of the IBMNodeClass spec
-	// +optional
-	SpecHash int64 `json:"specHash,omitempty"`
-
-	// LastValidationTime is the last time the nodeclass was validated
-	// +optional
-	LastValidationTime metav1.Time `json:"lastValidationTime,omitempty"`
-
-	// ValidationError contains any validation error message
-	// +optional
-	ValidationError string `json:"validationError,omitempty"`
-}
-
 // IBMNodeClass is the Schema for the IBMNodeClass API
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -120,7 +101,7 @@ type IBMNodeClass struct {
 	Spec IBMNodeClassSpec `json:"spec"`
 
 	// +optional
-	Status IBMNodeClassStatus `json:"status,omitempty"`
+	Status v1alpha1.IBMNodeClassStatus `json:"status,omitempty"`
 }
 
 // IBMNodeClassList contains a list of IBMNodeClass

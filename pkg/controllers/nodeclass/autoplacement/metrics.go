@@ -6,7 +6,8 @@ import (
 )
 
 var (
-	instanceTypeSelections = prometheus.NewCounterVec(
+	// InstanceTypeSelections tracks the number of automatic instance type selections performed
+	InstanceTypeSelections = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "karpenter_ibm_instance_type_selections_total",
 			Help: "Number of automatic instance type selections performed",
@@ -14,7 +15,8 @@ var (
 		[]string{"nodeclass", "result"},
 	)
 
-	subnetSelections = prometheus.NewCounterVec(
+	// SubnetSelections tracks the number of automatic subnet selections performed
+	SubnetSelections = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "karpenter_ibm_subnet_selections_total",
 			Help: "Number of automatic subnet selections performed",
@@ -22,7 +24,8 @@ var (
 		[]string{"nodeclass", "result"},
 	)
 
-	selectedInstanceTypes = prometheus.NewGaugeVec(
+	// SelectedInstanceTypes tracks the number of instance types selected for each nodeclass
+	SelectedInstanceTypes = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "karpenter_ibm_selected_instance_types",
 			Help: "Number of instance types selected for each nodeclass",
@@ -30,7 +33,8 @@ var (
 		[]string{"nodeclass"},
 	)
 
-	selectedSubnets = prometheus.NewGaugeVec(
+	// SelectedSubnets tracks the number of subnets selected for each nodeclass
+	SelectedSubnets = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "karpenter_ibm_selected_subnets",
 			Help: "Number of subnets selected for each nodeclass",
@@ -38,7 +42,8 @@ var (
 		[]string{"nodeclass"},
 	)
 
-	instanceTypeSelectionLatency = prometheus.NewHistogramVec(
+	// InstanceTypeSelectionLatency tracks the duration of instance type selection operations
+	InstanceTypeSelectionLatency = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "karpenter_ibm_instance_type_selection_duration_seconds",
 			Help:    "Duration of instance type selection operations",
@@ -47,7 +52,8 @@ var (
 		[]string{"nodeclass"},
 	)
 
-	subnetSelectionLatency = prometheus.NewHistogramVec(
+	// SubnetSelectionLatency tracks the duration of subnet selection operations
+	SubnetSelectionLatency = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "karpenter_ibm_subnet_selection_duration_seconds",
 			Help:    "Duration of subnet selection operations",
@@ -60,11 +66,11 @@ var (
 func init() {
 	// Register metrics with the global prometheus registry
 	metrics.Registry.MustRegister(
-		instanceTypeSelections,
-		subnetSelections,
-		selectedInstanceTypes,
-		selectedSubnets,
-		instanceTypeSelectionLatency,
-		subnetSelectionLatency,
+		InstanceTypeSelections,
+		SubnetSelections,
+		SelectedInstanceTypes,
+		SelectedSubnets,
+		InstanceTypeSelectionLatency,
+		SubnetSelectionLatency,
 	)
 }

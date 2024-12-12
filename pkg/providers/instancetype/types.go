@@ -19,8 +19,8 @@ package instancetype
 import (
 	"context"
 
-	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
 
 // Provider defines the interface for managing IBM Cloud instance types

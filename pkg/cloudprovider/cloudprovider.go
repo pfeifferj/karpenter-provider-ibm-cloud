@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -16,7 +17,6 @@ import (
 	"sigs.k8s.io/karpenter/pkg/events"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
-	"github.com/awslabs/operatorpkg/status"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
@@ -113,7 +113,7 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 			continue
 		}
 
-		instance, err := c.instanceProvider.GetInstance(ctx, &node)
+		_, err := c.instanceProvider.GetInstance(ctx, &node)
 		if err != nil {
 			log.Error(err, "Failed to get instance details", "node", node.Name)
 			continue
@@ -161,11 +161,11 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 
 	if readyCondition.Status == metav1.ConditionFalse {
-		log.Error(fmt.Errorf(readyCondition.Message), "NodeClass not ready")
-		return nil, cloudprovider.NewNodeClassNotReadyError(fmt.Errorf(readyCondition.Message))
+		log.Error(fmt.Errorf("%s", readyCondition.Message), "NodeClass not ready")
+		return nil, cloudprovider.NewNodeClassNotReadyError(fmt.Errorf("%s", readyCondition.Message))
 	}
 	if readyCondition.Status == metav1.ConditionUnknown {
-		log.Error(fmt.Errorf(readyCondition.Message), "NodeClass readiness unknown")
+		log.Error(fmt.Errorf("%s", readyCondition.Message), "NodeClass readiness unknown")
 		return nil, fmt.Errorf("resolving NodeClass readiness, NodeClass is in Ready=Unknown, %s", readyCondition.Message)
 	}
 

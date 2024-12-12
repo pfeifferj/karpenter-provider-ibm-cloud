@@ -43,9 +43,76 @@ spec:
                 description: Image is the ID of the image to use for nodes
                 type: string
               instanceProfile:
-                description: InstanceProfile is the name of the instance profile to
-                  use
+                description: |-
+                  InstanceProfile is the name of the instance profile to use
+                  If not specified, instance types will be automatically selected based on requirements
                 type: string
+              instanceRequirements:
+                description: |-
+                  InstanceRequirements defines requirements for automatic instance type selection
+                  Only used when InstanceProfile is not specified
+                properties:
+                  architecture:
+                    description: |-
+                      Architecture specifies the CPU architecture
+                      Valid values: "amd64", "arm64"
+                    enum:
+                    - amd64
+                    - arm64
+                    type: string
+                  maximumHourlyPrice:
+                    description: MaximumHourlyPrice specifies the maximum hourly price
+                      in USD as a decimal string (e.g. "0.50")
+                    pattern: ^\\d+\\.?\\d*$
+                    type: string
+                  minimumCPU:
+                    description: MinimumCPU specifies the minimum number of CPUs required
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minimumMemory:
+                    description: MinimumMemory specifies the minimum amount of memory
+                      in GiB
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
+              placementStrategy:
+                description: |-
+                  PlacementStrategy defines how nodes should be placed across zones and subnets
+                  Only used when Zone or Subnet is not specified
+                properties:
+                  subnetSelection:
+                    description: SubnetSelection defines criteria for automatic subnet
+                      selection
+                    properties:
+                      minimumAvailableIPs:
+                        description: MinimumAvailableIPs is the minimum number of
+                          available IPs a subnet must have
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      requiredTags:
+                        additionalProperties:
+                          type: string
+                        description: Tags that subnets must have to be considered
+                          for selection
+                        type: object
+                    type: object
+                  zoneBalance:
+                    default: Balanced
+                    description: |-
+                      ZoneBalance determines how nodes are distributed across zones
+                      Valid values are:
+                      - "Balanced" (default) - Nodes are evenly distributed across zones
+                      - "AvailabilityFirst" - Prioritize zone availability over even distribution
+                      - "CostOptimized" - Consider both cost and availability when selecting zones
+                    enum:
+                    - Balanced
+                    - AvailabilityFirst
+                    - CostOptimized
+                    type: string
+                type: object
               region:
                 description: Region is the IBM Cloud region where nodes will be created
                 type: string
@@ -56,7 +123,9 @@ spec:
                   type: string
                 type: array
               subnet:
-                description: Subnet is the ID of the subnet where nodes will be created
+                description: |-
+                  Subnet is the ID of the subnet where nodes will be created
+                  If not specified, subnets will be automatically selected based on placement strategy
                 type: string
               tags:
                 additionalProperties:
@@ -69,13 +138,11 @@ spec:
               zone:
                 description: |-
                   Zone is the availability zone where nodes will be created
-                  If not specified, the zone will be automatically selected
+                  If not specified, zones will be automatically selected based on placement strategy
                 type: string
             required:
             - image
-            - instanceProfile
             - region
-            - subnet
             - vpc
             type: object
           status:
@@ -84,8 +151,8 @@ spec:
               conditions:
                 description: Conditions contains signals for health and readiness
                 items:
-                  description: Condition aliases the upstream type and adds additional
-                    helper methods
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
                   properties:
                     lastTransitionTime:
                       description: |-
@@ -143,6 +210,20 @@ spec:
                   validated
                 format: date-time
                 type: string
+              selectedInstanceTypes:
+                description: |-
+                  SelectedInstanceTypes contains the list of instance types that meet the requirements
+                  Only populated when using automatic instance type selection
+                items:
+                  type: string
+                type: array
+              selectedSubnets:
+                description: |-
+                  SelectedSubnets contains the list of subnets selected for node placement
+                  Only populated when using automatic subnet selection
+                items:
+                  type: string
+                type: array
               specHash:
                 description: SpecHash is a hash of the IBMNodeClass spec
                 format: int64

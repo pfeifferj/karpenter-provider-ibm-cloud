@@ -82,9 +82,9 @@ func (p *provider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1
 		}
 
 		// Check minimum available IPs
-		if strategy.SubnetSelection != nil && 
-		   strategy.SubnetSelection.MinimumAvailableIPs > 0 && 
-		   subnet.AvailableIPs < strategy.SubnetSelection.MinimumAvailableIPs {
+		if strategy.SubnetSelection != nil &&
+			strategy.SubnetSelection.MinimumAvailableIPs > 0 &&
+			subnet.AvailableIPs < strategy.SubnetSelection.MinimumAvailableIPs {
 			continue
 		}
 
