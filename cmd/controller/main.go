@@ -22,8 +22,10 @@ import (
 	"os"
 
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/autoplacement"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -170,24 +172,25 @@ func main() {
 	}
 
 	// Initialize providers
-	var instanceTypeProvider instancetype.Provider
-	var instanceProvider instance.Provider
+	logger.Info("Initializing providers")
 
-	logger.Info("Initializing instance type provider")
 	instanceTypeProviderImpl, err := instancetype.NewProvider()
 	if err != nil {
 		logger.Error(err, "Error creating instance type provider")
 		os.Exit(1)
 	}
-	instanceTypeProvider = instanceTypeProviderImpl
 
-	logger.Info("Initializing instance provider")
 	instanceProviderImpl, err := instance.NewProvider()
 	if err != nil {
 		logger.Error(err, "Error creating instance provider")
 		os.Exit(1)
 	}
-	instanceProvider = instanceProviderImpl
+
+	subnetProviderImpl, err := subnet.NewProvider()
+	if err != nil {
+		logger.Error(err, "Error creating subnet provider")
+		os.Exit(1)
+	}
 
 	recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
 
@@ -196,19 +199,32 @@ func main() {
 	cloudProvider := ibmcloud.New(
 		mgr.GetClient(),
 		recorder,
-		instanceTypeProvider,
-		instanceProvider,
+		instanceTypeProviderImpl,
+		instanceProviderImpl,
 	)
 
 	// Create the reconciler
-	logger.Info("Creating reconciler")
-	reconciler := NewIBMCloudReconciler(mgr.GetClient(), cloudProvider)
+	logger.Info("Creating reconcilers")
+	nodeClaimReconciler := NewIBMCloudReconciler(mgr.GetClient(), cloudProvider)
 
-	// Create a new controller
+	// Create the autoplacement controller
+	autoplacementController, err := autoplacement.NewController(mgr, instanceTypeProviderImpl, subnetProviderImpl)
+	if err != nil {
+		logger.Error(err, "Error creating autoplacement controller")
+		os.Exit(1)
+	}
+
+	// Create controllers
 	if err := builder.ControllerManagedBy(mgr).
 		For(&v1.NodeClaim{}).
-		Complete(reconciler); err != nil {
-		logger.Error(err, "Error creating controller")
+		Complete(nodeClaimReconciler); err != nil {
+		logger.Error(err, "Error creating nodeclaim controller")
+		os.Exit(1)
+	}
+
+	// Add autoplacement controller to manager
+	if err := mgr.Add(autoplacementController); err != nil {
+		logger.Error(err, "Error adding autoplacement controller")
 		os.Exit(1)
 	}
 

@@ -21,6 +21,59 @@ type IBMNodeClass struct {
 	Status IBMNodeClassStatus `json:"status,omitempty"`
 }
 
+// PlacementStrategy defines how nodes should be placed across zones and subnets
+type PlacementStrategy struct {
+	// ZoneBalance determines how nodes are distributed across zones
+	// Valid values are:
+	// - "Balanced" (default) - Nodes are evenly distributed across zones
+	// - "AvailabilityFirst" - Prioritize zone availability over even distribution
+	// - "CostOptimized" - Consider both cost and availability when selecting zones
+	// +optional
+	// +kubebuilder:validation:Enum=Balanced;AvailabilityFirst;CostOptimized
+	// +kubebuilder:default=Balanced
+	ZoneBalance string `json:"zoneBalance,omitempty"`
+
+	// SubnetSelection defines criteria for automatic subnet selection
+	// +optional
+	SubnetSelection *SubnetSelectionCriteria `json:"subnetSelection,omitempty"`
+}
+
+// SubnetSelectionCriteria defines how subnets should be automatically selected
+type SubnetSelectionCriteria struct {
+	// MinimumAvailableIPs is the minimum number of available IPs a subnet must have
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MinimumAvailableIPs int32 `json:"minimumAvailableIPs,omitempty"`
+
+	// Tags that subnets must have to be considered for selection
+	// +optional
+	RequiredTags map[string]string `json:"requiredTags,omitempty"`
+}
+
+// InstanceTypeRequirements defines criteria for automatic instance type selection
+type InstanceTypeRequirements struct {
+	// Architecture specifies the CPU architecture
+	// Valid values: "amd64", "arm64"
+	// +optional
+	// +kubebuilder:validation:Enum=amd64;arm64
+	Architecture string `json:"architecture,omitempty"`
+
+	// MinimumCPU specifies the minimum number of CPUs required
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MinimumCPU int32 `json:"minimumCPU,omitempty"`
+
+	// MinimumMemory specifies the minimum amount of memory in GiB
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MinimumMemory int32 `json:"minimumMemory,omitempty"`
+
+	// MaximumHourlyPrice specifies the maximum hourly price in USD
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaximumHourlyPrice float64 `json:"maximumHourlyPrice,omitempty"`
+}
+
 // IBMNodeClassSpec defines the desired state of IBMNodeClass
 type IBMNodeClassSpec struct {
 	// Region is the IBM Cloud region where nodes will be created
@@ -28,13 +81,19 @@ type IBMNodeClassSpec struct {
 	Region string `json:"region"`
 
 	// Zone is the availability zone where nodes will be created
-	// If not specified, the zone will be automatically selected
+	// If not specified, zones will be automatically selected based on placement strategy
 	// +optional
 	Zone string `json:"zone,omitempty"`
 
 	// InstanceProfile is the name of the instance profile to use
-	// +required
-	InstanceProfile string `json:"instanceProfile"`
+	// If not specified, instance types will be automatically selected based on requirements
+	// +optional
+	InstanceProfile string `json:"instanceProfile,omitempty"`
+
+	// InstanceRequirements defines requirements for automatic instance type selection
+	// Only used when InstanceProfile is not specified
+	// +optional
+	InstanceRequirements *InstanceTypeRequirements `json:"instanceRequirements,omitempty"`
 
 	// Image is the ID of the image to use for nodes
 	// +required
@@ -45,8 +104,14 @@ type IBMNodeClassSpec struct {
 	VPC string `json:"vpc"`
 
 	// Subnet is the ID of the subnet where nodes will be created
-	// +required
-	Subnet string `json:"subnet"`
+	// If not specified, subnets will be automatically selected based on placement strategy
+	// +optional
+	Subnet string `json:"subnet,omitempty"`
+
+	// PlacementStrategy defines how nodes should be placed across zones and subnets
+	// Only used when Zone or Subnet is not specified
+	// +optional
+	PlacementStrategy *PlacementStrategy `json:"placementStrategy,omitempty"`
 
 	// SecurityGroups is a list of security group IDs to attach to nodes
 	// +optional
@@ -70,6 +135,16 @@ type IBMNodeClassStatus struct {
 	// ValidationError contains the error message from the last validation
 	// +optional
 	ValidationError string `json:"validationError,omitempty"`
+
+	// SelectedInstanceTypes contains the list of instance types that meet the requirements
+	// Only populated when using automatic instance type selection
+	// +optional
+	SelectedInstanceTypes []string `json:"selectedInstanceTypes,omitempty"`
+
+	// SelectedSubnets contains the list of subnets selected for node placement
+	// Only populated when using automatic subnet selection
+	// +optional
+	SelectedSubnets []string `json:"selectedSubnets,omitempty"`
 
 	// Conditions contains signals for health and readiness
 	// +optional
