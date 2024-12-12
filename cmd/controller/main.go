@@ -186,11 +186,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	subnetProviderImpl, err := subnet.NewProvider()
-	if err != nil {
-		logger.Error(err, "Error creating subnet provider")
-		os.Exit(1)
-	}
+	subnetProviderImpl := subnet.NewProvider()
 
 	recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
 

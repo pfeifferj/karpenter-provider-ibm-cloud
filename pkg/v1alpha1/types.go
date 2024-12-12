@@ -131,8 +131,3 @@ type IBMNodeClassList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []IBMNodeClass `json:"items"`
 }
-
-// StatusConditions returns the status conditions of the object
-func (in *IBMNodeClass) StatusConditions() *[]metav1.Condition {
-	return &in.Status.Conditions
-}
