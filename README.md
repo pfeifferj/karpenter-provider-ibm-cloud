@@ -73,22 +73,112 @@ The VPC API endpoint URL is automatically constructed using your region (e.g., h
 
 The provider can be configured through the following custom resources:
 
-- `IBMCloudNodeClass`: Defines the configuration for nodes to be provisioned
+- `IBMNodeClass`: Defines the configuration for nodes to be provisioned
 - `NodePool`: Karpenter's core resource for defining node provisioning rules
 - `NodeClaim`: Represents a request for a node with specific requirements
 
-Example `IBMCloudNodeClass`:
+### Example IBMNodeClass
 
 ```yaml
-apiVersion: karpenter.ibm-cloud.sh/v1alpha1
-kind: IBMCloudNodeClass
+apiVersion: karpenter.ibm.sh/v1alpha1
+kind: IBMNodeClass
+metadata:
+  name: auto-placement
+spec:
+  region: us-south
+  vpc: "123e4567-e89b-12d3-a456-426614174000"
+  zone: us-south-1
+  subnet: "123e4567-e89b-12d3-a456-426614174000"
+  instanceRequirements:
+    architecture: amd64
+    minimumCPU: 2
+    minimumMemory: 4
+  placementStrategy:
+    zoneBalance: Balanced
+    subnetSelection:
+      minimumAvailableIPs: 10
+  image: ibm-ubuntu-24-04-6-minimal-amd64-2
+```
+
+### Example NodePool
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
 metadata:
   name: default
 spec:
-  region: us-south
-  zone: us-south-1
-  instanceProfile: bx2-2x8
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.ibm.sh
+        kind: IBMNodeClass
+        name: auto-placement
+      requirements:
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        - key: "kubernetes.io/os"
+          operator: In
+          values: ["linux"]
+        - key: "monitoring"
+          operator: In
+          values: ["true"]
+  disruption:
+    consolidateAfter: 30s
+    consolidationPolicy: WhenEmpty
+  limits:
+    cpu: "1000"
+  weight: 100
 ```
+
+### Advanced Configuration Options
+
+The Helm chart supports several advanced configuration options:
+
+#### Logging Configuration
+
+```yaml
+logLevel: "debug" # Options: debug, info, warn, error
+verboseLogLevel: "5" # Verbosity level (1-5)
+debug: "true" # Enable debug mode
+controllerVerbosity: "4" # Controller manager verbosity (0-5)
+controllerLogLevel: "debug" # Controller manager log level
+```
+
+#### Metrics Configuration
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: false # Enable ServiceMonitor creation
+    additionalLabels: {} # Additional labels for ServiceMonitor
+    endpointConfig: {} # Additional endpoint configuration
+```
+
+#### Resource Management
+
+```yaml
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+```
+
+## Current Limitations
+
+The provider currently has some limitations to be aware of:
+
+- No support for IBM Cloud spot instances and spot/on-demand mix strategies
+- Limited auto-placement features (no workload density optimization or cross-zone awareness)
+- Basic subnet selection capabilities
+- No advanced scaling features like predictive scaling or warm pools
+- Limited storage integration (no volume topology awareness)
+
+These limitations are being actively worked on for future releases.
 
 ## Development
 

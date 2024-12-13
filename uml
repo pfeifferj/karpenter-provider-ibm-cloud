@@ -1,4 +1,20 @@
 @startuml
+namespace autoplacement {
+    class Controller << (S,Aquamarine) >> {
+        - client client.Client
+        - instanceTypes instancetype.Provider
+        - subnets subnet.Provider
+        - log logr.Logger
+
+        - updateCondition(nodeClass *v1alpha1.IBMNodeClass, conditionType string, status v1.ConditionStatus, reason string, message string) 
+
+        + Start(ctx context.Context) error
+        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+
+    }
+}
+
+
 namespace cache {
     class UnavailableOfferings << (S,Aquamarine) >> {
         - mu sync.RWMutex
@@ -20,26 +36,28 @@ namespace cloudprovider {
         - instanceTypeProvider instancetype.Provider
         - instanceProvider instance.Provider
 
-        - resolveInstanceTypeFromInstance(ctx context.Context, instance *instance.Instance) (*cloudprovider.InstanceType, error)
-        - resolveNodePoolFromInstance(ctx context.Context, instance *instance.Instance) (*v1.NodePool, error)
-        - resolveNodeClassFromInstance(ctx context.Context, instance *instance.Instance) (*v1alpha1.IBMNodeClass, error)
-        - resolveNodeClassFromNodePool(ctx context.Context, nodePool *v1.NodePool) (*v1alpha1.IBMNodeClass, error)
-        - instanceToNodeClaim(i *instance.Instance, instanceType *cloudprovider.InstanceType, _ *v1alpha1.IBMNodeClass) *v1.NodeClaim
-        - resolveNodeClassFromNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1alpha1.IBMNodeClass, error)
-        - resolveInstanceTypes(ctx context.Context, nodeClaim *v1.NodeClaim) ([]*cloudprovider.InstanceType, error)
-
-        + Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1.NodeClaim, error)
         + Get(ctx context.Context, providerID string) (*v1.NodeClaim, error)
         + List(ctx context.Context) ([]*v1.NodeClaim, error)
-        + LivenessProbe(req *http.Request) error
-        + GetInstanceTypes(ctx context.Context, nodePool *v1.NodePool) ([]*cloudprovider.InstanceType, error)
+        + Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1.NodeClaim, error)
         + Delete(ctx context.Context, nodeClaim *v1.NodeClaim) error
+        + GetInstanceTypes(ctx context.Context, nodePool *v1.NodePool) ([]*cloudprovider.InstanceType, error)
         + IsDrifted(ctx context.Context, nodeClaim *v1.NodeClaim) (cloudprovider.DriftReason, error)
         + Name() string
         + GetSupportedNodeClasses() []status.Object
 
     }
 }
+
+
+namespace controllers {
+    class RecorderAdapter << (S,Aquamarine) >> {
+        + Event(object runtime.Object, eventtype string, reason string, message string) 
+        + Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...<font color=blue>interface</font>{}) 
+        + AnnotatedEventf(object runtime.Object, annotations <font color=blue>map</font>[string]string, eventtype string, reason string, messageFmt string, args ...<font color=blue>interface</font>{}) 
+
+    }
+}
+"events.Recorder" *-- "controllers.RecorderAdapter"
 
 
 namespace garbagecollection {
@@ -49,9 +67,9 @@ namespace garbagecollection {
 
         - removeFinalizer(ctx context.Context, nodeClaim *v1beta1.NodeClaim) error
 
-        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Reconcile(ctx context.Context) (reconcile.Result, error)
         + Name() string
-        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+        + Register(_ context.Context, m manager.Manager) error
 
     }
 }
@@ -62,8 +80,7 @@ namespace hash {
         - kubeClient client.Client
 
         + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
-        + Name() string
-        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+        + Register(_ context.Context, m manager.Manager) error
 
     }
 }
@@ -84,8 +101,8 @@ namespace ibm {
 
     }
     class GlobalCatalogClient << (S,Aquamarine) >> {
-        - iamClient *IAMClient
-        - client *globalcatalogv1.GlobalCatalogV1
+        - iamClient iamClientInterface
+        - client globalCatalogClientInterface
 
         - ensureClient(ctx context.Context) error
 
@@ -95,7 +112,7 @@ namespace ibm {
     }
     class IAMClient << (S,Aquamarine) >> {
         - apiKey string
-        - client *iamidentityv1.IamIdentityV1
+        - client iamIdentityClientInterface
         - token string
         - expiry time.Time
 
@@ -107,7 +124,7 @@ namespace ibm {
         - authType string
         - apiKey string
         - region string
-        - client *vpcv1.VpcV1
+        - client vpcClientInterface
 
         + CreateInstance(ctx context.Context, instancePrototype *vpcv1.InstancePrototype) (*vpcv1.Instance, error)
         + DeleteInstance(ctx context.Context, id string) error
@@ -116,8 +133,30 @@ namespace ibm {
         + UpdateInstanceTags(ctx context.Context, id string, tags <font color=blue>map</font>[string]string) error
 
     }
+    interface globalCatalogClientInterface  {
+        + GetCatalogEntryWithContext( context.Context,  *globalcatalogv1.GetCatalogEntryOptions) (*globalcatalogv1.CatalogEntry, *core.DetailedResponse, error)
+        + ListCatalogEntriesWithContext( context.Context,  *globalcatalogv1.ListCatalogEntriesOptions) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error)
+
+    }
+    interface iamClientInterface  {
+        + GetToken( context.Context) (string, error)
+
+    }
+    interface iamIdentityClientInterface  {
+        + CreateAPIKey(options *iamidentityv1.CreateAPIKeyOptions) (*iamidentityv1.APIKey, *core.DetailedResponse, error)
+
+    }
+    interface vpcClientInterface  {
+        + CreateInstanceWithContext( context.Context,  *vpcv1.CreateInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
+        + DeleteInstanceWithContext( context.Context,  *vpcv1.DeleteInstanceOptions) (*core.DetailedResponse, error)
+        + GetInstanceWithContext( context.Context,  *vpcv1.GetInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
+        + ListInstancesWithContext( context.Context,  *vpcv1.ListInstancesOptions) (*vpcv1.InstanceCollection, *core.DetailedResponse, error)
+        + UpdateInstanceWithContext( context.Context,  *vpcv1.UpdateInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
+
+    }
 }
 
+"ibm.iamClientInterface" <|-- "ibm.IAMClient"
 
 namespace instance {
     class IBMCloudInstanceProvider << (S,Aquamarine) >> {
@@ -126,6 +165,7 @@ namespace instance {
         + Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1.Node, error)
         + Delete(ctx context.Context, node *v1.Node) error
         + GetInstance(ctx context.Context, node *v1.Node) (*Instance, error)
+        + TagInstance(ctx context.Context, instanceID string, tags <font color=blue>map</font>[string]string) error
 
     }
     class Instance << (S,Aquamarine) >> {
@@ -154,6 +194,7 @@ namespace instance {
         + Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v1.Node, error)
         + Delete(ctx context.Context, node *v1.Node) error
         + GetInstance(ctx context.Context, node *v1.Node) (*Instance, error)
+        + TagInstance(ctx context.Context, instanceID string, tags <font color=blue>map</font>[string]string) error
 
     }
     class instance.InstanceStatus << (T, #FF7700) >>  {
@@ -165,24 +206,27 @@ namespace instance {
 namespace instancetype {
     class Controller << (S,Aquamarine) >> {
         - instanceTypeProvider instancetype.Provider
-        - instancetypeProvider instancetype.Provider
 
-        - refreshInstanceTypes(ctx context.Context) error
-
-        + Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error)
-        + Name() string
-        + Builder(_ context.Context, m manager.Manager) *builder.Builder
         + Reconcile(ctx context.Context) (reconcile.Result, error)
         + Register(_ context.Context, m manager.Manager) error
+
+    }
+    class ExtendedInstanceType << (S,Aquamarine) >> {
+        + Architecture string
+        + Price float64
 
     }
     class IBMInstanceTypeProvider << (S,Aquamarine) >> {
         - client *ibm.Client
 
+        - rankInstanceTypes(instanceTypes []*ExtendedInstanceType) []*ExtendedInstanceType
+
         + Get(ctx context.Context, name string) (*cloudprovider.InstanceType, error)
         + List(ctx context.Context) ([]*cloudprovider.InstanceType, error)
         + Create(ctx context.Context, instanceType *cloudprovider.InstanceType) error
         + Delete(ctx context.Context, instanceType *cloudprovider.InstanceType) error
+        + FilterInstanceTypes(ctx context.Context, requirements *v1alpha1.InstanceTypeRequirements) ([]*cloudprovider.InstanceType, error)
+        + RankInstanceTypes(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType
 
     }
     class InstanceTypeCapabilities << (S,Aquamarine) >> {
@@ -206,21 +250,29 @@ namespace instancetype {
         + List(ctx context.Context) ([]*cloudprovider.InstanceType, error)
         + Create(ctx context.Context, instanceType *cloudprovider.InstanceType) error
         + Delete(ctx context.Context, instanceType *cloudprovider.InstanceType) error
+        + FilterInstanceTypes(ctx context.Context, requirements *v1alpha1.InstanceTypeRequirements) ([]*cloudprovider.InstanceType, error)
+        + RankInstanceTypes(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType
+
+    }
+    class instanceTypeRanking << (S,Aquamarine) >> {
+        - instanceType *ExtendedInstanceType
+        - score float64
 
     }
 }
+"cloudprovider.InstanceType" *-- "instancetype.ExtendedInstanceType"
 
 "instancetype.Provider" <|-- "instancetype.IBMInstanceTypeProvider"
 
 namespace interruption {
     class Controller << (S,Aquamarine) >> {
         - kubeClient client.Client
-        - recorder events.Recorder
+        - recorder record.EventRecorder
         - unavailableOfferings *cache.UnavailableOfferings
 
-        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Reconcile(ctx context.Context) (reconcile.Result, error)
         + Name() string
-        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+        + Register(_ context.Context, m manager.Manager) error
 
     }
 }
@@ -246,6 +298,11 @@ namespace main {
         + Offering cloudprovider.Offering
 
     }
+    interface globalCatalogService  {
+        + ListCatalogEntries(options *globalcatalogv1.ListCatalogEntriesOptions) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error)
+        + GetPricing(options *globalcatalogv1.GetPricingOptions) (*globalcatalogv1.PricingGet, *core.DetailedResponse, error)
+
+    }
 }
 "client.Client" *-- "main.IBMCloudReconciler"
 
@@ -254,10 +311,12 @@ namespace operator {
     class Operator << (S,Aquamarine) >> {
         - kubeClient client.Client
         - kubeClientSet *kubernetes.Clientset
-        - instanceTypeProvider instancetype.Provider
         - unavailableOfferings *cache.UnavailableOfferings
-        - recorder events.Recorder
+        - recorder record.EventRecorder
 
+        + GetClient() client.Client
+        + GetEventRecorder() record.EventRecorder
+        + GetUnavailableOfferings() *cache.UnavailableOfferings
         + WithControllers() []controller.Controller
         + WithWebhooks() []manager.Runnable
         + WithCustomResourceDefinitions() []client.Object
@@ -289,11 +348,7 @@ namespace options {
 namespace pricing {
     class Controller << (S,Aquamarine) >> {
         - pricingProvider pricing.Provider
-        - pricingProvider pricing.Provider
 
-        + Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error)
-        + Name() string
-        + Builder(_ context.Context, m manager.Manager) *builder.Builder
         + Reconcile(ctx context.Context) (reconcile.Result, error)
         + Register(_ context.Context, m manager.Manager) error
 
@@ -321,21 +376,54 @@ namespace status {
         - validateNodeClass(ctx context.Context, nc *v1alpha1.IBMNodeClass) error
 
         + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
-        + Name() string
-        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+        + Register(_ context.Context, m manager.Manager) error
 
     }
 }
 
+
+namespace subnet {
+    interface Provider  {
+        + ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error)
+        + GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo, error)
+        + SelectSubnets(ctx context.Context, vpcID string, strategy *v1alpha1.PlacementStrategy) ([]SubnetInfo, error)
+
+    }
+    class SubnetInfo << (S,Aquamarine) >> {
+        + ID string
+        + Zone string
+        + CIDR string
+        + AvailableIPs int32
+        + Tags <font color=blue>map</font>[string]string
+        + State string
+        + TotalIPCount int32
+        + UsedIPCount int32
+        + ReservedIPCount int32
+
+    }
+    class provider << (S,Aquamarine) >> {
+        + SelectSubnets(ctx context.Context, vpcID string, strategy *v1alpha1.PlacementStrategy) ([]SubnetInfo, error)
+        + ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error)
+        + GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo, error)
+
+    }
+    class subnetScore << (S,Aquamarine) >> {
+        - subnet SubnetInfo
+        - score float64
+
+    }
+}
+
+"subnet.Provider" <|-- "subnet.provider"
 
 namespace tagging {
     class Controller << (S,Aquamarine) >> {
         - kubeClient client.Client
         - instanceProvider *instance.IBMCloudInstanceProvider
 
-        + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+        + Reconcile(ctx context.Context) (reconcile.Result, error)
         + Name() string
-        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+        + Register(_ context.Context, m manager.Manager) error
 
     }
 }
@@ -344,11 +432,10 @@ namespace tagging {
 namespace termination {
     class Controller << (S,Aquamarine) >> {
         - kubeClient client.Client
-        - recorder events.Recorder
+        - recorder record.EventRecorder
 
         + Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
-        + Name() string
-        + Builder(_ context.Context, m manager.Manager) *builder.Builder
+        + Register(_ context.Context, m manager.Manager) error
 
     }
 }
@@ -358,6 +445,8 @@ namespace v1alpha1 {
     class IBMNodeClass << (S,Aquamarine) >> {
         + Spec IBMNodeClassSpec
         + Status IBMNodeClassStatus
+        + Spec IBMNodeClassSpec
+        + Status v1alpha1.IBMNodeClassStatus
 
         + StatusConditions() status.ConditionSet
         + GetConditions() []status.Condition
@@ -365,11 +454,18 @@ namespace v1alpha1 {
         + DeepCopyInto(out *IBMNodeClass) 
         + DeepCopy() *IBMNodeClass
         + DeepCopyObject() runtime.Object
+        + DeepCopyInto(out *IBMNodeClass) 
+        + DeepCopy() *IBMNodeClass
+        + DeepCopyObject() runtime.Object
 
     }
     class IBMNodeClassList << (S,Aquamarine) >> {
         + Items []IBMNodeClass
+        + Items []IBMNodeClass
 
+        + DeepCopyInto(out *IBMNodeClassList) 
+        + DeepCopy() *IBMNodeClassList
+        + DeepCopyObject() runtime.Object
         + DeepCopyInto(out *IBMNodeClassList) 
         + DeepCopy() *IBMNodeClassList
         + DeepCopyObject() runtime.Object
@@ -379,22 +475,65 @@ namespace v1alpha1 {
         + Region string
         + Zone string
         + InstanceProfile string
+        + InstanceRequirements *InstanceTypeRequirements
         + Image string
         + VPC string
         + Subnet string
+        + PlacementStrategy *PlacementStrategy
+        + SecurityGroups []string
+        + Tags <font color=blue>map</font>[string]string
+        + Region string
+        + Zones []string
+        + VPC string
+        + Subnet string
+        + InstanceProfile string
+        + Image string
+        + ResourceGroup string
         + SecurityGroups []string
         + Tags <font color=blue>map</font>[string]string
 
+        + DeepCopyInto(out *IBMNodeClassSpec) 
+        + DeepCopy() *IBMNodeClassSpec
         + DeepCopyInto(out *IBMNodeClassSpec) 
         + DeepCopy() *IBMNodeClassSpec
 
     }
     class IBMNodeClassStatus << (S,Aquamarine) >> {
         + SpecHash uint64
-        + Conditions []status.Condition
+        + LastValidationTime v1.Time
+        + ValidationError string
+        + SelectedInstanceTypes []string
+        + SelectedSubnets []string
+        + Conditions []v1.Condition
 
         + DeepCopyInto(out *IBMNodeClassStatus) 
         + DeepCopy() *IBMNodeClassStatus
+
+    }
+    class InstanceTypeRequirements << (S,Aquamarine) >> {
+        + Architecture string
+        + MinimumCPU int32
+        + MinimumMemory int32
+        + MaximumHourlyPrice string
+
+        + DeepCopyInto(out *InstanceTypeRequirements) 
+        + DeepCopy() *InstanceTypeRequirements
+
+    }
+    class PlacementStrategy << (S,Aquamarine) >> {
+        + ZoneBalance string
+        + SubnetSelection *SubnetSelectionCriteria
+
+        + DeepCopyInto(out *PlacementStrategy) 
+        + DeepCopy() *PlacementStrategy
+
+    }
+    class SubnetSelectionCriteria << (S,Aquamarine) >> {
+        + MinimumAvailableIPs int32
+        + RequiredTags <font color=blue>map</font>[string]string
+
+        + DeepCopyInto(out *SubnetSelectionCriteria) 
+        + DeepCopy() *SubnetSelectionCriteria
 
     }
 }

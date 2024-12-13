@@ -36,7 +36,7 @@ rules:
     resources: ["ibmnodeclasses", "ibmnodeclasses/status"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["pods", "nodes", "persistentvolumes", "persistentvolumeclaims", "replicationcontrollers", "namespaces"]
+    resources: ["pods", "nodes", "persistentvolumes", "persistentvolumeclaims", "replicationcontrollers", "namespaces", "secrets"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["storage.k8s.io"]
     resources: ["storageclasses", "csinodes", "volumeattachments"]
