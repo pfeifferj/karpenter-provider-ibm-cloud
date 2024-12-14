@@ -6,25 +6,51 @@ import (
 	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
-	"github.com/IBM/platform-services-go-sdk/iamidentityv1"
 )
 
-// iamIdentityClientInterface defines the interface for the IAM Identity client
-type iamIdentityClientInterface interface {
-	CreateAPIKey(options *iamidentityv1.CreateAPIKeyOptions) (*iamidentityv1.APIKey, *core.DetailedResponse, error)
+// TokenResponse represents the response from a token request
+type TokenResponse struct {
+	AccessToken string
+	ExpiresIn   int64
+}
+
+// Authenticator defines the interface for token management
+type Authenticator interface {
+	RequestToken() (*TokenResponse, error)
+}
+
+// iamAuthenticator wraps the IBM authenticator to match our interface
+type iamAuthenticator struct {
+	auth *core.IamAuthenticator
+}
+
+func (a *iamAuthenticator) RequestToken() (*TokenResponse, error) {
+	token, err := a.auth.RequestToken()
+	if err != nil {
+		return nil, err
+	}
+	return &TokenResponse{
+		AccessToken: token.AccessToken,
+		ExpiresIn:   token.ExpiresIn,
+	}, nil
 }
 
 // IAMClient handles interactions with the IBM Cloud IAM API
 type IAMClient struct {
-	apiKey string
-	client iamIdentityClientInterface
-	token  string
-	expiry time.Time
+	apiKey        string
+	Authenticator Authenticator // Exported for testing
+	token         string
+	expiry        time.Time
 }
 
 func NewIAMClient(apiKey string) *IAMClient {
 	return &IAMClient{
 		apiKey: apiKey,
+		Authenticator: &iamAuthenticator{
+			auth: &core.IamAuthenticator{
+				ApiKey: apiKey,
+			},
+		},
 	}
 }
 
@@ -35,37 +61,17 @@ func (c *IAMClient) GetToken(ctx context.Context) (string, error) {
 		return c.token, nil
 	}
 
-	// Initialize the IAM client if needed
-	if c.client == nil {
-		options := &iamidentityv1.IamIdentityV1Options{}
-		var err error
-		client, err := iamidentityv1.NewIamIdentityV1UsingExternalConfig(options)
-		if err != nil {
-			return "", fmt.Errorf("initializing IAM client: %w", err)
-		}
-		c.client = client
-	}
-
-	// Create API key options
-	options := &iamidentityv1.CreateAPIKeyOptions{
-		Name:        stringPtr("karpenter-temp-key"),
-		Description: stringPtr("Temporary API key for Karpenter global catalog access"),
-		Apikey:      stringPtr(c.apiKey),
-	}
-
-	// Create API key
-	apiKey, _, err := c.client.CreateAPIKey(options)
+	// Get token from authenticator
+	tokenResponse, err := c.Authenticator.RequestToken()
 	if err != nil {
-		return "", fmt.Errorf("creating API key: %w", err)
+		return "", fmt.Errorf("getting IAM token: %w", err)
 	}
 
-	// Store token with expiry (tokens are valid for 1 hour)
-	c.token = *apiKey.Apikey
-	c.expiry = time.Now().Add(55 * time.Minute) // Refresh 5 minutes before expiry
+	// Store token with expiry
+	c.token = tokenResponse.AccessToken
+	// Convert expiration to time.Duration (expires_in is in seconds)
+	expiresIn := time.Duration(tokenResponse.ExpiresIn-300) * time.Second // Refresh 5 minutes before expiry
+	c.expiry = time.Now().Add(expiresIn)
 
 	return c.token, nil
-}
-
-func stringPtr(s string) *string {
-	return &s
 }
