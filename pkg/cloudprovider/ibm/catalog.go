@@ -66,7 +66,8 @@ func (c *GlobalCatalogClient) GetInstanceType(ctx context.Context, id string) (*
 	}
 
 	options := &globalcatalogv1.GetCatalogEntryOptions{
-		ID: &id,
+		ID:      &id,
+		Include: core.StringPtr("*"), // Include all fields
 	}
 
 	entry, _, err := c.client.GetCatalogEntryWithContext(ctx, options)
@@ -82,19 +83,40 @@ func (c *GlobalCatalogClient) ListInstanceTypes(ctx context.Context) ([]globalca
 		return nil, err
 	}
 
-	// Filter for instance profiles
-	q := "kind:instance-profile"
-	includeStr := "metadata"
+	var allEntries []globalcatalogv1.CatalogEntry
+	offset := int64(0)
+	limit := int64(100)
 
-	options := &globalcatalogv1.ListCatalogEntriesOptions{
-		Q:       &q,
-		Include: &includeStr,
+	for {
+		// Query for VPC instance profiles
+		q := "kind:vpc-instance-profile active:true"
+
+		options := &globalcatalogv1.ListCatalogEntriesOptions{
+			Q:        &q,
+			Include:  core.StringPtr("*"), // Include all fields
+			Complete: core.BoolPtr(true),  // Get complete information
+			Offset:   &offset,
+			Limit:    &limit,
+		}
+
+		result, _, err := c.client.ListCatalogEntriesWithContext(ctx, options)
+		if err != nil {
+			return nil, fmt.Errorf("listing catalog entries: %w", err)
+		}
+
+		if result == nil || len(result.Resources) == 0 {
+			break
+		}
+
+		allEntries = append(allEntries, result.Resources...)
+
+		// If Count is nil or we've got all entries, break
+		if result.Count == nil || offset+limit >= *result.Count {
+			break
+		}
+
+		offset += limit
 	}
 
-	entries, _, err := c.client.ListCatalogEntriesWithContext(ctx, options)
-	if err != nil {
-		return nil, fmt.Errorf("listing catalog entries: %w", err)
-	}
-
-	return entries.Resources, nil
+	return allEntries, nil
 }

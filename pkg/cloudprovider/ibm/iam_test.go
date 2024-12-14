@@ -5,21 +5,21 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/IBM/go-sdk-core/v5/core"
-	"github.com/IBM/platform-services-go-sdk/iamidentityv1"
 )
 
-type mockIAMIdentityClient struct {
-	createAPIKeyResponse *iamidentityv1.APIKey
-	err                  error
+type mockAuthenticator struct {
+	token string
+	err   error
 }
 
-func (m *mockIAMIdentityClient) CreateAPIKey(_ *iamidentityv1.CreateAPIKeyOptions) (*iamidentityv1.APIKey, *core.DetailedResponse, error) {
+func (m *mockAuthenticator) RequestToken() (*TokenResponse, error) {
 	if m.err != nil {
-		return nil, nil, m.err
+		return nil, m.err
 	}
-	return m.createAPIKeyResponse, &core.DetailedResponse{}, nil
+	return &TokenResponse{
+		AccessToken: m.token,
+		ExpiresIn:   3600,
+	}, nil
 }
 
 func TestNewIAMClient(t *testing.T) {
@@ -40,6 +40,16 @@ func TestNewIAMClient(t *testing.T) {
 	if !client.expiry.IsZero() {
 		t.Error("expected zero expiry time")
 	}
+	if client.Authenticator == nil {
+		t.Error("expected non-nil authenticator")
+	}
+
+	// Type assert to check if it's an iamAuthenticator
+	if auth, ok := client.Authenticator.(*iamAuthenticator); !ok {
+		t.Error("expected authenticator to be *iamAuthenticator")
+	} else if auth.auth.ApiKey != testKey {
+		t.Errorf("expected authenticator API key %s, got %s", testKey, auth.auth.ApiKey)
+	}
 }
 
 func TestGetToken(t *testing.T) {
@@ -51,7 +61,7 @@ func TestGetToken(t *testing.T) {
 		name           string
 		existingToken  string
 		existingExpiry time.Time
-		mockClient     iamIdentityClientInterface
+		mockAuth       Authenticator
 		wantToken      string
 		wantErr        bool
 	}{
@@ -66,28 +76,24 @@ func TestGetToken(t *testing.T) {
 			name:           "expired token",
 			existingToken:  "expired-token",
 			existingExpiry: time.Now().Add(-10 * time.Minute),
-			mockClient: &mockIAMIdentityClient{
-				createAPIKeyResponse: &iamidentityv1.APIKey{
-					Apikey: &testToken,
-				},
+			mockAuth: &mockAuthenticator{
+				token: testToken,
 			},
 			wantToken: testToken,
 			wantErr:   false,
 		},
 		{
 			name: "successful new token",
-			mockClient: &mockIAMIdentityClient{
-				createAPIKeyResponse: &iamidentityv1.APIKey{
-					Apikey: &testToken,
-				},
+			mockAuth: &mockAuthenticator{
+				token: testToken,
 			},
 			wantToken: testToken,
 			wantErr:   false,
 		},
 		{
-			name: "API key creation error",
-			mockClient: &mockIAMIdentityClient{
-				err: errors.New("API key creation failed"),
+			name: "token request error",
+			mockAuth: &mockAuthenticator{
+				err: errors.New("token request failed"),
 			},
 			wantErr: true,
 		},
@@ -99,8 +105,8 @@ func TestGetToken(t *testing.T) {
 			client.token = tt.existingToken
 			client.expiry = tt.existingExpiry
 
-			if tt.mockClient != nil {
-				client.client = tt.mockClient
+			if tt.mockAuth != nil {
+				client.Authenticator = tt.mockAuth
 			}
 
 			token, err := client.GetToken(ctx)
@@ -129,21 +135,5 @@ func TestGetToken(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestStringPtr(t *testing.T) {
-	testStr := "test"
-	ptr := stringPtr(testStr)
-
-	if ptr == nil {
-		t.Fatal("expected non-nil pointer")
-		return
-	}
-
-	want := testStr
-	got := *ptr
-	if got != want {
-		t.Errorf("got %s, want %s", got, want)
 	}
 }
