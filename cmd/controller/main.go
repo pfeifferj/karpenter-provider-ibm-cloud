@@ -21,11 +21,7 @@ import (
 	"fmt"
 	"os"
 
-	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/autoplacement"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/go-logr/logr"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -41,7 +37,51 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/events"
+
+	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/autoplacement"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
 )
+
+// validateIBMCredentials checks if required environment variables are set and valid
+func validateIBMCredentials(ctx context.Context, logger logr.Logger) error {
+	requiredVars := map[string]string{
+		"IBM_API_KEY": os.Getenv("IBM_API_KEY"),
+		"VPC_API_KEY": os.Getenv("VPC_API_KEY"),
+		"IBM_REGION":  os.Getenv("IBM_REGION"),
+	}
+
+	// Check if required variables are set
+	for name, value := range requiredVars {
+		if value == "" {
+			return fmt.Errorf("%s environment variable is not set", name)
+		}
+		logger.Info("Found required environment variable", "name", name)
+	}
+
+	// Create a temporary IBM client to verify credentials
+	client, err := ibm.NewClient()
+	if err != nil {
+		return fmt.Errorf("failed to create IBM client: %w", err)
+	}
+
+	// Try to list instance types to verify credentials
+	catalogClient, err := client.GetGlobalCatalogClient()
+	if err != nil {
+		return fmt.Errorf("failed to get catalog client: %w", err)
+	}
+
+	_, err = catalogClient.ListInstanceTypes(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to authenticate with IBM Cloud: %w", err)
+	}
+
+	logger.Info("Successfully authenticated with IBM Cloud")
+	return nil
+}
 
 func init() {
 	// Initialize klog and zap logger with debug settings
@@ -141,6 +181,12 @@ func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 func main() {
 	logger := log.FromContext(context.Background())
 	logger.Info("Starting controller with debug logging enabled")
+
+	// Validate IBM Cloud credentials before proceeding
+	if err := validateIBMCredentials(context.Background(), logger.WithName("validator")); err != nil {
+		logger.Error(err, "Failed to validate IBM Cloud credentials")
+		os.Exit(1)
+	}
 
 	// Get a config to talk to the apiserver
 	cfg, err := config.GetConfig()
