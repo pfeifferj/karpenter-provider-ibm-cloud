@@ -87,6 +87,10 @@ namespace hash {
 
 
 namespace ibm {
+    interface Authenticator  {
+        + RequestToken() (*TokenResponse, error)
+
+    }
     class Client << (S,Aquamarine) >> {
         - vpcURL string
         - vpcAuthType string
@@ -112,11 +116,17 @@ namespace ibm {
     }
     class IAMClient << (S,Aquamarine) >> {
         - apiKey string
-        - client iamIdentityClientInterface
         - token string
         - expiry time.Time
 
+        + Authenticator Authenticator
+
         + GetToken(ctx context.Context) (string, error)
+
+    }
+    class TokenResponse << (S,Aquamarine) >> {
+        + AccessToken string
+        + ExpiresIn int64
 
     }
     class VPCClient << (S,Aquamarine) >> {
@@ -138,12 +148,14 @@ namespace ibm {
         + ListCatalogEntriesWithContext( context.Context,  *globalcatalogv1.ListCatalogEntriesOptions) (*globalcatalogv1.EntrySearchResult, *core.DetailedResponse, error)
 
     }
-    interface iamClientInterface  {
-        + GetToken( context.Context) (string, error)
+    class iamAuthenticator << (S,Aquamarine) >> {
+        - auth *core.IamAuthenticator
+
+        + RequestToken() (*TokenResponse, error)
 
     }
-    interface iamIdentityClientInterface  {
-        + CreateAPIKey(options *iamidentityv1.CreateAPIKeyOptions) (*iamidentityv1.APIKey, *core.DetailedResponse, error)
+    interface iamClientInterface  {
+        + GetToken( context.Context) (string, error)
 
     }
     interface vpcClientInterface  {
@@ -157,6 +169,7 @@ namespace ibm {
 }
 
 "ibm.iamClientInterface" <|-- "ibm.IAMClient"
+"ibm.Authenticator" <|-- "ibm.iamAuthenticator"
 
 namespace instance {
     class IBMCloudInstanceProvider << (S,Aquamarine) >> {

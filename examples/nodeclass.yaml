@@ -4,9 +4,9 @@ metadata:
   name: auto-placement
 spec:
   region: us-south
-  vpc: "123e4567-e89b-12d3-a456-426614174000"
+  vpc: "r006-a8efb117-fd5e-4f63-ae16-4fb9faafa4ff"
   zone: us-south-1
-  subnet: "123e4567-e89b-12d3-a456-426614174000"
+  subnet: "0717-197e06f4-b500-426c-bc0f-900b215f996c"
   instanceRequirements:
     architecture: amd64
     minimumCPU: 2
@@ -15,4 +15,4 @@ spec:
     zoneBalance: Balanced
     subnetSelection:
       minimumAvailableIPs: 10
-  image: ibm-ubuntu-24-04-6-minimal-amd64-2
+  image: ubuntu-24-04-amd64
