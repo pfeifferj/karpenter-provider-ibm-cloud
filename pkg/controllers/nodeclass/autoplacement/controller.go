@@ -97,8 +97,8 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.log.Error(err, "failed to select instance types", "nodeclass", req.Name)
 			InstanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
-			if err := c.client.Status().Update(ctx, nodeClass); err != nil {
-				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
+			if updateErr := c.client.Status().Update(ctx, nodeClass); updateErr != nil {
+				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
 			return reconcile.Result{}, err
 		}
@@ -108,8 +108,8 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.log.Error(err, "instance type selection failed", "nodeclass", req.Name)
 			InstanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
-			if err := c.client.Status().Update(ctx, nodeClass); err != nil {
-				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
+			if updateErr := c.client.Status().Update(ctx, nodeClass); updateErr != nil {
+				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
 			return reconcile.Result{}, err
 		}

@@ -76,7 +76,7 @@ func TestHashControllerIntegration(t *testing.T) {
 	err = fakeClient.Update(ctx, &updatedNodeClass)
 	require.NoError(t, err)
 
-	result, err = hashController.Reconcile(ctx, req)
+	_, err = hashController.Reconcile(ctx, req)
 	assert.NoError(t, err)
 
 	// Verify hash changed
@@ -251,9 +251,9 @@ func TestControllerConcurrency(t *testing.T) {
 				},
 			}
 
-			_, err := hashController.Reconcile(ctx, req)
-			if err != nil {
-				errors <- err
+			_, reconcileErr := hashController.Reconcile(ctx, req)
+			if reconcileErr != nil {
+				errors <- reconcileErr
 			} else {
 				done <- true
 			}
@@ -268,8 +268,8 @@ func TestControllerConcurrency(t *testing.T) {
 		select {
 		case <-done:
 			completed++
-		case err := <-errors:
-			t.Errorf("Unexpected error during concurrent reconciliation: %v", err)
+		case recvErr := <-errors:
+			t.Errorf("Unexpected error during concurrent reconciliation: %v", recvErr)
 			completed++
 		case <-timeout:
 			t.Fatal("Timeout waiting for concurrent reconciliation to complete")

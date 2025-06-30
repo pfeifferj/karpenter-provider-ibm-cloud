@@ -16,6 +16,8 @@ import (
 )
 
 // Controller reconciles NodeClaim objects to ensure proper tagging of IBM Cloud instances
+//+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 type Controller struct {
 	kubeClient       client.Client
 	instanceProvider *instance.IBMCloudInstanceProvider

@@ -63,7 +63,7 @@ func TestNewClient(t *testing.T) {
 
 			// Set environment variables for this test
 			for k, v := range tt.envVars {
-				os.Setenv(k, v)
+				_ = os.Setenv(k, v)
 			}
 
 			// Run the test
