@@ -24,7 +24,6 @@ import (
 	"github.com/go-logr/logr"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -40,10 +39,11 @@ import (
 
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/autoplacement"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"k8s.io/utils/clock"
 )
 
 // validateIBMCredentials checks if required environment variables are set and valid
@@ -179,7 +179,8 @@ func (r *IBMCloudReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 }
 
 func main() {
-	logger := log.FromContext(context.Background())
+	ctx := context.Background()
+	logger := log.FromContext(ctx)
 	logger.Info("Starting controller with debug logging enabled")
 
 	// Validate IBM Cloud credentials before proceeding
@@ -217,6 +218,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize IBM client
+	logger.Info("Initializing IBM client")
+	ibmClient, err := ibm.NewClient()
+	if err != nil {
+		logger.Error(err, "Error creating IBM client")
+		os.Exit(1)
+	}
+
 	// Initialize providers
 	logger.Info("Initializing providers")
 
@@ -231,8 +240,7 @@ func main() {
 		logger.Error(err, "Error creating instance provider")
 		os.Exit(1)
 	}
-
-	subnetProviderImpl := subnet.NewProvider()
+	instanceProviderImpl.SetKubeClient(mgr.GetClient())
 
 	recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
 
@@ -241,32 +249,25 @@ func main() {
 	cloudProvider := ibmcloud.New(
 		mgr.GetClient(),
 		recorder,
+		ibmClient,
 		instanceTypeProviderImpl,
 		instanceProviderImpl,
 	)
 
-	// Create the reconciler
-	logger.Info("Creating reconcilers")
-	nodeClaimReconciler := NewIBMCloudReconciler(mgr.GetClient(), cloudProvider)
-
-	// Create the autoplacement controller
-	autoplacementController, err := autoplacement.NewController(mgr, instanceTypeProviderImpl, subnetProviderImpl)
-	if err != nil {
-		logger.Error(err, "Error creating autoplacement controller")
-		os.Exit(1)
-	}
-
-	// Create controllers
-	if err := builder.ControllerManagedBy(mgr).
-		For(&v1.NodeClaim{}).
-		Complete(nodeClaimReconciler); err != nil {
-		logger.Error(err, "Error creating nodeclaim controller")
-		os.Exit(1)
-	}
-
-	// Add autoplacement controller to manager
-	if err := mgr.Add(autoplacementController); err != nil {
-		logger.Error(err, "Error adding autoplacement controller")
+	// Register all controllers
+	logger.Info("Registering controllers")
+	if err := controllers.RegisterControllers(
+		ctx,
+		mgr,
+		clock.RealClock{},
+		mgr.GetClient(),
+		recorder,
+		cache.NewUnavailableOfferings(),
+		cloudProvider,
+		instanceProviderImpl,
+		instanceTypeProviderImpl,
+	); err != nil {
+		logger.Error(err, "Error registering controllers")
 		os.Exit(1)
 	}
 

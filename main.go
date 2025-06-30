@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/events"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
@@ -81,6 +82,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create IBM client
+	ibmClient, err := ibm.NewClient()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to create IBM client")
+		os.Exit(1)
+	}
+
 	// Create event recorder
 	recorder := events.NewRecorder(op.GetEventRecorder())
 
@@ -88,6 +96,7 @@ func main() {
 	cloudProvider := cloudprovider.New(
 		op.GetClient(),
 		recorder,
+		ibmClient,
 		instanceTypeProvider,
 		instanceProvider,
 	)
@@ -109,12 +118,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Add controllers
-	for _, c := range controllers.NewControllers(ctx, mgr, clock.RealClock{}, op.GetClient(), recorder, op.GetUnavailableOfferings(), cloudProvider, instanceProvider, instanceTypeProvider, nil) {
-		if err := c.Register(ctx, mgr); err != nil {
-			log.FromContext(ctx).Error(err, "failed to register controller with manager")
-			os.Exit(1)
-		}
+	// Register controllers
+	if err := controllers.RegisterControllers(ctx, mgr, clock.RealClock{}, op.GetClient(), recorder, op.GetUnavailableOfferings(), cloudProvider, instanceProvider, instanceTypeProvider); err != nil {
+		log.FromContext(ctx).Error(err, "failed to register controllers with manager")
+		os.Exit(1)
 	}
 
 	// Start the manager

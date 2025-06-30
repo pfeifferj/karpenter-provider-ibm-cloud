@@ -13,6 +13,8 @@ type mockVPCClient struct {
 	createInstanceResponse *vpcv1.Instance
 	getInstanceResponse    *vpcv1.Instance
 	listInstancesResponse  *vpcv1.InstanceCollection
+	listSubnetsResponse    *vpcv1.SubnetCollection
+	getSubnetResponse      *vpcv1.Subnet
 	err                    error
 }
 
@@ -51,13 +53,31 @@ func (m *mockVPCClient) UpdateInstanceWithContext(_ context.Context, _ *vpcv1.Up
 	return &vpcv1.Instance{}, &core.DetailedResponse{}, nil
 }
 
+func (m *mockVPCClient) ListSubnetsWithContext(_ context.Context, _ *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.listSubnetsResponse, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) GetSubnetWithContext(_ context.Context, _ *vpcv1.GetSubnetOptions) (*vpcv1.Subnet, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.getSubnetResponse, &core.DetailedResponse{}, nil
+}
+
 func TestNewVPCClient(t *testing.T) {
 	baseURL := "https://test.vpc.url"
 	authType := "iam"
 	apiKey := "test-key"
 	region := "us-south"
 
-	client := NewVPCClient(baseURL, authType, apiKey, region)
+	client, err := NewVPCClient(baseURL, authType, apiKey, region)
+
+	if err != nil {
+		t.Fatalf("unexpected error creating VPC client: %v", err)
+	}
 
 	if client == nil {
 		t.Fatal("expected non-nil client")
@@ -75,6 +95,9 @@ func TestNewVPCClient(t *testing.T) {
 	}
 	if client.region != region {
 		t.Errorf("expected region %s, got %s", region, client.region)
+	}
+	if client.client == nil {
+		t.Error("expected client to be initialized")
 	}
 }
 
