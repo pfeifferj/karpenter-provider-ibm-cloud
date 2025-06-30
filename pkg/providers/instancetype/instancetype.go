@@ -31,6 +31,7 @@ import (
 
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/pricing"
 )
 
 // ExtendedInstanceType adds fields needed for automatic placement
@@ -41,7 +42,8 @@ type ExtendedInstanceType struct {
 }
 
 type IBMInstanceTypeProvider struct {
-	client *ibm.Client
+	client         *ibm.Client
+	pricingProvider pricing.Provider
 }
 
 func NewProvider() (Provider, error) {
@@ -49,8 +51,13 @@ func NewProvider() (Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating IBM Cloud client: %w", err)
 	}
+	
+	// Initialize pricing provider
+	pricingProvider := pricing.NewIBMPricingProvider(client)
+	
 	return &IBMInstanceTypeProvider{
-		client: client,
+		client:          client,
+		pricingProvider: pricingProvider,
 	}, nil
 }
 
@@ -66,6 +73,13 @@ func calculateInstanceTypeScore(instanceType *ExtendedInstanceType) float64 {
 	cpuCount := float64(instanceType.Capacity.Cpu().Value())
 	memoryGB := float64(instanceType.Capacity.Memory().Value()) / (1024 * 1024 * 1024) // Convert bytes to GB
 	hourlyPrice := instanceType.Price
+
+	// Handle cases where pricing is unavailable
+	if hourlyPrice <= 0 {
+		// When price is unavailable, rank by resource efficiency (prefer smaller instances)
+		// This ensures instances with no pricing data are still ranked reasonably
+		return cpuCount + memoryGB
+	}
 
 	// Calculate cost efficiency score (price per CPU and GB of memory)
 	cpuEfficiency := hourlyPrice / cpuCount
@@ -88,6 +102,10 @@ func getArchitecture(it *cloudprovider.InstanceType) string {
 }
 
 func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudprovider.InstanceType, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client not initialized")
+	}
+	
 	catalogClient, err := p.client.GetGlobalCatalogClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting Global Catalog client: %w", err)
@@ -109,6 +127,10 @@ func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudp
 }
 
 func (p *IBMInstanceTypeProvider) List(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client not initialized")
+	}
+	
 	catalogClient, err := p.client.GetGlobalCatalogClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting Global Catalog client: %w", err)
@@ -145,20 +167,32 @@ func (p *IBMInstanceTypeProvider) Delete(ctx context.Context, instanceType *clou
 
 // FilterInstanceTypes returns instance types that meet requirements
 func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requirements *v1alpha1.InstanceTypeRequirements) ([]*cloudprovider.InstanceType, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client not initialized")
+	}
 	// Get all instance types
 	allTypes, err := p.List(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to extended instance types
+	// Convert to extended instance types with pricing
 	var extendedTypes []*ExtendedInstanceType
 	for _, it := range allTypes {
+		// Get price for this instance type (use default zone for pricing)
+		zone := "us-south-1" // Default zone for pricing
+		
+		price, err := p.pricingProvider.GetPrice(ctx, it.Name, zone)
+		if err != nil {
+			// Log warning but continue with 0 price to avoid breaking functionality
+			fmt.Printf("Warning: Could not get pricing for instance type %s: %v\n", it.Name, err)
+			price = 0.0
+		}
+		
 		ext := &ExtendedInstanceType{
 			InstanceType: it,
 			Architecture: getArchitecture(it),
-			// TODO: Fetch actual price from IBM Cloud pricing API
-			Price: 0.0,
+			Price:        price,
 		}
 		extendedTypes = append(extendedTypes, ext)
 	}
@@ -241,14 +275,28 @@ func (p *IBMInstanceTypeProvider) rankInstanceTypes(instanceTypes []*ExtendedIns
 
 // RankInstanceTypes implements the Provider interface
 func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
-	// Convert to extended instance types
+	// Convert to extended instance types with pricing
 	extended := make([]*ExtendedInstanceType, len(instanceTypes))
 	for i, it := range instanceTypes {
+		// Get price for this instance type (use default zone for ranking)
+		var price float64
+		if p.pricingProvider != nil {
+			priceVal, err := p.pricingProvider.GetPrice(context.Background(), it.Name, "us-south-1")
+			if err != nil {
+				// Log warning but continue with 0 price
+				fmt.Printf("Warning: Could not get pricing for instance type %s: %v\n", it.Name, err)
+				price = 0.0
+			} else {
+				price = priceVal
+			}
+		} else {
+			price = 0.0
+		}
+		
 		extended[i] = &ExtendedInstanceType{
 			InstanceType: it,
 			Architecture: getArchitecture(it),
-			// TODO: Fetch actual price from IBM Cloud pricing API
-			Price: 0.0,
+			Price:        price,
 		}
 	}
 

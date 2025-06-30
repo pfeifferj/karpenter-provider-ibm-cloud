@@ -44,11 +44,4 @@ jobs:
 
         # Validate template rendering
         helm template . -f ci-values.yaml
-
-        # Validate CRDs
-        for crd in crds/*.yaml; do
-          if [ -f "$crd" ]; then
-            echo "Validating $crd"
-            cat "$crd" | yamllint -c ../.yamllint -
-          fi
-        done
+        

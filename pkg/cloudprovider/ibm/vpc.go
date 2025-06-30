@@ -15,6 +15,8 @@ type vpcClientInterface interface {
 	GetInstanceWithContext(context.Context, *vpcv1.GetInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
 	ListInstancesWithContext(context.Context, *vpcv1.ListInstancesOptions) (*vpcv1.InstanceCollection, *core.DetailedResponse, error)
 	UpdateInstanceWithContext(context.Context, *vpcv1.UpdateInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
+	ListSubnetsWithContext(context.Context, *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error)
+	GetSubnetWithContext(context.Context, *vpcv1.GetSubnetOptions) (*vpcv1.Subnet, *core.DetailedResponse, error)
 }
 
 // VPCClient handles interactions with the IBM Cloud VPC API
@@ -26,13 +28,28 @@ type VPCClient struct {
 	client   vpcClientInterface
 }
 
-func NewVPCClient(baseURL, authType, apiKey, region string) *VPCClient {
+func NewVPCClient(baseURL, authType, apiKey, region string) (*VPCClient, error) {
+	authenticator := &core.IamAuthenticator{
+		ApiKey: apiKey,
+	}
+
+	options := &vpcv1.VpcV1Options{
+		Authenticator: authenticator,
+		URL:          baseURL,
+	}
+
+	client, err := vpcv1.NewVpcV1(options)
+	if err != nil {
+		return nil, fmt.Errorf("creating VPC client: %w", err)
+	}
+
 	return &VPCClient{
 		baseURL:  baseURL,
 		authType: authType,
 		apiKey:   apiKey,
 		region:   region,
-	}
+		client:   client,
+	}, nil
 }
 
 func (c *VPCClient) CreateInstance(ctx context.Context, instancePrototype *vpcv1.InstancePrototype) (*vpcv1.Instance, error) {
@@ -125,4 +142,38 @@ func (c *VPCClient) UpdateInstanceTags(ctx context.Context, id string, tags map[
 	}
 
 	return nil
+}
+
+func (c *VPCClient) ListSubnets(ctx context.Context, vpcID string) (*vpcv1.SubnetCollection, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.ListSubnetsOptions{
+		VPCID: &vpcID,
+	}
+
+	subnets, _, err := c.client.ListSubnetsWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("listing subnets: %w", err)
+	}
+
+	return subnets, nil
+}
+
+func (c *VPCClient) GetSubnet(ctx context.Context, subnetID string) (*vpcv1.Subnet, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.GetSubnetOptions{
+		ID: &subnetID,
+	}
+
+	subnet, _, err := c.client.GetSubnetWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("getting subnet: %w", err)
+	}
+
+	return subnet, nil
 }

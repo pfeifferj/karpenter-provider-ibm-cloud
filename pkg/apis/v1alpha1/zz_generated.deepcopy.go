@@ -86,6 +86,11 @@ func (in *IBMNodeClassSpec) DeepCopyInto(out *IBMNodeClassSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.SSHKeys != nil {
+		in, out := &in.SSHKeys, &out.SSHKeys
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Tags != nil {
 		in, out := &in.Tags, &out.Tags
 		*out = make(map[string]string, len(*in))

@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
@@ -31,6 +32,7 @@ var _ cloudprovider.CloudProvider = (*CloudProvider)(nil)
 type CloudProvider struct {
 	kubeClient client.Client
 	recorder   events.Recorder
+	ibmClient  *ibm.Client
 
 	instanceTypeProvider instancetype.Provider
 	instanceProvider     instance.Provider
@@ -38,11 +40,13 @@ type CloudProvider struct {
 
 func New(kubeClient client.Client,
 	recorder events.Recorder,
+	ibmClient *ibm.Client,
 	instanceTypeProvider instancetype.Provider,
 	instanceProvider instance.Provider) *CloudProvider {
 	return &CloudProvider{
 		kubeClient: kubeClient,
 		recorder:   recorder,
+		ibmClient:  ibmClient,
 
 		instanceTypeProvider: instanceTypeProvider,
 		instanceProvider:     instanceProvider,
@@ -333,4 +337,8 @@ func (c *CloudProvider) Name() string {
 
 func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
 	return []status.Object{&v1alpha1.IBMNodeClass{}}
+}
+
+func (c *CloudProvider) GetIBMClient() *ibm.Client {
+	return c.ibmClient
 }

@@ -113,12 +113,25 @@ spec:
                     - CostOptimized
                     type: string
                 type: object
+              placementTarget:
+                description: PlacementTarget is the ID of the placement target (dedicated
+                  host, placement group)
+                type: string
               region:
                 description: Region is the IBM Cloud region where nodes will be created
+                type: string
+              resourceGroup:
+                description: ResourceGroup is the ID of the resource group for the
+                  instance
                 type: string
               securityGroups:
                 description: SecurityGroups is a list of security group IDs to attach
                   to nodes
+                items:
+                  type: string
+                type: array
+              sshKeys:
+                description: SSHKeys is a list of SSH key IDs to add to the instance
                 items:
                   type: string
                 type: array
@@ -132,6 +145,10 @@ spec:
                   type: string
                 description: Tags to apply to the instances
                 type: object
+              userData:
+                description: UserData contains user data script to run on instance
+                  initialization
+                type: string
               vpc:
                 description: VPC is the ID of the VPC where nodes will be created
                 type: string

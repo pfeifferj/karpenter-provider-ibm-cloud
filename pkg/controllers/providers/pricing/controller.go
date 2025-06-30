@@ -14,13 +14,30 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/pricing"
 )
 
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;update;patch;create
 type Controller struct {
 	pricingProvider pricing.Provider
 }
 
+// NoOpPricingProvider is a no-op implementation of the pricing provider
+type NoOpPricingProvider struct{}
+
+func (n *NoOpPricingProvider) GetPrice(ctx context.Context, instanceType string, zone string) (float64, error) {
+	return 0.10, nil // Default price
+}
+
+func (n *NoOpPricingProvider) GetPrices(ctx context.Context, zone string) (map[string]float64, error) {
+	return map[string]float64{}, nil
+}
+
+func (n *NoOpPricingProvider) Refresh(ctx context.Context) error {
+	return nil // No-op
+}
+
 func NewController(pricingProvider pricing.Provider) (*Controller, error) {
+	// Create a no-op provider if none is provided
 	if pricingProvider == nil {
-		return nil, fmt.Errorf("pricing provider cannot be nil")
+		pricingProvider = &NoOpPricingProvider{}
 	}
 	return &Controller{
 		pricingProvider: pricingProvider,

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/IBM/vpc-go-sdk/vpcv1"
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
 // SubnetInfo contains information about a VPC subnet
@@ -34,12 +36,18 @@ type Provider interface {
 }
 
 type provider struct {
-	// Add IBM Cloud VPC client/dependencies here
+	client *ibm.Client
 }
 
 // NewProvider creates a new subnet provider
-func NewProvider() Provider {
-	return &provider{}
+func NewProvider() (Provider, error) {
+	client, err := ibm.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("creating IBM Cloud client: %w", err)
+	}
+	return &provider{
+		client: client,
+	}, nil
 }
 
 // subnetScore represents a subnet's suitability score
@@ -167,12 +175,68 @@ func (p *provider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1
 
 // ListSubnets returns all subnets in the VPC
 func (p *provider) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error) {
-	// TODO: Implement IBM Cloud VPC API call to list subnets
-	return nil, fmt.Errorf("not implemented")
+	vpcClient, err := p.client.GetVPCClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC client: %w", err)
+	}
+
+	// List all subnets in the VPC
+	response, err := vpcClient.ListSubnets(ctx, vpcID)
+	if err != nil {
+		return nil, fmt.Errorf("listing subnets for VPC %s: %w", vpcID, err)
+	}
+
+	// Convert VPC subnet objects to our SubnetInfo format
+	subnets := make([]SubnetInfo, 0, len(response.Subnets))
+	for _, subnet := range response.Subnets {
+		subnetInfo := convertVPCSubnetToSubnetInfo(subnet)
+		subnets = append(subnets, subnetInfo)
+	}
+
+	return subnets, nil
 }
 
 // GetSubnet retrieves information about a specific subnet
 func (p *provider) GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo, error) {
-	// TODO: Implement IBM Cloud VPC API call to get subnet details
-	return nil, fmt.Errorf("not implemented")
+	vpcClient, err := p.client.GetVPCClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC client: %w", err)
+	}
+
+	// Get subnet details
+	subnet, err := vpcClient.GetSubnet(ctx, subnetID)
+	if err != nil {
+		return nil, fmt.Errorf("getting subnet %s: %w", subnetID, err)
+	}
+
+	subnetInfo := convertVPCSubnetToSubnetInfo(*subnet)
+	return &subnetInfo, nil
+}
+
+// convertVPCSubnetToSubnetInfo converts a VPC SDK subnet to our SubnetInfo format
+func convertVPCSubnetToSubnetInfo(vpcSubnet vpcv1.Subnet) SubnetInfo {
+	subnetInfo := SubnetInfo{
+		ID:    *vpcSubnet.ID,
+		Zone:  *vpcSubnet.Zone.Name,
+		CIDR:  *vpcSubnet.Ipv4CIDRBlock,
+		State: *vpcSubnet.Status,
+		Tags:  make(map[string]string),
+	}
+
+	// Calculate IP counts
+	if vpcSubnet.TotalIpv4AddressCount != nil {
+		subnetInfo.TotalIPCount = int32(*vpcSubnet.TotalIpv4AddressCount)
+	}
+	if vpcSubnet.AvailableIpv4AddressCount != nil {
+		subnetInfo.AvailableIPs = int32(*vpcSubnet.AvailableIpv4AddressCount)
+	}
+	
+	// Calculate used IPs
+	subnetInfo.UsedIPCount = subnetInfo.TotalIPCount - subnetInfo.AvailableIPs
+
+	// Extract user tags if available (Note: UserTags may not be available in all SDK versions)
+	// TODO: Implement tag extraction when IBM Cloud SDK supports user tags on subnets
+	// For now, we'll use an empty tags map
+
+	return subnetInfo
 }

@@ -58,7 +58,7 @@ func NewClient() (*Client, error) {
 
 // GetVPCClient returns a configured VPC API client
 func (c *Client) GetVPCClient() (*VPCClient, error) {
-	return NewVPCClient(c.vpcURL, c.vpcAuthType, c.vpcAPIKey, c.region), nil
+	return NewVPCClient(c.vpcURL, c.vpcAuthType, c.vpcAPIKey, c.region)
 }
 
 // GetGlobalCatalogClient returns a configured Global Catalog API client
