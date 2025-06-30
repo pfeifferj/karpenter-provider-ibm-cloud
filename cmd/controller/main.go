@@ -209,12 +209,12 @@ func main() {
 	}
 
 	// Add health check endpoints
-	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		logger.Error(err, "Error setting up health check")
+	if healthErr := mgr.AddHealthzCheck("healthz", healthz.Ping); healthErr != nil {
+		logger.Error(healthErr, "Error setting up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		logger.Error(err, "Error setting up ready check")
+	if readyErr := mgr.AddReadyzCheck("readyz", healthz.Ping); readyErr != nil {
+		logger.Error(readyErr, "Error setting up ready check")
 		os.Exit(1)
 	}
 

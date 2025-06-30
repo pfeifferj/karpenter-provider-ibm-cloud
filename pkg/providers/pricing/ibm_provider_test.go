@@ -25,86 +25,65 @@ func TestNewIBMPricingProvider(t *testing.T) {
 	assert.NotNil(t, provider.pricingMap)
 }
 
-func TestGetFallbackPricing(t *testing.T) {
-	provider := NewIBMPricingProvider(nil)
-	
-	tests := []struct {
-		instanceType string
-		expectedPrice float64
-	}{
-		{"bx2-2x8", 0.097},
-		{"bx2-4x16", 0.194},
-		{"cx2-2x4", 0.087},
-		{"unknown-type", 0.10}, // fallback price
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.instanceType, func(t *testing.T) {
-			price := provider.getFallbackPricing(tt.instanceType)
-			assert.Equal(t, tt.expectedPrice, price)
-		})
-	}
-}
-
-func TestGetFallbackPrices(t *testing.T) {
-	provider := NewIBMPricingProvider(nil)
-	
-	prices := provider.getFallbackPrices()
-	
-	require.NotNil(t, prices)
-	assert.Greater(t, len(prices), 0)
-	
-	// Check that some expected instance types are present
-	expectedTypes := []string{"bx2-2x8", "bx2-4x16", "cx2-2x4", "mx2-2x16"}
-	for _, instanceType := range expectedTypes {
-		price, exists := prices[instanceType]
-		assert.True(t, exists, "Expected instance type %s to be present", instanceType)
-		assert.Greater(t, price, 0.0, "Expected positive price for %s", instanceType)
-	}
-}
-
-func TestRefresh(t *testing.T) {
+func TestRefreshWithoutClient(t *testing.T) {
 	provider := NewIBMPricingProvider(nil)
 	ctx := context.Background()
 	
-	// Test refresh functionality
+	// Test refresh fails gracefully without client
 	err := provider.Refresh(ctx)
-	assert.NoError(t, err)
-	
-	// Check that pricing map was populated
-	assert.Greater(t, len(provider.pricingMap), 0)
-	assert.False(t, provider.lastUpdate.IsZero())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "IBM client not available")
 }
 
-func TestGetPriceWithFallback(t *testing.T) {
+func TestGetPricesWithoutData(t *testing.T) {
 	provider := NewIBMPricingProvider(nil)
 	ctx := context.Background()
 	
-	// Test getting price for a known instance type
-	price, err := provider.GetPrice(ctx, "bx2-2x8", "us-south-1")
-	assert.NoError(t, err)
-	assert.Greater(t, price, 0.0)
-	
-	// Test getting price for unknown instance type (should fallback)
-	price, err = provider.GetPrice(ctx, "unknown-type", "us-south-1")
-	assert.NoError(t, err)
-	assert.Equal(t, 0.10, price) // fallback price
-}
-
-func TestGetPricesWithFallback(t *testing.T) {
-	provider := NewIBMPricingProvider(nil)
-	ctx := context.Background()
-	
-	// Test getting all prices for a zone
+	// Test getting prices when no data is available
 	prices, err := provider.GetPrices(ctx, "us-south-1")
-	assert.NoError(t, err)
-	assert.Greater(t, len(prices), 0)
+	assert.Error(t, err)
+	assert.Nil(t, prices)
+	assert.Contains(t, err.Error(), "no pricing data available")
+}
+
+func TestRefreshFailsWithoutClient(t *testing.T) {
+	provider := NewIBMPricingProvider(nil)
+	ctx := context.Background()
 	
-	// Verify that we get reasonable prices
-	for instanceType, price := range prices {
-		assert.Greater(t, price, 0.0, "Expected positive price for %s", instanceType)
-		t.Logf("Instance type %s: $%.3f/hour", instanceType, price)
-	}
+	// Test refresh fails without client
+	err := provider.Refresh(ctx)
+	assert.Error(t, err)
+	
+	// Check that pricing map remains empty
+	assert.Equal(t, 0, len(provider.pricingMap))
+	assert.True(t, provider.lastUpdate.IsZero())
+}
+
+func TestGetPriceWithoutData(t *testing.T) {
+	provider := NewIBMPricingProvider(nil)
+	ctx := context.Background()
+	
+	// Test getting price when no data is available
+	price, err := provider.GetPrice(ctx, "bx2-2x8", "us-south-1")
+	assert.Error(t, err)
+	assert.Equal(t, 0.0, price)
+	assert.Contains(t, err.Error(), "no pricing data available")
+	
+	// Test getting price for unknown instance type (should also error)
+	price, err = provider.GetPrice(ctx, "unknown-type", "us-south-1")
+	assert.Error(t, err)
+	assert.Equal(t, 0.0, price)
+}
+
+func TestGetPricesErrorHandling(t *testing.T) {
+	provider := NewIBMPricingProvider(nil)
+	ctx := context.Background()
+	
+	// Test getting all prices when no data is available
+	prices, err := provider.GetPrices(ctx, "us-south-1")
+	assert.Error(t, err)
+	assert.Nil(t, prices)
+	assert.Contains(t, err.Error(), "no pricing data available for zone")
 }
 
 // Note: Tests that require real IBM Cloud clients are skipped

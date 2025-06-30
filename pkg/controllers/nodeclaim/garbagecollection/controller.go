@@ -14,6 +14,8 @@ import (
 )
 
 // Controller reconciles NodeClaim objects for garbage collection
+//+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 type Controller struct {
 	kubeClient    client.Client
 	cloudProvider cloudprovider.CloudProvider
@@ -54,8 +56,8 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 		if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Status.NodeName}, node); err != nil {
 			if client.IgnoreNotFound(err) == nil {
 				// Node doesn't exist, remove finalizer from nodeclaim
-				if err := c.removeFinalizer(ctx, &nodeClaim); err != nil {
-					return reconcile.Result{}, err
+				if removeErr := c.removeFinalizer(ctx, &nodeClaim); removeErr != nil {
+					return reconcile.Result{}, removeErr
 				}
 				continue
 			}

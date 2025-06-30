@@ -120,3 +120,25 @@ func (c *GlobalCatalogClient) ListInstanceTypes(ctx context.Context) ([]globalca
 
 	return allEntries, nil
 }
+
+func (c *GlobalCatalogClient) GetPricing(ctx context.Context, catalogEntryID string) (*globalcatalogv1.PricingGet, error) {
+	if err := c.ensureClient(ctx); err != nil {
+		return nil, err
+	}
+
+	// Cast the client interface to access GetPricing method
+	if sdkClient, ok := c.client.(*globalcatalogv1.GlobalCatalogV1); ok {
+		pricingOptions := &globalcatalogv1.GetPricingOptions{
+			ID: &catalogEntryID,
+		}
+		
+		pricingData, _, err := sdkClient.GetPricing(pricingOptions)
+		if err != nil {
+			return nil, fmt.Errorf("calling GetPricing API: %w", err)
+		}
+		
+		return pricingData, nil
+	}
+	
+	return nil, fmt.Errorf("invalid client type for GetPricing")
+}

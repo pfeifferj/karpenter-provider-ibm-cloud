@@ -64,8 +64,8 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 
 	// Get the NodeClass to extract configuration
 	nodeClass := &v1alpha1.IBMNodeClass{}
-	if err := p.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
-		return nil, fmt.Errorf("getting NodeClass %s: %w", nodeClaim.Spec.NodeClassRef.Name, err)
+	if getErr := p.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); getErr != nil {
+		return nil, fmt.Errorf("getting NodeClass %s: %w", nodeClaim.Spec.NodeClassRef.Name, getErr)
 	}
 
 	// Extract instance profile - prefer NodeClass, fallback to labels
@@ -135,15 +135,8 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 		PrimaryNetworkInterface: primaryNetworkInterface,
 	}
 
-	// TODO: Add additional configuration when API fields are available
-	// The following fields are defined in the API but not currently accessible:
-	// - UserData, SSHKeys, ResourceGroup, PlacementTarget
-	// This may be due to module structure or import resolution issues
-	
-	// Add tags if specified
-	if len(nodeClass.Spec.Tags) > 0 {
-		// Note: Tags handling would be implemented here when VPC SDK supports it
-	}
+	// Add tags if specified - placeholder for future VPC SDK tag support
+	_ = nodeClass.Spec.Tags // Tags will be used when VPC SDK supports them
 
 	// Create the instance
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
@@ -181,16 +174,21 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 }
 
 func (p *IBMCloudInstanceProvider) Delete(ctx context.Context, node *corev1.Node) error {
+	// Extract instance ID from provider ID first to validate the format
+	providerID := node.Spec.ProviderID
+	if !strings.HasPrefix(providerID, "ibm://") {
+		return fmt.Errorf("invalid provider ID format: %s", providerID)
+	}
+	
+	if p.client == nil {
+		return fmt.Errorf("IBM client not initialized")
+	}
+	
 	vpcClient, err := p.client.GetVPCClient()
 	if err != nil {
 		return fmt.Errorf("getting VPC client: %w", err)
 	}
 
-	// Extract instance ID from provider ID
-	providerID := node.Spec.ProviderID
-	if !strings.HasPrefix(providerID, "ibm://") {
-		return fmt.Errorf("invalid provider ID format: %s", providerID)
-	}
 	instanceID := strings.TrimPrefix(providerID, "ibm://")
 
 	err = vpcClient.DeleteInstance(ctx, instanceID)
@@ -202,6 +200,9 @@ func (p *IBMCloudInstanceProvider) Delete(ctx context.Context, node *corev1.Node
 }
 
 func (p *IBMCloudInstanceProvider) GetInstance(ctx context.Context, node *corev1.Node) (*Instance, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client not initialized")
+	}
 	vpcClient, err := p.client.GetVPCClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting VPC client: %w", err)
