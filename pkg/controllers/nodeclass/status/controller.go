@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/awslabs/operatorpkg/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,25 +36,32 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Store original for patching
+	patch := client.MergeFrom(nc.DeepCopy())
+
 	// Validate the nodeclass configuration
 	if err := c.validateNodeClass(ctx, nc); err != nil {
-		patch := client.MergeFrom(nc.DeepCopy())
 		nc.Status.LastValidationTime = metav1.Now()
 		nc.Status.ValidationError = err.Error()
+		
+		// Set Ready condition to False with validation error
+		nc.StatusConditions().SetFalse(status.ConditionReady, "ValidationFailed", err.Error())
+		
 		if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
 			return reconcile.Result{}, err
 		}
-		return reconcile.Result{}, err
+		return reconcile.Result{}, nil
 	}
 
-	// Clear any previous validation error
-	if nc.Status.ValidationError != "" {
-		patch := client.MergeFrom(nc.DeepCopy())
-		nc.Status.LastValidationTime = metav1.Now()
-		nc.Status.ValidationError = ""
-		if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
-			return reconcile.Result{}, err
-		}
+	// Validation passed - clear any previous validation error and set Ready condition
+	nc.Status.LastValidationTime = metav1.Now()
+	nc.Status.ValidationError = ""
+	
+	// Set Ready condition to True
+	nc.StatusConditions().SetTrue(status.ConditionReady)
+	
+	if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
+		return reconcile.Result{}, err
 	}
 
 	return reconcile.Result{}, nil

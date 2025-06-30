@@ -16,7 +16,7 @@ PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell git describe --tags --always --dirty)
 
 # Build settings
-BINARY_NAME = karpenter-clusterapi-controller
+BINARY_NAME = karpenter-ibm-controller
 BUILD_DIR = bin
 PLATFORMS = linux/amd64 linux/arm64
 
@@ -65,11 +65,12 @@ generate: gen-objects manifests ## generate all controller-gen files
 
 .PHONY: manifests
 manifests: ## generate the controller-gen kubernetes manifests
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=pkg/apis/crds
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./vendor/sigs.k8s.io/karpenter/..." output:crd:artifacts:config=pkg/apis/crds
-	@echo "Copying generated CRDs to Helm chart..."
-	@mkdir -p charts/crds
-	@cp pkg/apis/crds/*.yaml charts/crds/
+	@echo "Generating CRDs directly to Helm chart..."
+	$(CONTROLLER_GEN) crd paths="./pkg/apis/v1alpha1" output:crd:artifacts:config=charts/crds
+	$(CONTROLLER_GEN) crd paths="./vendor/sigs.k8s.io/karpenter/pkg/apis/..." output:crd:artifacts:config=charts/crds
+	@echo "Generating RBAC manifests..."
+	@rm -f charts/templates/rbac_*.yaml charts/templates/role_*.yaml charts/templates/clusterrole_*.yaml
+	GOFLAGS="-mod=mod" $(CONTROLLER_GEN) rbac:roleName=karpenter-manager paths="./pkg/controllers" output:rbac:dir=charts/templates
 
 .PHONY: test
 test: vendor unit

@@ -16,6 +16,10 @@ import (
 )
 
 // Controller reconciles IBMNodeClass deletion by terminating associated nodes
+//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;delete
+//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 type Controller struct {
 	kubeClient client.Client
 	recorder   record.EventRecorder

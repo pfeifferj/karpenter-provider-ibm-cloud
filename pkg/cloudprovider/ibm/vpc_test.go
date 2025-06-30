@@ -3,6 +3,7 @@ package ibm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -13,6 +14,8 @@ type mockVPCClient struct {
 	createInstanceResponse *vpcv1.Instance
 	getInstanceResponse    *vpcv1.Instance
 	listInstancesResponse  *vpcv1.InstanceCollection
+	listSubnetsResponse    *vpcv1.SubnetCollection
+	getSubnetResponse      *vpcv1.Subnet
 	err                    error
 }
 
@@ -51,13 +54,31 @@ func (m *mockVPCClient) UpdateInstanceWithContext(_ context.Context, _ *vpcv1.Up
 	return &vpcv1.Instance{}, &core.DetailedResponse{}, nil
 }
 
+func (m *mockVPCClient) ListSubnetsWithContext(_ context.Context, _ *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.listSubnetsResponse, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) GetSubnetWithContext(_ context.Context, _ *vpcv1.GetSubnetOptions) (*vpcv1.Subnet, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.getSubnetResponse, &core.DetailedResponse{}, nil
+}
+
 func TestNewVPCClient(t *testing.T) {
 	baseURL := "https://test.vpc.url"
 	authType := "iam"
 	apiKey := "test-key"
 	region := "us-south"
 
-	client := NewVPCClient(baseURL, authType, apiKey, region)
+	client, err := NewVPCClient(baseURL, authType, apiKey, region)
+
+	if err != nil {
+		t.Fatalf("unexpected error creating VPC client: %v", err)
+	}
 
 	if client == nil {
 		t.Fatal("expected non-nil client")
@@ -75,6 +96,9 @@ func TestNewVPCClient(t *testing.T) {
 	}
 	if client.region != region {
 		t.Errorf("expected region %s, got %s", region, client.region)
+	}
+	if client.client == nil {
+		t.Error("expected client to be initialized")
 	}
 }
 
@@ -394,6 +418,241 @@ func TestUpdateInstanceTags(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// =================
+// Subnet Tests
+// =================
+
+func TestListSubnets(t *testing.T) {
+	ctx := context.Background()
+	vpcID := "test-vpc"
+	subnetID := "test-subnet"
+	subnetName := "test-subnet-name"
+	zoneName := "us-south-1"
+
+	mockSubnets := []vpcv1.Subnet{
+		{
+			ID:   &subnetID,
+			Name: &subnetName,
+			Zone: &vpcv1.ZoneReference{
+				Name: &zoneName,
+			},
+		},
+	}
+
+	tests := []struct {
+		name         string
+		mockVPC      vpcClientInterface
+		vpcID        string
+		wantErr      bool
+		wantSubnets  int
+		uninitClient bool
+	}{
+		{
+			name: "successful subnet listing",
+			mockVPC: &mockVPCClient{
+				listSubnetsResponse: &vpcv1.SubnetCollection{
+					Subnets: mockSubnets,
+				},
+			},
+			vpcID:       vpcID,
+			wantSubnets: 1,
+		},
+		{
+			name: "API error",
+			mockVPC: &mockVPCClient{
+				err: errors.New("API error"),
+			},
+			vpcID:   vpcID,
+			wantErr: true,
+		},
+		{
+			name:         "uninitialized client",
+			uninitClient: true,
+			vpcID:        vpcID,
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &VPCClient{}
+			if !tt.uninitClient {
+				client.client = tt.mockVPC
+			}
+
+			subnets, err := client.ListSubnets(ctx, tt.vpcID)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got nil")
+				}
+				if subnets != nil {
+					t.Error("expected nil subnets")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if len(subnets.Subnets) != tt.wantSubnets {
+					t.Errorf("got %d subnets, want %d", len(subnets.Subnets), tt.wantSubnets)
+				}
+			}
+		})
+	}
+}
+
+func TestGetSubnet(t *testing.T) {
+	ctx := context.Background()
+	subnetID := "test-subnet"
+	subnetName := "test-subnet-name"
+	zoneName := "us-south-1"
+
+	mockSubnet := &vpcv1.Subnet{
+		ID:   &subnetID,
+		Name: &subnetName,
+		Zone: &vpcv1.ZoneReference{
+			Name: &zoneName,
+		},
+	}
+
+	tests := []struct {
+		name         string
+		mockVPC      vpcClientInterface
+		subnetID     string
+		wantErr      bool
+		wantSubnet   *vpcv1.Subnet
+		uninitClient bool
+	}{
+		{
+			name: "successful subnet retrieval",
+			mockVPC: &mockVPCClient{
+				getSubnetResponse: mockSubnet,
+			},
+			subnetID:   subnetID,
+			wantSubnet: mockSubnet,
+		},
+		{
+			name: "API error",
+			mockVPC: &mockVPCClient{
+				err: errors.New("API error"),
+			},
+			subnetID: subnetID,
+			wantErr:  true,
+		},
+		{
+			name:         "uninitialized client",
+			uninitClient: true,
+			subnetID:     subnetID,
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &VPCClient{}
+			if !tt.uninitClient {
+				client.client = tt.mockVPC
+			}
+
+			subnet, err := client.GetSubnet(ctx, tt.subnetID)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got nil")
+				}
+				if subnet != nil {
+					t.Error("expected nil subnet")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if subnet != tt.wantSubnet {
+					t.Errorf("got subnet %v, want %v", subnet, tt.wantSubnet)
+				}
+			}
+		})
+	}
+}
+
+// =================
+// Error Handling Tests
+// =================
+
+func TestVPCClientErrorHandling(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		setupClient func() *VPCClient
+		operation   func(*VPCClient) error
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "uninitialized client - create instance",
+			setupClient: func() *VPCClient {
+				return &VPCClient{}
+			},
+			operation: func(c *VPCClient) error {
+				_, err := c.CreateInstance(ctx, &vpcv1.InstancePrototype{})
+				return err
+			},
+			wantErr:     true,
+			errContains: "VPC client not initialized",
+		},
+		{
+			name: "uninitialized client - list subnets",
+			setupClient: func() *VPCClient {
+				return &VPCClient{}
+			},
+			operation: func(c *VPCClient) error {
+				_, err := c.ListSubnets(ctx, "test-vpc")
+				return err
+			},
+			wantErr:     true,
+			errContains: "VPC client not initialized",
+		},
+		{
+			name: "timeout scenario",
+			setupClient: func() *VPCClient {
+				return &VPCClient{
+					client: &mockVPCClient{
+						err: errors.New("context deadline exceeded"),
+					},
+				}
+			},
+			operation: func(c *VPCClient) error {
+				_, err := c.ListInstances(ctx)
+				return err
+			},
+			wantErr:     true,
+			errContains: "context deadline exceeded",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := tt.setupClient()
+			err := tt.operation(client)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error to contain %q, got %q", tt.errContains, err.Error())
 				}
 			} else {
 				if err != nil {
