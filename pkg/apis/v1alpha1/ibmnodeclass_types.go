@@ -117,6 +117,22 @@ type IBMNodeClassSpec struct {
 	// +optional
 	SecurityGroups []string `json:"securityGroups,omitempty"`
 
+	// UserData contains user data script to run on instance initialization
+	// +optional
+	UserData string `json:"userData,omitempty"`
+
+	// SSHKeys is a list of SSH key IDs to add to the instance
+	// +optional
+	SSHKeys []string `json:"sshKeys,omitempty"`
+
+	// ResourceGroup is the ID of the resource group for the instance
+	// +optional
+	ResourceGroup string `json:"resourceGroup,omitempty"`
+
+	// PlacementTarget is the ID of the placement target (dedicated host, placement group)
+	// +optional
+	PlacementTarget string `json:"placementTarget,omitempty"`
+
 	// Tags to apply to the instances
 	// +optional
 	Tags map[string]string `json:"tags,omitempty"`

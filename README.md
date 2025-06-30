@@ -168,18 +168,6 @@ resources:
     memory: 128Mi
 ```
 
-## Current Limitations
-
-The provider currently has some limitations to be aware of:
-
-- No support for IBM Cloud spot instances and spot/on-demand mix strategies
-- Limited auto-placement features (no workload density optimization or cross-zone awareness)
-- Basic subnet selection capabilities
-- No advanced scaling features like predictive scaling or warm pools
-- Limited storage integration (no volume topology awareness)
-
-These limitations are being actively worked on for future releases.
-
 ## Development
 
 ### Testing and CI

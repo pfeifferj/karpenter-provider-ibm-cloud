@@ -22,6 +22,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 )
 
@@ -225,6 +226,7 @@ func TestReconcile(t *testing.T) {
 	cloudProvider := ibmcloud.New(
 		client,
 		&mockEventRecorder{},
+		&ibm.Client{},
 		&mockInstanceTypeProvider{},
 		&mockInstanceProvider{},
 	)
