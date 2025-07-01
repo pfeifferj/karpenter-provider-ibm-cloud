@@ -45,19 +45,45 @@ ibmcloud iam api-key-create MyKey -d "Karpenter IBM Cloud Provider Key" --file k
 1. Add the Helm repository:
 
    ```bash
-   helm repo add karpenter-ibm-cloud https://pfeifferj.github.io/karpenter-provider-ibm-cloud/index.yaml
+   helm repo add karpenter-ibm-cloud <repository-url>
    helm repo update
    ```
 
 2. Install using Helm:
    ```bash
-   helm install karpenter-ibm-cloud karpenter-ibm-cloud/karpenter-ibm-cloud \
+   helm install karpenter karpenter-ibm-cloud/karpenter \
      --namespace karpenter \
      --create-namespace \
-     --set credentials.ibm_api_key=<your-ibm-api-key> \
-     --set credentials.vpc_api_key=<your-vpc-api-key> \
-     --set credentials.region=<your-region>
+     --set credentials.ibm_api_key="<your-ibm-api-key>" \
+     --set credentials.vpc_api_key="<your-vpc-api-key>" \
+     --set credentials.region="<your-ibm-cloud-region>"
    ```
+
+   Optional parameters for custom image:
+   ```bash
+   --set image.repository="<your-registry>/<your-image>" \
+   --set image.tag="<your-tag>"
+   ```
+
+#### Example Installation
+
+For reference, here's an example with the public repository:
+
+```bash
+# Add repository
+helm repo add karpenter-ibm-cloud https://pfeifferj.github.io/karpenter-provider-ibm-cloud
+helm repo update
+
+# Install with required credentials (replace with your actual values)
+helm install karpenter karpenter-ibm-cloud/karpenter \
+  --namespace karpenter \
+  --create-namespace \
+  --set credentials.ibm_api_key="your-actual-api-key-here" \
+  --set credentials.vpc_api_key="your-actual-vpc-key-here" \
+  --set credentials.region="your-region"
+```
+
+**Note**: Replace `your-region` with your IBM Cloud region (e.g., `us-south`, `eu-de`, `jp-tok`, etc.)
 
 The provider uses the IBM Cloud API key to authenticate with various IBM Cloud services:
 

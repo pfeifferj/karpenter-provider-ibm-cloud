@@ -9,7 +9,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/karpenter/pkg/apis/v1beta1"
+	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
 
@@ -32,7 +32,7 @@ func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudPr
 // Reconcile executes a control loop for the resource
 func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	// List all NodeClaims
-	nodeClaimList := &v1beta1.NodeClaimList{}
+	nodeClaimList := &karpenterv1.NodeClaimList{}
 	if err := c.kubeClient.List(ctx, nodeClaimList); err != nil {
 		return reconcile.Result{}, err
 	}
@@ -80,7 +80,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	return reconcile.Result{}, nil
 }
 
-func (c *Controller) removeFinalizer(ctx context.Context, nodeClaim *v1beta1.NodeClaim) error {
+func (c *Controller) removeFinalizer(ctx context.Context, nodeClaim *karpenterv1.NodeClaim) error {
 	if !containsString(nodeClaim.Finalizers, "karpenter.ibm.sh/nodeclaim") {
 		return nil
 	}
@@ -98,7 +98,8 @@ func (c *Controller) Name() string {
 // Register registers the controller with the manager
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	return builder.ControllerManagedBy(m).
-		For(&v1beta1.NodeClaim{}).
+		Named("nodeclaim.garbagecollection").
+		For(&karpenterv1.NodeClaim{}).
 		Complete(singleton.AsReconciler(c))
 }
 
@@ -117,6 +118,9 @@ func removeString(slice []string, s string) []string {
 		if item != s {
 			result = append(result, item)
 		}
+	}
+	if result == nil {
+		return []string{}
 	}
 	return result
 }
