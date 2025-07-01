@@ -24,12 +24,8 @@ PLATFORMS = linux/amd64 linux/arm64
 LDFLAGS = -ldflags "-X main.version=${VERSION}"
 CGO_ENABLED = 0
 
-# ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION = 1.29
-ENVTEST = go run ${PROJECT_DIR}/vendor/sigs.k8s.io/controller-runtime/tools/setup-envtest
-
-GINKGO = go run ${PROJECT_DIR}/vendor/github.com/onsi/ginkgo/v2/ginkgo
-GINKGO_ARGS = -v --randomize-all --randomize-suites --keep-going --race --trace --timeout=30m
+# Test settings
+GTEST_ARGS = -v -race -timeout=30m
 
 CONTROLLER_GEN = ~/.local/share/go/bin/controller-gen
 
@@ -77,8 +73,7 @@ test: vendor unit
 
 .PHONY: unit
 unit: 
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./vendor/sigs.k8s.io/cluster-api/api/v1beta1/..." output:crd:artifacts:config=vendor/sigs.k8s.io/cluster-api/api/v1beta1
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path --bin-dir $(PROJECT_DIR)/bin)" ${GINKGO} ${GINKGO_ARGS} ${GINKGO_EXTRA_ARGS} ./...
+	go test $(GTEST_ARGS) ./...
 
 .PHONY: vendor
 vendor: ## update modules and populate local vendor directory
