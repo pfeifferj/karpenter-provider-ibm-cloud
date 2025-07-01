@@ -10,7 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/karpenter/pkg/apis/v1beta1"
+	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 )
@@ -20,21 +20,21 @@ import (
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 type Controller struct {
 	kubeClient       client.Client
-	instanceProvider *instance.IBMCloudInstanceProvider
+	instanceProvider instance.Provider
 }
 
 // NewController constructs a controller instance
 func NewController(kubeClient client.Client, instanceProvider instance.Provider) *Controller {
 	return &Controller{
 		kubeClient:       kubeClient,
-		instanceProvider: instanceProvider.(*instance.IBMCloudInstanceProvider),
+		instanceProvider: instanceProvider,
 	}
 }
 
 // Reconcile executes a control loop for the resource
 func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	// List all NodeClaims
-	nodeClaimList := &v1beta1.NodeClaimList{}
+	nodeClaimList := &karpenterv1.NodeClaimList{}
 	if err := c.kubeClient.List(ctx, nodeClaimList); err != nil {
 		return reconcile.Result{}, err
 	}
@@ -95,7 +95,8 @@ func (c *Controller) Name() string {
 // Register registers the controller with the manager
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {
 	return builder.ControllerManagedBy(m).
-		For(&v1beta1.NodeClaim{}).
+		Named("nodeclaim.tagging").
+		For(&karpenterv1.NodeClaim{}).
 		Owns(&v1.Node{}).
 		Complete(singleton.AsReconciler(c))
 }
