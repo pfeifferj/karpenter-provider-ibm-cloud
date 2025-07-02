@@ -24,6 +24,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
 )
 
 const (
@@ -93,6 +94,12 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 	require.NoError(t, err)
 	instanceProvider.SetKubeClient(kubeClient)
 
+	// Create subnet provider
+	subnetProvider, err := subnet.NewProvider()
+	if err != nil {
+		t.Fatalf("Failed to create subnet provider: %v", err)
+	}
+
 	// Create cloud provider
 	cloudProvider := ibmcloud.New(
 		kubeClient,
@@ -100,6 +107,7 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 		ibmClient,
 		instanceTypeProvider,
 		instanceProvider,
+		subnetProvider,
 	)
 
 	return &E2ETestSuite{

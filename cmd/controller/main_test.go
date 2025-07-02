@@ -24,6 +24,7 @@ import (
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
 )
 
 // Mock Event Recorder
@@ -137,6 +138,35 @@ func (m *mockInstanceProvider) TagInstance(ctx context.Context, instanceID strin
 	return nil
 }
 
+// Mock Subnet Provider
+type mockSubnetProvider struct{}
+
+func (m *mockSubnetProvider) ListSubnets(ctx context.Context, vpcID string) ([]subnet.SubnetInfo, error) {
+	return []subnet.SubnetInfo{
+		{
+			ID:           "test-subnet-1",
+			Zone:         "us-south-1",
+			CIDR:         "10.0.1.0/24",
+			AvailableIPs: 250,
+			State:        "available",
+		},
+	}, nil
+}
+
+func (m *mockSubnetProvider) GetSubnet(ctx context.Context, subnetID string) (*subnet.SubnetInfo, error) {
+	return &subnet.SubnetInfo{
+		ID:           subnetID,
+		Zone:         "us-south-1", 
+		CIDR:         "10.0.1.0/24",
+		AvailableIPs: 250,
+		State:        "available",
+	}, nil
+}
+
+func (m *mockSubnetProvider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1alpha1.PlacementStrategy) ([]subnet.SubnetInfo, error) {
+	return m.ListSubnets(ctx, vpcID)
+}
+
 func TestReconcile(t *testing.T) {
 	// Create a new scheme and register types
 	s := runtime.NewScheme()
@@ -229,6 +259,7 @@ func TestReconcile(t *testing.T) {
 		&ibm.Client{},
 		&mockInstanceTypeProvider{},
 		&mockInstanceProvider{},
+		&mockSubnetProvider{},
 	)
 
 	reconciler := NewIBMCloudReconciler(client, cloudProvider)

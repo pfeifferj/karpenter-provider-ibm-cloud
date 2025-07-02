@@ -35,9 +35,10 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options"
+	_ "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options" // Import for init() function
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	instancetypepkg "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
 )
 
 func init() {
@@ -52,10 +53,6 @@ func main() {
 
 	// Inject core Karpenter options into context
 	ctx = injection.WithOptionsOrDie(ctx, coreoptions.Injectables...)
-
-	// Inject IBM-specific options
-	ibmOpts := options.NewOptions()
-	ctx = options.WithOptions(ctx, ibmOpts)
 
 	// Get the in-cluster config
 	config, err := rest.InClusterConfig()
@@ -75,6 +72,13 @@ func main() {
 	instanceTypeProvider, err := instancetypepkg.NewProvider()
 	if err != nil {
 		log.FromContext(ctx).Error(err, "failed to create instance type provider")
+		os.Exit(1)
+	}
+
+	// Create subnet provider
+	subnetProvider, err := subnet.NewProvider()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to create subnet provider")
 		os.Exit(1)
 	}
 
@@ -102,6 +106,7 @@ func main() {
 		ibmClient,
 		instanceTypeProvider,
 		instanceProvider,
+		subnetProvider,
 	)
 
 	// Create manager with BaseContext

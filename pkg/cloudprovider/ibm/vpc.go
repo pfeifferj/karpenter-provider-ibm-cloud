@@ -17,6 +17,8 @@ type vpcClientInterface interface {
 	UpdateInstanceWithContext(context.Context, *vpcv1.UpdateInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
 	ListSubnetsWithContext(context.Context, *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error)
 	GetSubnetWithContext(context.Context, *vpcv1.GetSubnetOptions) (*vpcv1.Subnet, *core.DetailedResponse, error)
+	GetVPCWithContext(context.Context, *vpcv1.GetVPCOptions) (*vpcv1.VPC, *core.DetailedResponse, error)
+	GetImageWithContext(context.Context, *vpcv1.GetImageOptions) (*vpcv1.Image, *core.DetailedResponse, error)
 }
 
 // VPCClient handles interactions with the IBM Cloud VPC API
@@ -176,4 +178,38 @@ func (c *VPCClient) GetSubnet(ctx context.Context, subnetID string) (*vpcv1.Subn
 	}
 
 	return subnet, nil
+}
+
+func (c *VPCClient) GetVPC(ctx context.Context, vpcID string) (*vpcv1.VPC, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.GetVPCOptions{
+		ID: &vpcID,
+	}
+
+	vpc, _, err := c.client.GetVPCWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC: %w", err)
+	}
+
+	return vpc, nil
+}
+
+func (c *VPCClient) GetImage(ctx context.Context, imageID string) (*vpcv1.Image, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.GetImageOptions{
+		ID: &imageID,
+	}
+
+	image, _, err := c.client.GetImageWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("getting image: %w", err)
+	}
+
+	return image, nil
 }
