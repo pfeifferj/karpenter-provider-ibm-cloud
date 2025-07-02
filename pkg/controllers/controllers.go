@@ -9,6 +9,7 @@ package controllers
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;create;delete;update;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+//+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
 
 import (
 	"context"

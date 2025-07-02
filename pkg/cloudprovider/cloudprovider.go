@@ -3,6 +3,7 @@ package cloudprovider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/awslabs/operatorpkg/status"
@@ -115,6 +116,11 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 	var nodeClaims []*karpv1.NodeClaim
 	for _, node := range nodeList.Items {
 		if node.Spec.ProviderID == "" {
+			continue
+		}
+		
+		// Skip nodes that don't have IBM provider IDs
+		if !strings.HasPrefix(node.Spec.ProviderID, "ibm://") {
 			continue
 		}
 
