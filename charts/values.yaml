@@ -1,6 +1,8 @@
-# Default values for karpenter.
+# Default values for karpenter-ibm.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
+
+# Self-contained chart includes base Karpenter CRDs and IBM provider
 
 replicaCount: 1
 

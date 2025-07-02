@@ -51,7 +51,7 @@ func (m *mockInstanceTypeProvider) Get(ctx context.Context, name string) (*cloud
 			scheduling.NewRequirement(v1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, v1.CapacityTypeOnDemand),
 			scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1"),
 		),
-		Offerings: []cloudprovider.Offering{
+		Offerings: cloudprovider.Offerings{
 			{
 				Requirements: scheduling.NewRequirements(
 					scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1"),

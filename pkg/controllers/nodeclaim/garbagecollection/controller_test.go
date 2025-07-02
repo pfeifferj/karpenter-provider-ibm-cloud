@@ -50,6 +50,10 @@ func (m *mockCloudProvider) GetSupportedNodeClasses() []status.Object {
 	return nil
 }
 
+func (m *mockCloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
+	return nil
+}
+
 func (m *mockCloudProvider) List(ctx context.Context) ([]*karpenterv1.NodeClaim, error) {
 	return nil, nil
 }
