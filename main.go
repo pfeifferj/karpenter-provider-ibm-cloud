@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -29,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/karpenter/pkg/events"
+	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -102,7 +104,23 @@ func main() {
 		instanceProvider,
 	)
 
-	// Create manager
+	// Create and inject both IBM and core options into context BEFORE creating manager
+	// This ensures the manager and all controllers have access to options
+	ibmOpts := options.NewOptions()
+	ctx = options.WithOptions(ctx, ibmOpts)
+	
+	// Inject core Karpenter options that controllers expect
+	coreOpts := &coreoptions.Options{
+		LogLevel:         "info",
+		BatchMaxDuration: 10 * time.Second,
+		BatchIdleDuration: 1 * time.Second,
+		MetricsPort:      8080,
+		HealthProbePort:  8081,
+		CPURequests:      1000, // Default CPU requests in millicores
+	}
+	ctx = coreOpts.ToContext(ctx)
+
+	// Create manager with context that has all required options
 	mgr, err := manager.New(config, manager.Options{})
 	if err != nil {
 		log.FromContext(ctx).Error(err, "failed to create manager")
@@ -118,10 +136,6 @@ func main() {
 		log.FromContext(ctx).Error(err, "failed to add readyz check")
 		os.Exit(1)
 	}
-
-	// Create and inject options into context
-	opts := options.NewOptions()
-	ctx = options.WithOptions(ctx, opts)
 
 	// Register controllers
 	if err := controllers.RegisterControllers(ctx, mgr, clock.RealClock{}, op.GetClient(), recorder, op.GetUnavailableOfferings(), cloudProvider, instanceProvider, instanceTypeProvider); err != nil {

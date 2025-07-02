@@ -15,7 +15,6 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/clock"
@@ -28,7 +27,6 @@ import (
 	corecontrollers "sigs.k8s.io/karpenter/pkg/controllers"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
-	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
@@ -84,16 +82,8 @@ func RegisterControllers(ctx context.Context, mgr manager.Manager, clk clock.Clo
 	cloudProvider cloudprovider.CloudProvider,
 	instanceProvider instance.Provider, instanceTypeProvider instancetype.Provider) error {
 
-	// Inject core Karpenter options into context if not already present
-	// Core controllers expect these options to be present
-	coreOpts := &coreoptions.Options{
-		LogLevel:         "info",
-		BatchMaxDuration: 10 * time.Second,
-		BatchIdleDuration: 1 * time.Second,
-		MetricsPort:      8080,
-		HealthProbePort:  8081,
-	}
-	ctx = coreOpts.ToContext(ctx)
+	// Core options should already be in context (injected in main.go)
+	// This ensures all controllers have access to required options
 
 	// Create event recorder adapter
 	recorderAdapter := &RecorderAdapter{recorder}
