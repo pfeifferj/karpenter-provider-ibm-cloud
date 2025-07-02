@@ -30,6 +30,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
+	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
 	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
 	nodeclaasstatus "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/status"
@@ -140,6 +141,11 @@ func RegisterControllers(ctx context.Context, mgr manager.Manager, clk clock.Clo
 		return fmt.Errorf("registering pricing controller: %w", err)
 	}
 
+	// Register NodeClaim garbage collection controller
+	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, decoratedCloudProvider)
+	if err := garbageCollectionCtrl.Register(ctx, mgr); err != nil {
+		return fmt.Errorf("registering garbage collection controller: %w", err)
+	}
 
 	// Register tagging controller
 	taggingCtrl := nodeclaimtagging.NewController(kubeClient, instanceProvider)

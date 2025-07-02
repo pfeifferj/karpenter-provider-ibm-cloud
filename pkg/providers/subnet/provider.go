@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
@@ -36,7 +38,8 @@ type Provider interface {
 }
 
 type provider struct {
-	client *ibm.Client
+	client      *ibm.Client
+	subnetCache *cache.Cache
 }
 
 // NewProvider creates a new subnet provider
@@ -46,7 +49,8 @@ func NewProvider() (Provider, error) {
 		return nil, fmt.Errorf("creating IBM Cloud client: %w", err)
 	}
 	return &provider{
-		client: client,
+		client:      client,
+		subnetCache: cache.New(5 * time.Minute), // Cache subnets for 5 minutes
 	}, nil
 }
 
@@ -175,6 +179,13 @@ func (p *provider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1
 
 // ListSubnets returns all subnets in the VPC
 func (p *provider) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error) {
+	cacheKey := fmt.Sprintf("vpc-subnets:%s", vpcID)
+	
+	// Try to get from cache first
+	if cached, exists := p.subnetCache.Get(cacheKey); exists {
+		return cached.([]SubnetInfo), nil
+	}
+
 	vpcClient, err := p.client.GetVPCClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting VPC client: %w", err)
@@ -193,11 +204,22 @@ func (p *provider) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo,
 		subnets = append(subnets, subnetInfo)
 	}
 
+	// Cache the result
+	p.subnetCache.Set(cacheKey, subnets)
+
 	return subnets, nil
 }
 
 // GetSubnet retrieves information about a specific subnet
 func (p *provider) GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo, error) {
+	cacheKey := fmt.Sprintf("subnet:%s", subnetID)
+	
+	// Try to get from cache first
+	if cached, exists := p.subnetCache.Get(cacheKey); exists {
+		result := cached.(SubnetInfo)
+		return &result, nil
+	}
+
 	vpcClient, err := p.client.GetVPCClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting VPC client: %w", err)
@@ -210,6 +232,10 @@ func (p *provider) GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo,
 	}
 
 	subnetInfo := convertVPCSubnetToSubnetInfo(*subnet)
+	
+	// Cache the result with shorter TTL for individual subnets (may change more frequently)
+	p.subnetCache.SetWithTTL(cacheKey, subnetInfo, 2*time.Minute)
+	
 	return &subnetInfo, nil
 }
 

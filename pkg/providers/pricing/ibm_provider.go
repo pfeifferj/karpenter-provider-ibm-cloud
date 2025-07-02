@@ -7,16 +7,18 @@ import (
 	"time"
 
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
 // IBMPricingProvider implements the Provider interface for IBM Cloud pricing
 type IBMPricingProvider struct {
-	client     *ibm.Client
-	pricingMap map[string]map[string]float64 // instanceType -> zone -> price
-	lastUpdate time.Time
-	mutex      sync.RWMutex
-	ttl        time.Duration
+	client      *ibm.Client
+	pricingMap  map[string]map[string]float64 // instanceType -> zone -> price
+	lastUpdate  time.Time
+	mutex       sync.RWMutex
+	ttl         time.Duration
+	priceCache  *cache.Cache
 }
 
 // NewIBMPricingProvider creates a new IBM Cloud pricing provider
@@ -25,11 +27,19 @@ func NewIBMPricingProvider(client *ibm.Client) *IBMPricingProvider {
 		client:     client,
 		pricingMap: make(map[string]map[string]float64),
 		ttl:        12 * time.Hour, // Cache pricing for 12 hours
+		priceCache: cache.New(12 * time.Hour), // Use new cache infrastructure
 	}
 }
 
 // GetPrice returns the hourly price for the specified instance type in the given zone
 func (p *IBMPricingProvider) GetPrice(ctx context.Context, instanceType string, zone string) (float64, error) {
+	cacheKey := fmt.Sprintf("price:%s:%s", instanceType, zone)
+	
+	// Try to get from cache first
+	if cached, exists := p.priceCache.Get(cacheKey); exists {
+		return cached.(float64), nil
+	}
+
 	p.mutex.RLock()
 	
 	// Check if cache needs refresh
@@ -45,6 +55,8 @@ func (p *IBMPricingProvider) GetPrice(ctx context.Context, instanceType string, 
 	if zoneMap, exists := p.pricingMap[instanceType]; exists {
 		if price, exists := zoneMap[zone]; exists {
 			p.mutex.RUnlock()
+			// Cache the result
+			p.priceCache.Set(cacheKey, price)
 			return price, nil
 		}
 	}
