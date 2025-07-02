@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/awslabs/operatorpkg/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -45,7 +44,15 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		nc.Status.ValidationError = err.Error()
 		
 		// Set Ready condition to False with validation error
-		nc.StatusConditions().SetFalse(status.ConditionReady, "ValidationFailed", err.Error())
+		nc.Status.Conditions = []metav1.Condition{
+			{
+				Type:               "Ready",
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: metav1.Now(),
+				Reason:             "ValidationFailed",
+				Message:            err.Error(),
+			},
+		}
 		
 		if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
 			return reconcile.Result{}, err
@@ -58,7 +65,15 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	nc.Status.ValidationError = ""
 	
 	// Set Ready condition to True
-	nc.StatusConditions().SetTrue(status.ConditionReady)
+	nc.Status.Conditions = []metav1.Condition{
+		{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "Ready",
+			Message:            "NodeClass is ready",
+		},
+	}
 	
 	if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
 		return reconcile.Result{}, err
@@ -72,18 +87,13 @@ func (c *Controller) validateNodeClass(ctx context.Context, nc *v1alpha1.IBMNode
 	if nc.Spec.Region == "" {
 		return fmt.Errorf("region is required")
 	}
-	if nc.Spec.InstanceProfile == "" {
-		return fmt.Errorf("instanceProfile is required")
-	}
 	if nc.Spec.Image == "" {
 		return fmt.Errorf("image is required")
 	}
 	if nc.Spec.VPC == "" {
 		return fmt.Errorf("vpc is required")
 	}
-	if nc.Spec.Subnet == "" {
-		return fmt.Errorf("subnet is required")
-	}
+	// instanceProfile and subnet are optional - can be auto-selected
 	return nil
 }
 
