@@ -213,7 +213,32 @@ func (p *IBMCloudInstanceProvider) GetInstance(ctx context.Context, node *corev1
 	if !strings.HasPrefix(providerID, "ibm://") {
 		return nil, fmt.Errorf("invalid provider ID format: %s", providerID)
 	}
-	instanceID := strings.TrimPrefix(providerID, "ibm://")
+	
+	remainder := strings.TrimPrefix(providerID, "ibm://")
+	
+	// Handle two provider ID formats:
+	// 1. Direct VPC instance: ibm://<instance-id>
+	// 2. IKS managed node: ibm://<account-id>///cluster-id/worker-id
+	var instanceID string
+	if strings.Contains(remainder, "///") {
+		// IKS format: extract cluster-id and worker-id to get VPC instance ID
+		parts := strings.Split(remainder, "/")
+		if len(parts) < 4 {
+			return nil, fmt.Errorf("invalid IKS provider ID format: %s", providerID)
+		}
+		clusterID := parts[3]
+		workerID := parts[4]
+		
+		// Use IKS API to get the underlying VPC instance ID
+		var iksErr error
+		instanceID, iksErr = p.getVPCInstanceIDFromIKSWorker(ctx, clusterID, workerID)
+		if iksErr != nil {
+			return nil, fmt.Errorf("failed to get VPC instance ID for IKS worker %s in cluster %s: %w", workerID, clusterID, iksErr)
+		}
+	} else {
+		// Direct VPC instance format
+		instanceID = remainder
+	}
 	
 	// Validate instance ID format (IBM Cloud instance IDs are UUIDs)
 	if len(instanceID) < 32 || strings.Contains(instanceID, "/") {
@@ -255,4 +280,26 @@ func (p *IBMCloudInstanceProvider) TagInstance(ctx context.Context, instanceID s
 	}
 
 	return nil
+}
+
+// getVPCInstanceIDFromIKSWorker retrieves the VPC instance ID for an IKS worker
+// This method maps IKS worker IDs to their underlying VPC instance IDs
+func (p *IBMCloudInstanceProvider) getVPCInstanceIDFromIKSWorker(ctx context.Context, clusterID, workerID string) (string, error) {
+	if p.client == nil {
+		return "", fmt.Errorf("IBM client not initialized")
+	}
+
+	// Get IKS client
+	iksClient := p.client.GetIKSClient()
+	if iksClient == nil {
+		return "", fmt.Errorf("IKS client not available")
+	}
+
+	// Get VPC instance ID from IKS worker
+	instanceID, err := iksClient.GetVPCInstanceIDFromWorker(ctx, clusterID, workerID)
+	if err != nil {
+		return "", fmt.Errorf("getting VPC instance ID from IKS worker: %w", err)
+	}
+
+	return instanceID, nil
 }
