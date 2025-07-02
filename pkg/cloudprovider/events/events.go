@@ -25,17 +25,25 @@ import (
 )
 
 func NodeClaimFailedToResolveNodeClass(nodeClaim *karpv1.NodeClaim) events.Event {
+	name := "<unknown>"
+	if nodeClaim != nil {
+		name = nodeClaim.Name
+	}
 	return events.Event{
 		Type:    corev1.EventTypeWarning,
 		Reason:  "FailedToResolveNodeClass",
-		Message: fmt.Sprintf("Failed to resolve NodeClass for NodeClaim %s", nodeClaim.Name),
+		Message: fmt.Sprintf("Failed to resolve NodeClass for NodeClaim %s", name),
 	}
 }
 
 func NodePoolFailedToResolveNodeClass(nodePool *karpv1.NodePool) events.Event {
+	name := "<unknown>"
+	if nodePool != nil {
+		name = nodePool.Name
+	}
 	return events.Event{
 		Type:    corev1.EventTypeWarning,
 		Reason:  "FailedToResolveNodeClass",
-		Message: fmt.Sprintf("Failed to resolve NodeClass for NodePool %s", nodePool.Name),
+		Message: fmt.Sprintf("Failed to resolve NodeClass for NodePool %s", name),
 	}
 }

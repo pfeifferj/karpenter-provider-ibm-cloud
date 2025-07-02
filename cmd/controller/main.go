@@ -45,6 +45,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
 	"k8s.io/utils/clock"
 )
 
@@ -280,6 +281,12 @@ func main() {
 	}
 	instanceProviderImpl.SetKubeClient(mgr.GetClient())
 
+	subnetProviderImpl, err := subnet.NewProvider()
+	if err != nil {
+		logger.Error(err, "Error creating subnet provider")
+		os.Exit(1)
+	}
+
 	recorder := events.NewRecorder(mgr.GetEventRecorderFor("karpenter-ibm-cloud"))
 
 	// Create the cloud provider
@@ -290,6 +297,7 @@ func main() {
 		ibmClient,
 		instanceTypeProviderImpl,
 		instanceProviderImpl,
+		subnetProviderImpl,
 	)
 
 	// Initialize Karpenter options and add to context
