@@ -214,6 +214,11 @@ func (p *IBMCloudInstanceProvider) GetInstance(ctx context.Context, node *corev1
 		return nil, fmt.Errorf("invalid provider ID format: %s", providerID)
 	}
 	instanceID := strings.TrimPrefix(providerID, "ibm://")
+	
+	// Validate instance ID format (IBM Cloud instance IDs are UUIDs)
+	if len(instanceID) < 32 || strings.Contains(instanceID, "/") {
+		return nil, fmt.Errorf("invalid instance ID format: %s", instanceID)
+	}
 
 	instance, err := vpcClient.GetInstance(ctx, instanceID)
 	if err != nil {
