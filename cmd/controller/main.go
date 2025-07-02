@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/go-logr/logr"
 	"go.uber.org/zap/zapcore"
@@ -36,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/events"
+	"sigs.k8s.io/karpenter/pkg/operator/options"
 
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -253,6 +255,30 @@ func main() {
 		instanceTypeProviderImpl,
 		instanceProviderImpl,
 	)
+
+	// Initialize Karpenter options and add to context
+	logger.Info("Initializing Karpenter options")
+	opts := &options.Options{
+		ServiceName:             "karpenter-ibm",
+		MetricsPort:             8080,
+		HealthProbePort:         8081,
+		KubeClientQPS:          50,
+		KubeClientBurst:        100,
+		EnableProfiling:        false,
+		DisableLeaderElection:  false,
+		LeaderElectionName:     "karpenter-leader-election",
+		LeaderElectionNamespace: "karpenter",
+		LogLevel:               "info",
+		BatchMaxDuration:       time.Second * 10,
+		BatchIdleDuration:      time.Second * 1,
+		PreferencePolicy:       options.PreferencePolicyIgnore,
+		FeatureGates: options.FeatureGates{
+			NodeRepair:              false,
+			ReservedCapacity:        false,
+			SpotToSpotConsolidation: false,
+		},
+	}
+	ctx = options.ToContext(ctx, opts)
 
 	// Register all controllers
 	logger.Info("Registering controllers")

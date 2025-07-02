@@ -51,7 +51,7 @@ ibmcloud iam api-key-create MyKey -d "Karpenter IBM Cloud Provider Key" --file k
 
 2. Install using Helm:
    ```bash
-   helm install karpenter karpenter-ibm-cloud/karpenter \
+   helm install karpenter karpenter-ibm-cloud/karpenter-ibm \
      --namespace karpenter \
      --create-namespace \
      --set credentials.ibm_api_key="<your-ibm-api-key>" \
@@ -71,11 +71,11 @@ For reference, here's an example with the public repository:
 
 ```bash
 # Add repository
-helm repo add karpenter-ibm-cloud https://pfeifferj.github.io/karpenter-provider-ibm-cloud
+helm repo add karpenter-ibm-cloud https://pfeifferj.github.io/karpenter-ibm-cloud
 helm repo update
 
 # Install with required credentials (replace with your actual values)
-helm install karpenter karpenter-ibm-cloud/karpenter \
+helm install karpenter karpenter-ibm-cloud/karpenter-ibm \
   --namespace karpenter \
   --create-namespace \
   --set credentials.ibm_api_key="your-actual-api-key-here" \
