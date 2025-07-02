@@ -221,38 +221,38 @@ func main() {
 	}
 
 	// Set up field indexers for NodeClaims
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &v1.NodeClaim{}, "status.providerID", func(o client.Object) []string {
+	if indexErr := mgr.GetFieldIndexer().IndexField(ctx, &v1.NodeClaim{}, "status.providerID", func(o client.Object) []string {
 		nodeClaim := o.(*v1.NodeClaim)
 		if nodeClaim.Status.ProviderID == "" {
 			return nil
 		}
 		return []string{nodeClaim.Status.ProviderID}
-	}); err != nil {
-		logger.Error(err, "Error setting up NodeClaim providerID field index")
+	}); indexErr != nil {
+		logger.Error(indexErr, "Error setting up NodeClaim providerID field index")
 		os.Exit(1)
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &v1.NodeClaim{}, "spec.nodeClassRef.group", func(o client.Object) []string {
+	if indexErr := mgr.GetFieldIndexer().IndexField(ctx, &v1.NodeClaim{}, "spec.nodeClassRef.group", func(o client.Object) []string {
 		nodeClaim := o.(*v1.NodeClaim)
 		return []string{nodeClaim.Spec.NodeClassRef.Group}
-	}); err != nil {
-		logger.Error(err, "Error setting up NodeClaim nodeClassRef.group field index")
+	}); indexErr != nil {
+		logger.Error(indexErr, "Error setting up NodeClaim nodeClassRef.group field index")
 		os.Exit(1)
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &v1.NodeClaim{}, "spec.nodeClassRef.kind", func(o client.Object) []string {
+	if indexErr := mgr.GetFieldIndexer().IndexField(ctx, &v1.NodeClaim{}, "spec.nodeClassRef.kind", func(o client.Object) []string {
 		nodeClaim := o.(*v1.NodeClaim)
 		return []string{nodeClaim.Spec.NodeClassRef.Kind}
-	}); err != nil {
-		logger.Error(err, "Error setting up NodeClaim nodeClassRef.kind field index")
+	}); indexErr != nil {
+		logger.Error(indexErr, "Error setting up NodeClaim nodeClassRef.kind field index")
 		os.Exit(1)
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &v1.NodeClaim{}, "spec.nodeClassRef.name", func(o client.Object) []string {
+	if indexErr := mgr.GetFieldIndexer().IndexField(ctx, &v1.NodeClaim{}, "spec.nodeClassRef.name", func(o client.Object) []string {
 		nodeClaim := o.(*v1.NodeClaim)
 		return []string{nodeClaim.Spec.NodeClassRef.Name}
-	}); err != nil {
-		logger.Error(err, "Error setting up NodeClaim nodeClassRef.name field index")
+	}); indexErr != nil {
+		logger.Error(indexErr, "Error setting up NodeClaim nodeClassRef.name field index")
 		os.Exit(1)
 	}
 
