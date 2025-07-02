@@ -3,6 +3,7 @@ package cloudprovider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
@@ -337,6 +338,39 @@ func (c *CloudProvider) Name() string {
 
 func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
 	return []status.Object{&v1alpha1.IBMNodeClass{}}
+}
+
+// RepairPolicies returns the repair policies for the IBM cloud provider
+// These define conditions that Karpenter should monitor to detect unhealthy nodes
+func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
+	return []cloudprovider.RepairPolicy{
+		// Common node conditions that indicate unhealthy state
+		{
+			ConditionType:      corev1.NodeReady,
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 5 * time.Minute, // Wait 5 minutes before considering node for termination
+		},
+		{
+			ConditionType:      corev1.NodeReady,
+			ConditionStatus:    corev1.ConditionUnknown,
+			TolerationDuration: 5 * time.Minute, // Wait 5 minutes for unknown state
+		},
+		{
+			ConditionType:      corev1.NodeMemoryPressure,
+			ConditionStatus:    corev1.ConditionTrue,
+			TolerationDuration: 10 * time.Minute, // Give more time for memory pressure recovery
+		},
+		{
+			ConditionType:      corev1.NodeDiskPressure,
+			ConditionStatus:    corev1.ConditionTrue,
+			TolerationDuration: 5 * time.Minute, // Disk pressure should be addressed quickly
+		},
+		{
+			ConditionType:      corev1.NodePIDPressure,
+			ConditionStatus:    corev1.ConditionTrue,
+			TolerationDuration: 5 * time.Minute, // PID pressure indicates serious issues
+		},
+	}
 }
 
 func (c *CloudProvider) GetIBMClient() *ibm.Client {

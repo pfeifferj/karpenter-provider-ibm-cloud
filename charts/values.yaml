@@ -2,15 +2,7 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-# Base Karpenter dependency configuration
-karpenter:
-  enabled: true
-  # Configuration to pass to the base Karpenter chart
-  # settings:
-  #   clusterName: ""
-  # tolerations: []
-  # nodeSelector: {}
-  # affinity: {}
+# Self-contained chart includes base Karpenter CRDs and IBM provider
 
 replicaCount: 1
 
