@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -31,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/karpenter/pkg/events"
 	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
+	"sigs.k8s.io/karpenter/pkg/operator/injection"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -104,24 +104,21 @@ func main() {
 		instanceProvider,
 	)
 
-	// Create and inject both IBM and core options into context BEFORE creating manager
-	// This ensures the manager and all controllers have access to options
+	// Inject options into context using the proper Karpenter injection pattern
+	// This ensures all controllers have access to options during reconciliation
+	ctx = injection.WithOptionsOrDie(ctx, coreoptions.Injectables...)
+	
+	// Also inject IBM-specific options
 	ibmOpts := options.NewOptions()
 	ctx = options.WithOptions(ctx, ibmOpts)
-	
-	// Inject core Karpenter options that controllers expect
-	coreOpts := &coreoptions.Options{
-		LogLevel:         "info",
-		BatchMaxDuration: 10 * time.Second,
-		BatchIdleDuration: 1 * time.Second,
-		MetricsPort:      8080,
-		HealthProbePort:  8081,
-		CPURequests:      1000, // Default CPU requests in millicores
-	}
-	ctx = coreOpts.ToContext(ctx)
 
 	// Create manager with context that has all required options
-	mgr, err := manager.New(config, manager.Options{})
+	// Pass the context to the manager so it can inject options into reconciliation contexts
+	mgr, err := manager.New(config, manager.Options{
+		BaseContext: func() context.Context {
+			return ctx
+		},
+	})
 	if err != nil {
 		log.FromContext(ctx).Error(err, "failed to create manager")
 		os.Exit(1)
