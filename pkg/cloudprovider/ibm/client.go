@@ -66,6 +66,11 @@ func (c *Client) GetGlobalCatalogClient() (*GlobalCatalogClient, error) {
 	return NewGlobalCatalogClient(c.iamClient), nil
 }
 
+// GetIKSClient returns a configured IKS API client
+func (c *Client) GetIKSClient() *IKSClient {
+	return NewIKSClient(c)
+}
+
 // GetRegion returns the configured region
 func (c *Client) GetRegion() string {
 	return c.region

@@ -123,6 +123,9 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 		if !strings.HasPrefix(node.Spec.ProviderID, "ibm://") {
 			continue
 		}
+		
+		// Handle IKS managed nodes (format: ibm://account-id///cluster-id/worker-id)
+		// These nodes are supported - the instance provider will map IKS worker to VPC instance
 
 		_, err := c.instanceProvider.GetInstance(ctx, &node)
 		if err != nil {
