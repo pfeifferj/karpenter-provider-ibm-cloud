@@ -10,6 +10,7 @@ package controllers
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=storage.k8s.io,resources=csinodes,verbs=get;list;watch
 
 import (
 	"context"
