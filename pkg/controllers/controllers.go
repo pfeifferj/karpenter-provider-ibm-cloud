@@ -10,10 +10,12 @@ package controllers
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=storage.k8s.io,resources=csinodes,verbs=get;list;watch
 
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/clock"
@@ -26,6 +28,7 @@ import (
 	corecontrollers "sigs.k8s.io/karpenter/pkg/controllers"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
+	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
@@ -80,6 +83,17 @@ func RegisterControllers(ctx context.Context, mgr manager.Manager, clk clock.Clo
 	unavailableOfferings *cache.UnavailableOfferings,
 	cloudProvider cloudprovider.CloudProvider,
 	instanceProvider instance.Provider, instanceTypeProvider instancetype.Provider) error {
+
+	// Inject core Karpenter options into context if not already present
+	// Core controllers expect these options to be present
+	coreOpts := &coreoptions.Options{
+		LogLevel:         "info",
+		BatchMaxDuration: 10 * time.Second,
+		BatchIdleDuration: 1 * time.Second,
+		MetricsPort:      8080,
+		HealthProbePort:  8081,
+	}
+	ctx = coreOpts.ToContext(ctx)
 
 	// Create event recorder adapter
 	recorderAdapter := &RecorderAdapter{recorder}
