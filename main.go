@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"k8s.io/client-go/rest"
@@ -51,11 +50,12 @@ func init() {
 func main() {
 	ctx := context.Background()
 
-	// Ensure IBM Cloud API key is set
-	if os.Getenv("IBM_API_KEY") == "" {
-		log.FromContext(ctx).Error(fmt.Errorf("IBM_API_KEY environment variable is required"), "failed to initialize provider")
-		os.Exit(1)
-	}
+	// Inject core Karpenter options into context
+	ctx = injection.WithOptionsOrDie(ctx, coreoptions.Injectables...)
+
+	// Inject IBM-specific options
+	ibmOpts := options.NewOptions()
+	ctx = options.WithOptions(ctx, ibmOpts)
 
 	// Get the in-cluster config
 	config, err := rest.InClusterConfig()
@@ -104,16 +104,7 @@ func main() {
 		instanceProvider,
 	)
 
-	// Inject options into context using the proper Karpenter injection pattern
-	// This ensures all controllers have access to options during reconciliation
-	ctx = injection.WithOptionsOrDie(ctx, coreoptions.Injectables...)
-	
-	// Also inject IBM-specific options
-	ibmOpts := options.NewOptions()
-	ctx = options.WithOptions(ctx, ibmOpts)
-
-	// Create manager with context that has all required options
-	// Pass the context to the manager so it can inject options into reconciliation contexts
+	// Create manager with BaseContext
 	mgr, err := manager.New(config, manager.Options{
 		BaseContext: func() context.Context {
 			return ctx

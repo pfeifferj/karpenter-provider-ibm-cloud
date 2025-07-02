@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"os"
 
 	"github.com/awslabs/operatorpkg/controller"
 	corev1 "k8s.io/api/core/v1"
@@ -11,9 +12,11 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	interruptioncontroller "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
 	instancetypecontroller "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 )
@@ -26,6 +29,11 @@ type Operator struct {
 }
 
 func NewOperator(ctx context.Context, config *rest.Config) (*Operator, error) {
+	// Validate IBM Cloud credentials early
+	if err := validateIBMCredentials(ctx); err != nil {
+		return nil, err
+	}
+
 	kubeClientSet, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err
@@ -49,6 +57,29 @@ func NewOperator(ctx context.Context, config *rest.Config) (*Operator, error) {
 		unavailableOfferings: unavailableOfferings,
 		recorder:             recorder,
 	}, nil
+}
+
+func validateIBMCredentials(ctx context.Context) error {
+	log.FromContext(ctx).Info("Starting controller with debug logging enabled")
+
+	// Validate required environment variables
+	requiredEnvVars := []string{"IBM_REGION", "IBM_API_KEY", "VPC_API_KEY"}
+	for _, envVar := range requiredEnvVars {
+		if os.Getenv(envVar) == "" {
+			log.FromContext(ctx).Error(nil, "missing required environment variable", "name", envVar)
+			os.Exit(1)
+		}
+		log.FromContext(ctx).Info("validator", "Found required environment variable", map[string]interface{}{"name": envVar})
+	}
+
+	// Create IBM client to validate credentials
+	_, err := ibm.NewClient()
+	if err != nil {
+		return err
+	}
+
+	log.FromContext(ctx).Info("validator", "Successfully authenticated with IBM Cloud")
+	return nil
 }
 
 // GetClient returns the kubernetes client
