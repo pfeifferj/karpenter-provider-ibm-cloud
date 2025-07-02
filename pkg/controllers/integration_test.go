@@ -140,9 +140,8 @@ func TestStatusControllerIntegration(t *testing.T) {
 				WithStatusSubresource(tt.nodeClass).
 				Build()
 
-			// Create status controller
-			statusController, err := nodeclassstatus.NewController(fakeClient)
-			require.NoError(t, err)
+			// Create status controller for testing (bypasses IBM client requirement)
+			statusController := nodeclassstatus.NewTestController(fakeClient)
 
 			// Reconcile the NodeClass
 			req := reconcile.Request{
@@ -359,8 +358,7 @@ func TestMultiControllerIntegration(t *testing.T) {
 	hashController, err := hash.NewController(fakeClient)
 	require.NoError(t, err)
 
-	statusController, err := nodeclassstatus.NewController(fakeClient)
-	require.NoError(t, err)
+	statusController := nodeclassstatus.NewTestController(fakeClient)
 
 	req := reconcile.Request{
 		NamespacedName: types.NamespacedName{

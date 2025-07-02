@@ -25,6 +25,7 @@ import (
 	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
 )
 
 const CloudProviderName = "ibmcloud"
@@ -38,13 +39,15 @@ type CloudProvider struct {
 
 	instanceTypeProvider instancetype.Provider
 	instanceProvider     instance.Provider
+	subnetProvider       subnet.Provider
 }
 
 func New(kubeClient client.Client,
 	recorder events.Recorder,
 	ibmClient *ibm.Client,
 	instanceTypeProvider instancetype.Provider,
-	instanceProvider instance.Provider) *CloudProvider {
+	instanceProvider instance.Provider,
+	subnetProvider subnet.Provider) *CloudProvider {
 	return &CloudProvider{
 		kubeClient: kubeClient,
 		recorder:   recorder,
@@ -52,6 +55,7 @@ func New(kubeClient client.Client,
 
 		instanceTypeProvider: instanceTypeProvider,
 		instanceProvider:     instanceProvider,
+		subnetProvider:       subnetProvider,
 	}
 }
 

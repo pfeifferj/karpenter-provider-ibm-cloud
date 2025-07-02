@@ -68,6 +68,30 @@ func (m *mockVPCClient) GetSubnetWithContext(_ context.Context, _ *vpcv1.GetSubn
 	return m.getSubnetResponse, &core.DetailedResponse{}, nil
 }
 
+func (m *mockVPCClient) GetVPCWithContext(_ context.Context, _ *vpcv1.GetVPCOptions) (*vpcv1.VPC, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	vpcID := "test-vpc"
+	vpcName := "test-vpc-name"
+	return &vpcv1.VPC{
+		ID:   &vpcID,
+		Name: &vpcName,
+	}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) GetImageWithContext(_ context.Context, _ *vpcv1.GetImageOptions) (*vpcv1.Image, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	imageID := "test-image"
+	imageName := "test-image-name"
+	return &vpcv1.Image{
+		ID:   &imageID,
+		Name: &imageName,
+	}, &core.DetailedResponse{}, nil
+}
+
 func TestNewVPCClient(t *testing.T) {
 	baseURL := "https://test.vpc.url"
 	authType := "iam"
