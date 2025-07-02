@@ -34,6 +34,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	instancetypepkg "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
 )
@@ -117,6 +118,10 @@ func main() {
 		log.FromContext(ctx).Error(err, "failed to add readyz check")
 		os.Exit(1)
 	}
+
+	// Create and inject options into context
+	opts := options.NewOptions()
+	ctx = options.WithOptions(ctx, opts)
 
 	// Register controllers
 	if err := controllers.RegisterControllers(ctx, mgr, clock.RealClock{}, op.GetClient(), recorder, op.GetUnavailableOfferings(), cloudProvider, instanceProvider, instanceTypeProvider); err != nil {
