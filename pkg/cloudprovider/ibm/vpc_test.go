@@ -2,21 +2,26 @@ package ibm
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 )
 
+// =================
+// Mock Implementations
+// =================
+
 type mockVPCClient struct {
+	err                    error
 	createInstanceResponse *vpcv1.Instance
 	getInstanceResponse    *vpcv1.Instance
 	listInstancesResponse  *vpcv1.InstanceCollection
 	listSubnetsResponse    *vpcv1.SubnetCollection
 	getSubnetResponse      *vpcv1.Subnet
-	err                    error
 }
 
 func (m *mockVPCClient) CreateInstanceWithContext(_ context.Context, _ *vpcv1.CreateInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error) {
@@ -92,6 +97,13 @@ func (m *mockVPCClient) GetImageWithContext(_ context.Context, _ *vpcv1.GetImage
 	}, &core.DetailedResponse{}, nil
 }
 
+func (m *mockVPCClient) ListInstanceProfilesWithContext(_ context.Context, _ *vpcv1.ListInstanceProfilesOptions) (*vpcv1.InstanceProfileCollection, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.InstanceProfileCollection{}, &core.DetailedResponse{}, nil
+}
+
 func TestNewVPCClient(t *testing.T) {
 	baseURL := "https://test.vpc.url"
 	authType := "iam"
@@ -99,24 +111,18 @@ func TestNewVPCClient(t *testing.T) {
 	region := "us-south"
 
 	client, err := NewVPCClient(baseURL, authType, apiKey, region)
-
 	if err != nil {
-		t.Fatalf("unexpected error creating VPC client: %v", err)
-	}
-
-	if client == nil {
-		t.Fatal("expected non-nil client")
-		return
+		t.Fatalf("failed to create VPC client: %v", err)
 	}
 
 	if client.baseURL != baseURL {
-		t.Errorf("expected base URL %s, got %s", baseURL, client.baseURL)
+		t.Errorf("expected baseURL %s, got %s", baseURL, client.baseURL)
 	}
 	if client.authType != authType {
-		t.Errorf("expected auth type %s, got %s", authType, client.authType)
+		t.Errorf("expected authType %s, got %s", authType, client.authType)
 	}
 	if client.apiKey != apiKey {
-		t.Errorf("expected API key %s, got %s", apiKey, client.apiKey)
+		t.Errorf("expected apiKey %s, got %s", apiKey, client.apiKey)
 	}
 	if client.region != region {
 		t.Errorf("expected region %s, got %s", region, client.region)
@@ -126,56 +132,67 @@ func TestNewVPCClient(t *testing.T) {
 	}
 }
 
+// =================
+// Instance Tests
+// =================
+
 func TestCreateInstance(t *testing.T) {
 	ctx := context.Background()
 	instanceID := "test-instance"
-	instanceName := "test-name"
-
-	mockInstance := &vpcv1.Instance{
-		ID:   &instanceID,
-		Name: &instanceName,
-	}
+	instanceName := "test-instance-name"
 
 	tests := []struct {
 		name         string
 		mockVPC      vpcClientInterface
-		prototype    *vpcv1.InstancePrototype
 		wantErr      bool
 		wantInstance *vpcv1.Instance
-		uninitClient bool
 	}{
 		{
 			name: "successful instance creation",
 			mockVPC: &mockVPCClient{
-				createInstanceResponse: mockInstance,
+				createInstanceResponse: &vpcv1.Instance{
+					ID:   &instanceID,
+					Name: &instanceName,
+				},
 			},
-			prototype:    &vpcv1.InstancePrototype{},
-			wantInstance: mockInstance,
+			wantErr: false,
+			wantInstance: &vpcv1.Instance{
+				ID:   &instanceID,
+				Name: &instanceName,
+			},
 		},
 		{
 			name: "API error",
 			mockVPC: &mockVPCClient{
-				err: errors.New("API error"),
+				err: fmt.Errorf("API error"),
 			},
-			prototype: &vpcv1.InstancePrototype{},
-			wantErr:   true,
+			wantErr:      true,
+			wantInstance: nil,
 		},
 		{
 			name:         "uninitialized client",
-			uninitClient: true,
-			prototype:    &vpcv1.InstancePrototype{},
+			mockVPC:      nil,
 			wantErr:      true,
+			wantInstance: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &VPCClient{}
-			if !tt.uninitClient {
-				client.client = tt.mockVPC
+			var client *VPCClient
+			if tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
 			}
 
-			instance, err := client.CreateInstance(ctx, tt.prototype)
+			prototype := &vpcv1.InstancePrototype{
+				Name: &instanceName,
+			}
+
+			instance, err := client.CreateInstance(ctx, prototype)
 
 			if tt.wantErr {
 				if err == nil {
@@ -188,8 +205,10 @@ func TestCreateInstance(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				if instance != tt.wantInstance {
-					t.Errorf("got instance %v, want %v", instance, tt.wantInstance)
+				if instance == nil {
+					t.Error("expected instance but got nil")
+				} else if *instance.ID != *tt.wantInstance.ID {
+					t.Errorf("got instance ID %s, want %s", *instance.ID, *tt.wantInstance.ID)
 				}
 			}
 		})
@@ -211,28 +230,34 @@ func TestDeleteInstance(t *testing.T) {
 			name:       "successful instance deletion",
 			mockVPC:    &mockVPCClient{},
 			instanceID: instanceID,
+			wantErr:    false,
 		},
 		{
 			name: "API error",
 			mockVPC: &mockVPCClient{
-				err: errors.New("API error"),
+				err: fmt.Errorf("API error"),
 			},
 			instanceID: instanceID,
 			wantErr:    true,
 		},
 		{
 			name:         "uninitialized client",
-			uninitClient: true,
+			mockVPC:      nil,
 			instanceID:   instanceID,
 			wantErr:      true,
+			uninitClient: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &VPCClient{}
-			if !tt.uninitClient {
-				client.client = tt.mockVPC
+			var client *VPCClient
+			if !tt.uninitClient && tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
 			}
 
 			err := client.DeleteInstance(ctx, tt.instanceID)
@@ -253,12 +278,7 @@ func TestDeleteInstance(t *testing.T) {
 func TestGetInstance(t *testing.T) {
 	ctx := context.Background()
 	instanceID := "test-instance"
-	instanceName := "test-name"
-
-	mockInstance := &vpcv1.Instance{
-		ID:   &instanceID,
-		Name: &instanceName,
-	}
+	instanceName := "test-instance-name"
 
 	tests := []struct {
 		name         string
@@ -266,37 +286,49 @@ func TestGetInstance(t *testing.T) {
 		instanceID   string
 		wantErr      bool
 		wantInstance *vpcv1.Instance
-		uninitClient bool
 	}{
 		{
 			name: "successful instance retrieval",
 			mockVPC: &mockVPCClient{
-				getInstanceResponse: mockInstance,
+				getInstanceResponse: &vpcv1.Instance{
+					ID:   &instanceID,
+					Name: &instanceName,
+				},
 			},
-			instanceID:   instanceID,
-			wantInstance: mockInstance,
+			instanceID: instanceID,
+			wantErr:    false,
+			wantInstance: &vpcv1.Instance{
+				ID:   &instanceID,
+				Name: &instanceName,
+			},
 		},
 		{
 			name: "API error",
 			mockVPC: &mockVPCClient{
-				err: errors.New("API error"),
+				err: fmt.Errorf("API error"),
 			},
-			instanceID: instanceID,
-			wantErr:    true,
+			instanceID:   instanceID,
+			wantErr:      true,
+			wantInstance: nil,
 		},
 		{
 			name:         "uninitialized client",
-			uninitClient: true,
+			mockVPC:      nil,
 			instanceID:   instanceID,
 			wantErr:      true,
+			wantInstance: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &VPCClient{}
-			if !tt.uninitClient {
-				client.client = tt.mockVPC
+			var client *VPCClient
+			if tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
 			}
 
 			instance, err := client.GetInstance(ctx, tt.instanceID)
@@ -312,8 +344,10 @@ func TestGetInstance(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				if instance != tt.wantInstance {
-					t.Errorf("got instance %v, want %v", instance, tt.wantInstance)
+				if instance == nil {
+					t.Error("expected instance but got nil")
+				} else if *instance.ID != *tt.wantInstance.ID {
+					t.Errorf("got instance ID %s, want %s", *instance.ID, *tt.wantInstance.ID)
 				}
 			}
 		})
@@ -323,7 +357,7 @@ func TestGetInstance(t *testing.T) {
 func TestListInstances(t *testing.T) {
 	ctx := context.Background()
 	instanceID := "test-instance"
-	instanceName := "test-name"
+	instanceName := "test-instance-name"
 
 	mockInstances := []vpcv1.Instance{
 		{
@@ -336,7 +370,7 @@ func TestListInstances(t *testing.T) {
 		name          string
 		mockVPC       vpcClientInterface
 		wantErr       bool
-		wantInstances []vpcv1.Instance
+		wantInstances int
 		uninitClient  bool
 	}{
 		{
@@ -346,12 +380,12 @@ func TestListInstances(t *testing.T) {
 					Instances: mockInstances,
 				},
 			},
-			wantInstances: mockInstances,
+			wantInstances: 1,
 		},
 		{
 			name: "API error",
 			mockVPC: &mockVPCClient{
-				err: errors.New("API error"),
+				err: fmt.Errorf("API error"),
 			},
 			wantErr: true,
 		},
@@ -364,9 +398,13 @@ func TestListInstances(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &VPCClient{}
-			if !tt.uninitClient {
-				client.client = tt.mockVPC
+			var client *VPCClient
+			if !tt.uninitClient && tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
 			}
 
 			instances, err := client.ListInstances(ctx)
@@ -382,8 +420,10 @@ func TestListInstances(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				if len(instances) != len(tt.wantInstances) {
-					t.Errorf("got %d instances, want %d", len(instances), len(tt.wantInstances))
+				if instances == nil {
+					t.Error("expected instances but got nil")
+				} else if len(instances) != tt.wantInstances {
+					t.Errorf("got %d instances, want %d", len(instances), tt.wantInstances)
 				}
 			}
 		})
@@ -394,50 +434,61 @@ func TestUpdateInstanceTags(t *testing.T) {
 	ctx := context.Background()
 	instanceID := "test-instance"
 	tags := map[string]string{
-		"key1": "value1",
-		"key2": "value2",
+		"env":  "test",
+		"team": "karpenter",
 	}
 
 	tests := []struct {
-		name         string
-		mockVPC      vpcClientInterface
-		instanceID   string
-		tags         map[string]string
-		wantErr      bool
-		uninitClient bool
+		name    string
+		mockVPC vpcClientInterface
+		id      string
+		tags    map[string]string
+		wantErr bool
 	}{
 		{
-			name:       "successful tags update",
-			mockVPC:    &mockVPCClient{},
-			instanceID: instanceID,
-			tags:       tags,
+			name:    "successful tags update",
+			mockVPC: &mockVPCClient{},
+			id:      instanceID,
+			tags:    tags,
+			wantErr: false,
 		},
 		{
 			name: "API error",
 			mockVPC: &mockVPCClient{
-				err: errors.New("API error"),
+				err: fmt.Errorf("API error"),
 			},
-			instanceID: instanceID,
-			tags:       tags,
-			wantErr:    true,
+			id:      instanceID,
+			tags:    tags,
+			wantErr: true,
 		},
 		{
-			name:         "uninitialized client",
-			uninitClient: true,
-			instanceID:   instanceID,
-			tags:         tags,
-			wantErr:      true,
+			name:    "uninitialized client",
+			mockVPC: nil,
+			id:      instanceID,
+			tags:    tags,
+			wantErr: true,
+		},
+		{
+			name:    "empty tags",
+			mockVPC: &mockVPCClient{},
+			id:      instanceID,
+			tags:    map[string]string{},
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &VPCClient{}
-			if !tt.uninitClient {
-				client.client = tt.mockVPC
+			var client *VPCClient
+			if tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
 			}
 
-			err := client.UpdateInstanceTags(ctx, tt.instanceID, tt.tags)
+			err := client.UpdateInstanceTags(ctx, tt.id, tt.tags)
 
 			if tt.wantErr {
 				if err == nil {
@@ -494,7 +545,7 @@ func TestListSubnets(t *testing.T) {
 		{
 			name: "API error",
 			mockVPC: &mockVPCClient{
-				err: errors.New("API error"),
+				err: fmt.Errorf("API error"),
 			},
 			vpcID:   vpcID,
 			wantErr: true,
@@ -509,9 +560,13 @@ func TestListSubnets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &VPCClient{}
-			if !tt.uninitClient {
-				client.client = tt.mockVPC
+			var client *VPCClient
+			if !tt.uninitClient && tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
 			}
 
 			subnets, err := client.ListSubnets(ctx, tt.vpcID)
@@ -527,7 +582,9 @@ func TestListSubnets(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				if len(subnets.Subnets) != tt.wantSubnets {
+				if subnets == nil {
+					t.Error("expected subnets but got nil")
+				} else if len(subnets.Subnets) != tt.wantSubnets {
 					t.Errorf("got %d subnets, want %d", len(subnets.Subnets), tt.wantSubnets)
 				}
 			}
@@ -541,51 +598,61 @@ func TestGetSubnet(t *testing.T) {
 	subnetName := "test-subnet-name"
 	zoneName := "us-south-1"
 
-	mockSubnet := &vpcv1.Subnet{
-		ID:   &subnetID,
-		Name: &subnetName,
-		Zone: &vpcv1.ZoneReference{
-			Name: &zoneName,
-		},
-	}
-
 	tests := []struct {
-		name         string
-		mockVPC      vpcClientInterface
-		subnetID     string
-		wantErr      bool
-		wantSubnet   *vpcv1.Subnet
-		uninitClient bool
+		name       string
+		mockVPC    vpcClientInterface
+		subnetID   string
+		wantErr    bool
+		wantSubnet *vpcv1.Subnet
 	}{
 		{
 			name: "successful subnet retrieval",
 			mockVPC: &mockVPCClient{
-				getSubnetResponse: mockSubnet,
+				getSubnetResponse: &vpcv1.Subnet{
+					ID:   &subnetID,
+					Name: &subnetName,
+					Zone: &vpcv1.ZoneReference{
+						Name: &zoneName,
+					},
+				},
 			},
-			subnetID:   subnetID,
-			wantSubnet: mockSubnet,
+			subnetID: subnetID,
+			wantErr:  false,
+			wantSubnet: &vpcv1.Subnet{
+				ID:   &subnetID,
+				Name: &subnetName,
+				Zone: &vpcv1.ZoneReference{
+					Name: &zoneName,
+				},
+			},
 		},
 		{
 			name: "API error",
 			mockVPC: &mockVPCClient{
-				err: errors.New("API error"),
+				err: fmt.Errorf("API error"),
 			},
-			subnetID: subnetID,
-			wantErr:  true,
+			subnetID:   subnetID,
+			wantErr:    true,
+			wantSubnet: nil,
 		},
 		{
-			name:         "uninitialized client",
-			uninitClient: true,
-			subnetID:     subnetID,
-			wantErr:      true,
+			name:       "uninitialized client",
+			mockVPC:    nil,
+			subnetID:   subnetID,
+			wantErr:    true,
+			wantSubnet: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &VPCClient{}
-			if !tt.uninitClient {
-				client.client = tt.mockVPC
+			var client *VPCClient
+			if tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
 			}
 
 			subnet, err := client.GetSubnet(ctx, tt.subnetID)
@@ -601,8 +668,231 @@ func TestGetSubnet(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				if subnet != tt.wantSubnet {
-					t.Errorf("got subnet %v, want %v", subnet, tt.wantSubnet)
+				if subnet == nil || tt.wantSubnet == nil {
+					if subnet != tt.wantSubnet {
+						t.Errorf("got subnet %v, want %v", subnet, tt.wantSubnet)
+					}
+				} else if *subnet.ID != *tt.wantSubnet.ID || *subnet.Name != *tt.wantSubnet.Name {
+					t.Errorf("got subnet ID=%s Name=%s, want ID=%s Name=%s", 
+						*subnet.ID, *subnet.Name, *tt.wantSubnet.ID, *tt.wantSubnet.Name)
+				}
+			}
+		})
+	}
+}
+
+// =================
+// VPC Tests
+// =================
+
+func TestGetVPC(t *testing.T) {
+	ctx := context.Background()
+	vpcID := "test-vpc-id"
+
+	tests := []struct {
+		name     string
+		mockVPC  vpcClientInterface
+		vpcID    string
+		wantErr  bool
+		wantVPC  *vpcv1.VPC
+	}{
+		{
+			name: "successful VPC retrieval",
+			mockVPC: &mockVPCClient{
+				// Mock will return VPC from GetVPCWithContext
+			},
+			vpcID:   vpcID,
+			wantErr: false,
+			wantVPC: &vpcv1.VPC{
+				ID:   &[]string{"test-vpc"}[0],
+				Name: &[]string{"test-vpc-name"}[0],
+			},
+		},
+		{
+			name: "API error",
+			mockVPC: &mockVPCClient{
+				err: fmt.Errorf("API error"),
+			},
+			vpcID:   vpcID,
+			wantErr: true,
+			wantVPC: nil,
+		},
+		{
+			name:     "uninitialized client",
+			mockVPC:  nil,
+			vpcID:    vpcID,
+			wantErr:  true,
+			wantVPC:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var client *VPCClient
+			if tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
+			}
+
+			vpc, err := client.GetVPC(ctx, tt.vpcID)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if vpc == nil {
+					t.Error("expected VPC but got nil")
+				} else if *vpc.ID != *tt.wantVPC.ID {
+					t.Errorf("got VPC ID %s, want %s", *vpc.ID, *tt.wantVPC.ID)
+				}
+			}
+		})
+	}
+}
+
+// =================
+// Image Tests
+// =================
+
+func TestGetImage(t *testing.T) {
+	ctx := context.Background()
+	imageID := "test-image-id"
+
+	tests := []struct {
+		name      string
+		mockVPC   vpcClientInterface
+		imageID   string
+		wantErr   bool
+		wantImage *vpcv1.Image
+	}{
+		{
+			name: "successful image retrieval",
+			mockVPC: &mockVPCClient{
+				// Mock will return Image from GetImageWithContext
+			},
+			imageID: imageID,
+			wantErr: false,
+			wantImage: &vpcv1.Image{
+				ID:   &[]string{"test-image"}[0],
+				Name: &[]string{"test-image-name"}[0],
+			},
+		},
+		{
+			name: "API error",
+			mockVPC: &mockVPCClient{
+				err: fmt.Errorf("API error"),
+			},
+			imageID:   imageID,
+			wantErr:   true,
+			wantImage: nil,
+		},
+		{
+			name:      "uninitialized client",
+			mockVPC:   nil,
+			imageID:   imageID,
+			wantErr:   true,
+			wantImage: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var client *VPCClient
+			if tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
+			}
+
+			image, err := client.GetImage(ctx, tt.imageID)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if image == nil {
+					t.Error("expected image but got nil")
+				} else if *image.ID != *tt.wantImage.ID {
+					t.Errorf("got image ID %s, want %s", *image.ID, *tt.wantImage.ID)
+				}
+			}
+		})
+	}
+}
+
+// =================
+// Instance Profile Tests
+// =================
+
+func TestListInstanceProfiles(t *testing.T) {
+	tests := []struct {
+		name         string
+		mockVPC      vpcClientInterface
+		options      *vpcv1.ListInstanceProfilesOptions
+		wantErr      bool
+		wantProfiles int
+	}{
+		{
+			name: "successful profile listing",
+			mockVPC: &mockVPCClient{
+				// Mock will return empty collection from ListInstanceProfilesWithContext
+			},
+			options:      &vpcv1.ListInstanceProfilesOptions{},
+			wantErr:      false,
+			wantProfiles: 0,
+		},
+		{
+			name: "API error",
+			mockVPC: &mockVPCClient{
+				err: fmt.Errorf("API error"),
+			},
+			options: &vpcv1.ListInstanceProfilesOptions{},
+			wantErr: true,
+		},
+		{
+			name:    "uninitialized client",
+			mockVPC: nil,
+			options: &vpcv1.ListInstanceProfilesOptions{},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var client *VPCClient
+			if tt.mockVPC != nil {
+				client = &VPCClient{
+					client: tt.mockVPC,
+				}
+			} else {
+				client = &VPCClient{}
+			}
+
+			profiles, _, err := client.ListInstanceProfiles(tt.options)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if profiles == nil {
+					t.Error("expected profiles but got nil")
 				}
 			}
 		})
@@ -652,12 +942,14 @@ func TestVPCClientErrorHandling(t *testing.T) {
 			setupClient: func() *VPCClient {
 				return &VPCClient{
 					client: &mockVPCClient{
-						err: errors.New("context deadline exceeded"),
+						err: fmt.Errorf("context deadline exceeded"),
 					},
 				}
 			},
 			operation: func(c *VPCClient) error {
-				_, err := c.ListInstances(ctx)
+				timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Nanosecond)
+				defer cancel()
+				_, err := c.GetInstance(timeoutCtx, "test-id")
 				return err
 			},
 			wantErr:     true,

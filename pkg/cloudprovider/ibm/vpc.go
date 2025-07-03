@@ -19,6 +19,7 @@ type vpcClientInterface interface {
 	GetSubnetWithContext(context.Context, *vpcv1.GetSubnetOptions) (*vpcv1.Subnet, *core.DetailedResponse, error)
 	GetVPCWithContext(context.Context, *vpcv1.GetVPCOptions) (*vpcv1.VPC, *core.DetailedResponse, error)
 	GetImageWithContext(context.Context, *vpcv1.GetImageOptions) (*vpcv1.Image, *core.DetailedResponse, error)
+	ListInstanceProfilesWithContext(context.Context, *vpcv1.ListInstanceProfilesOptions) (*vpcv1.InstanceProfileCollection, *core.DetailedResponse, error)
 }
 
 // VPCClient handles interactions with the IBM Cloud VPC API
@@ -212,4 +213,13 @@ func (c *VPCClient) GetImage(ctx context.Context, imageID string) (*vpcv1.Image,
 	}
 
 	return image, nil
+}
+
+// ListInstanceProfiles lists available instance profiles
+func (c *VPCClient) ListInstanceProfiles(options *vpcv1.ListInstanceProfilesOptions) (*vpcv1.InstanceProfileCollection, *core.DetailedResponse, error) {
+	if c.client == nil {
+		return nil, nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	return c.client.ListInstanceProfilesWithContext(context.Background(), options)
 }

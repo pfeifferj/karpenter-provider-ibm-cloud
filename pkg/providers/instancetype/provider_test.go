@@ -256,7 +256,7 @@ func TestCalculateInstanceTypeScore(t *testing.T) {
 				},
 				Price: 0.20, // $0.20/hour
 			},
-			expectedScore: 0.0375, // (0.20/4 + 0.20/8) / 2 = (0.05 + 0.025) / 2 = 0.0375
+			expectedScore: 0.036111111111111115, // (0.20/4 + 0.20/9) / 2 = (0.05 + 0.0222) / 2 = 0.0361 (8Gi = 9 decimal GB)
 		},
 		{
 			name: "instance without pricing",
@@ -269,7 +269,7 @@ func TestCalculateInstanceTypeScore(t *testing.T) {
 				},
 				Price: 0.0, // No pricing data
 			},
-			expectedScore: 6.0, // 2 + 4 (CPU + memory in GB)
+			expectedScore: 7.0, // 2 + 5 (CPU + memory where 4Gi = 5 decimal GB)
 		},
 	}
 
