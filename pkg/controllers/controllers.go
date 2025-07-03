@@ -16,17 +16,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/awslabs/operatorpkg/controller"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/events"
-
-	// Core Karpenter Controllers
-	corecontrollers "sigs.k8s.io/karpenter/pkg/controllers"
-	"sigs.k8s.io/karpenter/pkg/controllers/state"
-	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
@@ -37,7 +33,6 @@ import (
 	nodeclasstermination "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/termination"
 	providersinstancetype "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 	controllerspricing "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/pricing"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
 )
@@ -77,96 +72,55 @@ func (r *RecorderAdapter) AnnotatedEventf(object runtime.Object, annotations map
 	})
 }
 
-func RegisterControllers(ctx context.Context, mgr manager.Manager, clk clock.Clock,
-	kubeClient client.Client, recorder events.Recorder,
+func NewControllers(
+	ctx context.Context,
+	mgr manager.Manager,
+	clk clock.Clock,
+	kubeClient client.Client,
+	recorder events.Recorder,
 	unavailableOfferings *cache.UnavailableOfferings,
 	cloudProvider cloudprovider.CloudProvider,
-	instanceProvider instance.Provider, instanceTypeProvider instancetype.Provider) error {
-
-	// Core options should already be in context (injected in main.go)
-	// This ensures all controllers have access to required options
-
+	instanceProvider instance.Provider,
+	instanceTypeProvider instancetype.Provider,
+) []controller.Controller {
 	// Create event recorder adapter
 	recorderAdapter := &RecorderAdapter{recorder}
 
-	// Add metrics decoration to cloud provider (following AWS pattern)
-	decoratedCloudProvider := metrics.Decorate(cloudProvider)
+	controllers := []controller.Controller{}
 
-	// Create cluster state manager (required by core controllers)
-	clusterState := state.NewCluster(clk, kubeClient, decoratedCloudProvider)
-
-	// Register core Karpenter controllers (replaces simplified NodePool/NodeClaim controllers)
-	coreControllerList := corecontrollers.NewControllers(
-		ctx,
-		mgr,
-		clk,
-		kubeClient,
-		recorder,
-		decoratedCloudProvider,
-		clusterState,
-	)
-
-	// Register each core controller
-	for _, ctrl := range coreControllerList {
-		if err := ctrl.Register(ctx, mgr); err != nil {
-			return fmt.Errorf("registering core controller: %w", err)
-		}
+	// Add IBM-specific controllers
+	if hashCtrl, err := nodeclasshash.NewController(kubeClient); err == nil {
+		controllers = append(controllers, hashCtrl)
 	}
 
-	// Register IBMNodeClass hash controller
-	if hashCtrl, err := nodeclasshash.NewController(kubeClient); err != nil {
-		return fmt.Errorf("creating nodeclass hash controller: %w", err)
-	} else if err := hashCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering nodeclass hash controller: %w", err)
+	if statusCtrl, err := nodeclaasstatus.NewController(kubeClient); err == nil {
+		controllers = append(controllers, statusCtrl)
 	}
 
-	// Register IBMNodeClass status controller
-	if statusCtrl, err := nodeclaasstatus.NewController(kubeClient); err != nil {
-		return fmt.Errorf("creating nodeclass status controller: %w", err)
-	} else if err := statusCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering nodeclass status controller: %w", err)
+	if terminationCtrl, err := nodeclasstermination.NewController(kubeClient, recorderAdapter); err == nil {
+		controllers = append(controllers, terminationCtrl)
 	}
 
-	// Register IBMNodeClass termination controller
-	if terminationCtrl, err := nodeclasstermination.NewController(kubeClient, recorderAdapter); err != nil {
-		return fmt.Errorf("creating nodeclass termination controller: %w", err)
-	} else if err := terminationCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering nodeclass termination controller: %w", err)
+	if pricingCtrl, err := controllerspricing.NewController(nil); err == nil {
+		controllers = append(controllers, pricingCtrl)
 	}
 
-	// Register pricing controller
-	if pricingCtrl, err := controllerspricing.NewController(nil); err != nil {
-		return fmt.Errorf("creating pricing controller: %w", err)
-	} else if err := pricingCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering pricing controller: %w", err)
-	}
+	// Add garbage collection controller
+	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, cloudProvider)
+	controllers = append(controllers, garbageCollectionCtrl)
 
-	// Register NodeClaim garbage collection controller
-	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, decoratedCloudProvider)
-	if err := garbageCollectionCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering garbage collection controller: %w", err)
-	}
-
-	// Register tagging controller
+	// Add tagging controller
 	taggingCtrl := nodeclaimtagging.NewController(kubeClient, instanceProvider)
-	if err := taggingCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering tagging controller: %w", err)
+	controllers = append(controllers, taggingCtrl)
+
+	// Add instance type controller
+	if instanceTypeCtrl, err := providersinstancetype.NewController(); err == nil {
+		controllers = append(controllers, instanceTypeCtrl)
 	}
 
-	// Register instance type controller
-	if instanceTypeCtrl, err := providersinstancetype.NewController(); err != nil {
-		return fmt.Errorf("creating instance type controller: %w", err)
-	} else if err := instanceTypeCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering instance type controller: %w", err)
-	}
+	// Add interruption controller (always add for now)
+	interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings)
+	controllers = append(controllers, interruptionCtrl)
 
-	// Register interruption controller if enabled
-	if options.FromContext(ctx).Interruption {
-		interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings)
-		if err := interruptionCtrl.Register(ctx, mgr); err != nil {
-			return fmt.Errorf("registering interruption controller: %w", err)
-		}
-	}
-
-	return nil
+	return controllers
 }

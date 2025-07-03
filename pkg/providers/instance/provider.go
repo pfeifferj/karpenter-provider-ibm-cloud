@@ -5,6 +5,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Provider defines the interface for managing IBM Cloud instances
@@ -20,4 +21,7 @@ type Provider interface {
 
 	// TagInstance adds or updates tags on an IBM Cloud instance
 	TagInstance(ctx context.Context, instanceID string, tags map[string]string) error
+	
+	// SetKubeClient sets the Kubernetes client
+	SetKubeClient(client.Client)
 }
