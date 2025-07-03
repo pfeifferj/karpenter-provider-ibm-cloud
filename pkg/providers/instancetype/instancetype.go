@@ -24,8 +24,10 @@ import (
 	"strconv"
 
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
+	"github.com/IBM/vpc-go-sdk/vpcv1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 
@@ -71,7 +73,8 @@ type instanceTypeRanking struct {
 // Lower scores are better (more cost-efficient)
 func calculateInstanceTypeScore(instanceType *ExtendedInstanceType) float64 {
 	cpuCount := float64(instanceType.Capacity.Cpu().Value())
-	memoryGB := float64(instanceType.Capacity.Memory().Value()) / (1024 * 1024 * 1024) // Convert bytes to GB
+	// Use Kubernetes resource API for proper unit conversion
+	memoryGB := float64(instanceType.Capacity.Memory().ScaledValue(resource.Giga))
 	hourlyPrice := instanceType.Price
 
 	// Handle cases where pricing is unavailable
@@ -106,9 +109,25 @@ func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudp
 		return nil, fmt.Errorf("IBM client not initialized")
 	}
 	
+	// Try VPC API first - more reliable than catalog
+	vpcClient, err := p.client.GetVPCClient()
+	if err == nil {
+		// List all profiles and find the one we want
+		profiles, _, profilesErr := vpcClient.ListInstanceProfiles(nil)
+		err = profilesErr
+		if err == nil && profiles != nil && profiles.Profiles != nil {
+			for _, profile := range profiles.Profiles {
+				if profile.Name != nil && *profile.Name == name {
+					return p.convertVPCProfileToInstanceType(profile)
+				}
+			}
+		}
+	}
+	
+	// Fallback to Global Catalog if VPC API doesn't work
 	catalogClient, err := p.client.GetGlobalCatalogClient()
 	if err != nil {
-		return nil, fmt.Errorf("getting Global Catalog client: %w", err)
+		return nil, fmt.Errorf("both VPC and Global Catalog clients failed: %w", err)
 	}
 
 	// Get instance profile details from Global Catalog
@@ -127,31 +146,53 @@ func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudp
 }
 
 func (p *IBMInstanceTypeProvider) List(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Listing instance types")
+
 	if p.client == nil {
-		return nil, fmt.Errorf("IBM client not initialized")
-	}
-	
-	catalogClient, err := p.client.GetGlobalCatalogClient()
-	if err != nil {
-		return nil, fmt.Errorf("getting Global Catalog client: %w", err)
+		err := fmt.Errorf("IBM client not initialized")
+		logger.Error(err, "Failed to list instance types")
+		return nil, err
 	}
 
-	// List instance profiles from Global Catalog
-	entries, err := catalogClient.ListInstanceTypes(ctx)
+	// Try VPC API first
+	instanceTypes, err := p.listFromVPC(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("listing instance types from catalog: %w", err)
-	}
-
-	// Convert catalog entries to instance types
-	var instanceTypes []*cloudprovider.InstanceType
-	for _, entry := range entries {
-		instanceType, err := convertCatalogEntryToInstanceType(&entry)
+		logger.Error(err, "Failed to list instance types from VPC API, trying Global Catalog")
+		
+		// Fallback to Global Catalog
+		catalogClient, err := p.client.GetGlobalCatalogClient()
 		if err != nil {
-			return nil, fmt.Errorf("converting catalog entry: %w", err)
+			logger.Error(err, "Failed to get Global Catalog client")
+			return nil, fmt.Errorf("both VPC API and Global Catalog failed: VPC error: %v, Catalog error: %w", err, err)
 		}
-		instanceTypes = append(instanceTypes, instanceType)
+
+		// List instance profiles from Global Catalog
+		entries, err := catalogClient.ListInstanceTypes(ctx)
+		if err != nil {
+			logger.Error(err, "Failed to list instance types from Global Catalog")
+			return nil, fmt.Errorf("both VPC API and Global Catalog failed to list instance types")
+		}
+
+		// Convert catalog entries to instance types
+		instanceTypes = nil
+		for _, entry := range entries {
+			instanceType, err := convertCatalogEntryToInstanceType(&entry)
+			if err != nil {
+				logger.Error(err, "Failed to convert catalog entry", "entry", entry)
+				continue
+			}
+			instanceTypes = append(instanceTypes, instanceType)
+		}
 	}
 
+	if len(instanceTypes) == 0 {
+		err := fmt.Errorf("no instance types found from either VPC API or Global Catalog")
+		logger.Error(err, "No instance types available")
+		return nil, err
+	}
+
+	logger.Info("Successfully listed instance types", "count", len(instanceTypes))
 	return instanceTypes, nil
 }
 
@@ -310,6 +351,147 @@ func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovid
 	}
 
 	return result
+}
+
+// listFromVPC lists instance types using VPC API
+func (p *IBMInstanceTypeProvider) listFromVPC(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
+	logger := log.FromContext(ctx)
+	
+	vpcClient, err := p.client.GetVPCClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC client: %w", err)
+	}
+
+	// List instance profiles from VPC
+	options := &vpcv1.ListInstanceProfilesOptions{}
+	result, _, err := vpcClient.ListInstanceProfiles(options)
+	if err != nil {
+		return nil, fmt.Errorf("listing VPC instance profiles: %w", err)
+	}
+
+	var instanceTypes []*cloudprovider.InstanceType
+	for _, profile := range result.Profiles {
+		instanceType, err := p.convertVPCProfileToInstanceType(profile)
+		if err != nil {
+			logger.Error(err, "Failed to convert VPC profile", "profile", *profile.Name)
+			continue
+		}
+		instanceTypes = append(instanceTypes, instanceType)
+	}
+
+	logger.V(1).Info("Listed instance types from VPC API", "count", len(instanceTypes))
+	return instanceTypes, nil
+}
+
+// convertVPCProfileToInstanceType converts VPC instance profile to Karpenter instance type
+func (p *IBMInstanceTypeProvider) convertVPCProfileToInstanceType(profile vpcv1.InstanceProfile) (*cloudprovider.InstanceType, error) {
+	if profile.Name == nil {
+		return nil, fmt.Errorf("instance profile name is nil")
+	}
+
+	var cpuCount int64
+	if profile.VcpuCount != nil {
+		if vcpuSpec, ok := profile.VcpuCount.(*vpcv1.InstanceProfileVcpu); ok && vcpuSpec.Value != nil {
+			cpuCount = *vcpuSpec.Value
+		} else {
+			return nil, fmt.Errorf("instance profile %s has unsupported CPU count type", *profile.Name)
+		}
+	} else {
+		return nil, fmt.Errorf("instance profile %s has no CPU count", *profile.Name)
+	}
+
+	var memoryGB int64
+	if profile.Memory != nil {
+		if memorySpec, ok := profile.Memory.(*vpcv1.InstanceProfileMemory); ok && memorySpec.Value != nil {
+			memoryGB = *memorySpec.Value
+		} else {
+			return nil, fmt.Errorf("instance profile %s has unsupported memory type", *profile.Name)
+		}
+	} else {
+		return nil, fmt.Errorf("instance profile %s has no memory", *profile.Name)
+	}
+
+	// Get architecture
+	arch := "amd64" // Default
+	if profile.VcpuArchitecture != nil && profile.VcpuArchitecture.Value != nil {
+		arch = *profile.VcpuArchitecture.Value
+	}
+
+	// Convert to Kubernetes resource quantities
+	cpuResource := resource.NewQuantity(cpuCount, resource.DecimalSI)
+	// Memory is in GB from the profile, convert to bytes using standard GB (not GiB)
+	memoryResource := resource.NewQuantity(memoryGB*1000*1000*1000, resource.DecimalSI) // Convert GB to bytes
+	
+	// Calculate pod capacity (rough estimate: 110 pods per node for most instance types)
+	var podCount int64 = 110
+	if cpuCount <= 2 {
+		podCount = 30
+	} else if cpuCount <= 4 {
+		podCount = 60
+	}
+	podResource := resource.NewQuantity(podCount, resource.DecimalSI)
+
+	// Create requirements
+	requirements := scheduling.NewRequirements(
+		scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, *profile.Name),
+		scheduling.NewRequirement(corev1.LabelArchStable, corev1.NodeSelectorOpIn, arch),
+		scheduling.NewRequirement("karpenter.ibm.sh/instance-family", corev1.NodeSelectorOpIn, getInstanceFamily(*profile.Name)),
+		scheduling.NewRequirement("karpenter.ibm.sh/instance-size", corev1.NodeSelectorOpIn, getInstanceSize(*profile.Name)),
+	)
+
+	// Create offerings (for now, assume on-demand in all supported zones)
+	offerings := cloudprovider.Offerings{
+		{
+			Requirements: scheduling.NewRequirements(
+				scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1", "us-south-2", "us-south-3"),
+				scheduling.NewRequirement("karpenter.sh/capacity-type", corev1.NodeSelectorOpIn, "on-demand"),
+			),
+			Price:     0.1, // Default price - will be updated by pricing provider
+			Available: true,
+		},
+	}
+
+	return &cloudprovider.InstanceType{
+		Name: *profile.Name,
+		Capacity: corev1.ResourceList{
+			corev1.ResourceCPU:    *cpuResource,
+			corev1.ResourceMemory: *memoryResource,
+			corev1.ResourcePods:   *podResource,
+		},
+		Overhead: &cloudprovider.InstanceTypeOverhead{
+			KubeReserved: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+			SystemReserved: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+			EvictionThreshold: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("500Mi"),
+			},
+		},
+		Requirements: requirements,
+		Offerings:    offerings,
+	}, nil
+}
+
+// getInstanceFamily extracts family from instance type name (e.g., "bx2" from "bx2-2x8")
+func getInstanceFamily(instanceType string) string {
+	if len(instanceType) >= 3 {
+		return instanceType[:3]
+	}
+	return "balanced"
+}
+
+// getInstanceSize extracts size from instance type name (e.g., "2x8" from "bx2-2x8")
+func getInstanceSize(instanceType string) string {
+	for i, c := range instanceType {
+		if c == '-' && i+1 < len(instanceType) {
+			return instanceType[i+1:]
+		}
+	}
+	return "small"
 }
 
 func convertCatalogEntryToInstanceType(entry *globalcatalogv1.CatalogEntry) (*cloudprovider.InstanceType, error) {
