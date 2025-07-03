@@ -349,6 +349,21 @@ func (c *CloudProvider) Name() string {
 	return CloudProviderName
 }
 
+// GetIBMClient returns the IBM client
+func (c *CloudProvider) GetIBMClient() *ibm.Client {
+	return c.ibmClient
+}
+
+// GetInstanceTypeProvider returns the instance type provider
+func (c *CloudProvider) GetInstanceTypeProvider() instancetype.Provider {
+	return c.instanceTypeProvider
+}
+
+// GetSubnetProvider returns the subnet provider  
+func (c *CloudProvider) GetSubnetProvider() subnet.Provider {
+	return c.subnetProvider
+}
+
 func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
 	return []status.Object{&v1alpha1.IBMNodeClass{}}
 }
@@ -384,8 +399,4 @@ func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
 			TolerationDuration: 5 * time.Minute, // PID pressure indicates serious issues
 		},
 	}
-}
-
-func (c *CloudProvider) GetIBMClient() *ibm.Client {
-	return c.ibmClient
 }

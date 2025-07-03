@@ -26,6 +26,8 @@ type mockInstanceProvider struct {
 	tagError     error
 }
 
+func (m *mockInstanceProvider) SetKubeClient(client client.Client) {}
+
 func (m *mockInstanceProvider) Create(ctx context.Context, nodeClaim *karpenterv1.NodeClaim) (*v1.Node, error) {
 	return &v1.Node{}, nil
 }
