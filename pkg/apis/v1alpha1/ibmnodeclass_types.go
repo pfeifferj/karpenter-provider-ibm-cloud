@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package v1alpha1
 
 import (
@@ -75,9 +90,11 @@ type InstanceTypeRequirements struct {
 }
 
 // IBMNodeClassSpec defines the desired state of IBMNodeClass
+// +kubebuilder:validation:XValidation:rule="has(self.instanceProfile) || has(self.instanceRequirements)", message="either instanceProfile or instanceRequirements must be specified"
 type IBMNodeClassSpec struct {
 	// Region is the IBM Cloud region where nodes will be created
 	// +required
+	// +kubebuilder:validation:MinLength=1
 	Region string `json:"region"`
 
 	// Zone is the availability zone where nodes will be created
@@ -87,20 +104,25 @@ type IBMNodeClassSpec struct {
 
 	// InstanceProfile is the name of the instance profile to use
 	// If not specified, instance types will be automatically selected based on requirements
+	// Either InstanceProfile or InstanceRequirements must be specified
 	// +optional
+	// +kubebuilder:validation:MinLength=1
 	InstanceProfile string `json:"instanceProfile,omitempty"`
 
 	// InstanceRequirements defines requirements for automatic instance type selection
 	// Only used when InstanceProfile is not specified
+	// Either InstanceProfile or InstanceRequirements must be specified
 	// +optional
 	InstanceRequirements *InstanceTypeRequirements `json:"instanceRequirements,omitempty"`
 
 	// Image is the ID of the image to use for nodes
 	// +required
+	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 
 	// VPC is the ID of the VPC where nodes will be created
 	// +required
+	// +kubebuilder:validation:MinLength=1
 	VPC string `json:"vpc"`
 
 	// Subnet is the ID of the subnet where nodes will be created

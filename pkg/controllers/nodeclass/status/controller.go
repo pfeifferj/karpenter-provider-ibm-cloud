@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package status
 
 import (
@@ -14,6 +29,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/image"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
 )
 
@@ -334,16 +350,17 @@ func (c *Controller) validateSubnetsAvailable(ctx context.Context, vpcID, zone s
 }
 
 // validateImage checks if the image exists and is accessible
-func (c *Controller) validateImage(ctx context.Context, imageID, region string) error {
+func (c *Controller) validateImage(ctx context.Context, imageIdentifier, region string) error {
 	vpcClient, err := c.ibmClient.GetVPCClient()
 	if err != nil {
 		return fmt.Errorf("getting VPC client: %w", err)
 	}
 
-	// Try to get image by ID or name
-	_, err = vpcClient.GetImage(ctx, imageID)
+	// Use image resolver to handle both IDs and names
+	imageResolver := image.NewResolver(vpcClient, region)
+	_, err = imageResolver.ResolveImage(ctx, imageIdentifier)
 	if err != nil {
-		return fmt.Errorf("image %s not found or not accessible in region %s: %w", imageID, region, err)
+		return fmt.Errorf("image %s not found or not accessible in region %s: %w", imageIdentifier, region, err)
 	}
 
 	return nil

@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package ibm
 
 import (
@@ -19,7 +34,9 @@ type vpcClientInterface interface {
 	GetSubnetWithContext(context.Context, *vpcv1.GetSubnetOptions) (*vpcv1.Subnet, *core.DetailedResponse, error)
 	GetVPCWithContext(context.Context, *vpcv1.GetVPCOptions) (*vpcv1.VPC, *core.DetailedResponse, error)
 	GetImageWithContext(context.Context, *vpcv1.GetImageOptions) (*vpcv1.Image, *core.DetailedResponse, error)
+	ListImagesWithContext(context.Context, *vpcv1.ListImagesOptions) (*vpcv1.ImageCollection, *core.DetailedResponse, error)
 	ListInstanceProfilesWithContext(context.Context, *vpcv1.ListInstanceProfilesOptions) (*vpcv1.InstanceProfileCollection, *core.DetailedResponse, error)
+	ListSecurityGroupsWithContext(context.Context, *vpcv1.ListSecurityGroupsOptions) (*vpcv1.SecurityGroupCollection, *core.DetailedResponse, error)
 }
 
 // VPCClient handles interactions with the IBM Cloud VPC API
@@ -213,6 +230,38 @@ func (c *VPCClient) GetImage(ctx context.Context, imageID string) (*vpcv1.Image,
 	}
 
 	return image, nil
+}
+
+// ListImages lists available images with optional filtering
+func (c *VPCClient) ListImages(ctx context.Context, options *vpcv1.ListImagesOptions) (*vpcv1.ImageCollection, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	images, _, err := c.client.ListImagesWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("listing images: %w", err)
+	}
+
+	return images, nil
+}
+
+// ListSecurityGroups lists security groups with optional filtering
+func (c *VPCClient) ListSecurityGroupsWithContext(ctx context.Context, options *vpcv1.ListSecurityGroupsOptions) (*vpcv1.SecurityGroupCollection, *core.DetailedResponse, error) {
+	if c.client == nil {
+		return nil, nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	return c.client.ListSecurityGroupsWithContext(ctx, options)
+}
+
+// ListSubnetsWithContext lists subnets with context
+func (c *VPCClient) ListSubnetsWithContext(ctx context.Context, options *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error) {
+	if c.client == nil {
+		return nil, nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	return c.client.ListSubnetsWithContext(ctx, options)
 }
 
 // ListInstanceProfiles lists available instance profiles
