@@ -59,9 +59,10 @@ func getValidNodeClass() *v1alpha1.IBMNodeClass {
 			Namespace: "default",
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
-			Region: "us-south",
-			VPC:    vpcID,
-			Image:  "r006-988caa8b-7786-49c9-aea6-9553af2b1969", // Real Ubuntu 20.04 image
+			Region:          "us-south",
+			VPC:             vpcID,
+			Image:           "r006-988caa8b-7786-49c9-aea6-9553af2b1969", // Real Ubuntu 20.04 image
+			InstanceProfile: "bx2-2x8", // Add required instanceProfile
 		},
 	}
 }
@@ -332,11 +333,12 @@ func TestValidateBusinessLogic(t *testing.T) {
 			name: "zone and subnet specified",
 			nodeClass: &v1alpha1.IBMNodeClass{
 				Spec: v1alpha1.IBMNodeClassSpec{
-					Region: "us-south",
-					Zone:   "us-south-1",
-					VPC:    "vpc-12345678",
-					Image:  "r006-12345678-1234-1234-1234-123456789012",
-					Subnet: "subnet-12345678",
+					Region:          "us-south",
+					Zone:            "us-south-1",
+					VPC:             "vpc-12345678",
+					Image:           "r006-12345678-1234-1234-1234-123456789012",
+					Subnet:          "subnet-12345678",
+					InstanceProfile: "bx2-2x8", // Add required instanceProfile
 				},
 			},
 			wantError: false, // Currently we skip detailed validation
@@ -348,6 +350,11 @@ func TestValidateBusinessLogic(t *testing.T) {
 					Region: "us-south",
 					VPC:    "vpc-12345678",
 					Image:  "r006-12345678-1234-1234-1234-123456789012",
+					InstanceRequirements: &v1alpha1.InstanceTypeRequirements{
+						Architecture:  "amd64",
+						MinimumCPU:    2,
+						MinimumMemory: 4,
+					},
 					PlacementStrategy: &v1alpha1.PlacementStrategy{
 						ZoneBalance: "Balanced",
 						SubnetSelection: &v1alpha1.SubnetSelectionCriteria{
@@ -443,6 +450,55 @@ func TestControllerReconcile(t *testing.T) {
 								"Environment": "production",
 							},
 						},
+					},
+				},
+			},
+			expectedStatus: "True",
+			expectedReady:  true,
+			expectedMessages: []string{
+				"NodeClass is ready",
+			},
+		},
+		{
+			name: "NodeClass with both instanceProfile and instanceRequirements (mutual exclusivity violation)",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "mutual-exclusivity-violation",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.IBMNodeClassSpec{
+					Region:          "us-south",
+					VPC:             "r006-12345678-1234-1234-1234-123456789012",
+					Image:           "r006-12345678-1234-1234-1234-123456789012",
+					InstanceProfile: "bx2-4x16", // This should be mutually exclusive with instanceRequirements
+					InstanceRequirements: &v1alpha1.InstanceTypeRequirements{
+						Architecture:  "amd64",
+						MinimumCPU:    2,
+						MinimumMemory: 4,
+					},
+				},
+			},
+			expectedStatus: "False",
+			expectedReady:  false,
+			expectedMessages: []string{
+				"business logic validation failed",
+			},
+		},
+		{
+			name: "NodeClass with only instanceRequirements (valid)",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "instance-requirements-only",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.IBMNodeClassSpec{
+					Region: "us-south",
+					VPC:    "r006-12345678-1234-1234-1234-123456789012",
+					Image:  "r006-12345678-1234-1234-1234-123456789012",
+					InstanceRequirements: &v1alpha1.InstanceTypeRequirements{
+						Architecture:  "amd64",
+						MinimumCPU:    2,
+						MinimumMemory: 4,
 					},
 				},
 			},
@@ -606,9 +662,10 @@ func TestControllerReconcileEdgeCases(t *testing.T) {
 				nodeClass: &v1alpha1.IBMNodeClass{
 					ObjectMeta: metav1.ObjectMeta{Name: "whitespace-test", Namespace: "default"},
 					Spec: v1alpha1.IBMNodeClassSpec{
-						Region: " us-south ",
-						VPC:    " vpc-12345678 ",
-						Image:  " r006-12345678-1234-1234-1234-123456789012 ",
+						Region:          " us-south ",
+						VPC:             " vpc-12345678 ",
+						Image:           " r006-12345678-1234-1234-1234-123456789012 ",
+						InstanceProfile: " bx2-2x8 ", // Add required instanceProfile with whitespace
 					},
 				},
 				expectReady: true,

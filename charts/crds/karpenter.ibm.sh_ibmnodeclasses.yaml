@@ -171,6 +171,8 @@ spec:
             x-kubernetes-validations:
             - message: either instanceProfile or instanceRequirements must be specified
               rule: has(self.instanceProfile) || has(self.instanceRequirements)
+            - message: instanceProfile and instanceRequirements are mutually exclusive
+              rule: '!(has(self.instanceProfile) && has(self.instanceRequirements))'
           status:
             description: Status defines the observed state of IBMNodeClass
             properties:
