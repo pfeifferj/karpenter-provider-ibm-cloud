@@ -39,6 +39,29 @@ spec:
           spec:
             description: Spec defines the desired state of IBMNodeClass
             properties:
+              bootstrapMode:
+                default: auto
+                description: |-
+                  BootstrapMode determines how nodes should be bootstrapped to join the cluster
+                  Valid values are:
+                  - "cloud-init" - Use cloud-init scripts to bootstrap nodes (default)
+                  - "iks-api" - Use IKS Worker Pool API to add nodes to cluster
+                  - "auto" - Automatically select the best method based on cluster type
+                enum:
+                - cloud-init
+                - iks-api
+                - auto
+                type: string
+              iksClusterID:
+                description: |-
+                  IKSClusterID is the IKS cluster ID for API-based bootstrapping
+                  Required when BootstrapMode is "iks-api"
+                type: string
+              iksWorkerPoolID:
+                description: |-
+                  IKSWorkerPoolID is the worker pool ID to add nodes to
+                  Used with IKS API bootstrapping mode
+                type: string
               image:
                 description: Image is the ID of the image to use for nodes
                 minLength: 1

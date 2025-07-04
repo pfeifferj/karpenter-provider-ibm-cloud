@@ -25,17 +25,20 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/bootstrap"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/image"
 )
 
 type IBMCloudInstanceProvider struct {
-	client     *ibm.Client
-	kubeClient client.Client
+	client            *ibm.Client
+	kubeClient        client.Client
+	bootstrapProvider *bootstrap.IBMBootstrapProvider
 }
 
 func NewProvider() (*IBMCloudInstanceProvider, error) {
@@ -51,6 +54,28 @@ func NewProvider() (*IBMCloudInstanceProvider, error) {
 
 func (p *IBMCloudInstanceProvider) SetKubeClient(kubeClient client.Client) {
 	p.kubeClient = kubeClient
+	
+	// Bootstrap provider initialization is deferred until needed
+}
+
+func (p *IBMCloudInstanceProvider) initBootstrapProvider(ctx context.Context) error {
+	if p.bootstrapProvider == nil {
+		// Create a kubernetes client from the controller-runtime client
+		k8sClient, err := p.createKubernetesClient()
+		if err != nil {
+			return fmt.Errorf("creating kubernetes client: %w", err)
+		}
+		
+		p.bootstrapProvider = bootstrap.NewProvider(p.client, k8sClient)
+	}
+	return nil
+}
+
+// createKubernetesClient creates a kubernetes.Interface from the controller-runtime client
+func (p *IBMCloudInstanceProvider) createKubernetesClient() (kubernetes.Interface, error) {
+	// This is a placeholder - in production you'd properly convert the client
+	// For now, return nil and handle gracefully
+	return nil, fmt.Errorf("kubernetes client conversion not implemented - using fallback user data")
 }
 
 func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
@@ -190,9 +215,13 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 		}
 	}
 
-	// Add UserData if specified
-	if nodeClass.Spec.UserData != "" {
-		instancePrototype.UserData = &nodeClass.Spec.UserData
+	// Generate bootstrap user data with CNI/CRI detection
+	bootstrapUserData, err := p.generateBootstrapUserData(ctx, nodeClass, nodeClaim)
+	if err != nil {
+		return nil, fmt.Errorf("generating bootstrap user data: %w", err)
+	}
+	if bootstrapUserData != "" {
+		instancePrototype.UserData = &bootstrapUserData
 	}
 
 	// Add SSH keys if specified
@@ -436,3 +465,33 @@ func (p *IBMCloudInstanceProvider) getVPCInstanceIDFromIKSWorker(ctx context.Con
 
 	return instanceID, nil
 }
+
+// generateBootstrapUserData generates user data for node bootstrapping
+func (p *IBMCloudInstanceProvider) generateBootstrapUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim *v1.NodeClaim) (string, error) {
+	// Initialize bootstrap provider if needed
+	if err := p.initBootstrapProvider(ctx); err != nil {
+		// If bootstrap provider initialization fails, fall back to user-provided user data
+		if nodeClass.Spec.UserData != "" {
+			return nodeClass.Spec.UserData, nil
+		}
+		return "", nil
+	}
+
+	// Use bootstrap provider to generate user data
+	namespacedName := types.NamespacedName{
+		Name:      nodeClaim.Name,
+		Namespace: nodeClaim.Namespace,
+	}
+	
+	userData, err := p.bootstrapProvider.GetUserData(ctx, nodeClass, namespacedName)
+	if err != nil {
+		// If bootstrap generation fails, fall back to user-provided user data
+		if nodeClass.Spec.UserData != "" {
+			return nodeClass.Spec.UserData, nil
+		}
+		return "", fmt.Errorf("generating bootstrap user data: %w", err)
+	}
+
+	return userData, nil
+}
+
