@@ -72,7 +72,7 @@ func NewVPCClient(baseURL, authType, apiKey, region string) (*VPCClient, error) 
 	}, nil
 }
 
-func (c *VPCClient) CreateInstance(ctx context.Context, instancePrototype *vpcv1.InstancePrototype) (*vpcv1.Instance, error) {
+func (c *VPCClient) CreateInstance(ctx context.Context, instancePrototype vpcv1.InstancePrototypeIntf) (*vpcv1.Instance, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("VPC client not initialized")
 	}
