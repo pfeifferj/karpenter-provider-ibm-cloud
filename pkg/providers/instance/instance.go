@@ -144,8 +144,21 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 		return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
 	}
 
-	// Create instance prototype with all required fields
-	instancePrototype := &vpcv1.InstancePrototype{
+	// Create boot volume attachment for the instance
+	bootVolumeAttachment := &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
+		Volume: &vpcv1.VolumePrototypeInstanceByImageContext{
+			Name: &[]string{fmt.Sprintf("%s-boot", nodeClaim.Name)}[0],
+			Profile: &vpcv1.VolumeProfileIdentity{
+				Name: &[]string{"general-purpose"}[0], // Default boot volume profile
+			},
+			Capacity: &[]int64{100}[0], // Default 100GB boot volume
+		},
+		DeleteVolumeOnInstanceDelete: &[]bool{true}[0],
+	}
+
+	// Create instance prototype with all required fields using InstancePrototypeInstanceByImage
+	// This satisfies the oneOf constraint in the IBM Cloud VPC API
+	instancePrototype := &vpcv1.InstancePrototypeInstanceByImage{
 		Name: &nodeClaim.Name,
 		Zone: &vpcv1.ZoneIdentity{
 			Name: &zone,
@@ -160,6 +173,21 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 			ID: &imageID,
 		},
 		PrimaryNetworkInterface: primaryNetworkInterface,
+		BootVolumeAttachment:    bootVolumeAttachment,
+	}
+
+	// Add placement target if specified
+	if nodeClass.Spec.PlacementTarget != "" {
+		instancePrototype.PlacementTarget = &vpcv1.InstancePlacementTargetPrototype{
+			ID: &nodeClass.Spec.PlacementTarget,
+		}
+	}
+
+	// Add resource group if specified
+	if nodeClass.Spec.ResourceGroup != "" {
+		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+			ID: &nodeClass.Spec.ResourceGroup,
+		}
 	}
 
 	// Add UserData if specified
