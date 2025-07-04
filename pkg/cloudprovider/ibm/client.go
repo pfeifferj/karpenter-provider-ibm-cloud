@@ -86,6 +86,11 @@ func (c *Client) GetIKSClient() *IKSClient {
 	return NewIKSClient(c)
 }
 
+// GetIAMClient returns the IAM client
+func (c *Client) GetIAMClient() *IAMClient {
+	return c.iamClient
+}
+
 // GetRegion returns the configured region
 func (c *Client) GetRegion() string {
 	return c.region
