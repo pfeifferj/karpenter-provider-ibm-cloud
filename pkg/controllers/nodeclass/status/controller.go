@@ -273,6 +273,18 @@ func (c *Controller) validateIBMCloudResources(ctx context.Context, nc *v1alpha1
 
 // validateBusinessLogic checks business rules and constraints
 func (c *Controller) validateBusinessLogic(nc *v1alpha1.IBMNodeClass) error {
+	// Validate instanceProfile and instanceRequirements mutual exclusivity
+	hasInstanceProfile := strings.TrimSpace(nc.Spec.InstanceProfile) != ""
+	hasInstanceRequirements := nc.Spec.InstanceRequirements != nil
+	
+	if !hasInstanceProfile && !hasInstanceRequirements {
+		return fmt.Errorf("either instanceProfile or instanceRequirements must be specified")
+	}
+	
+	if hasInstanceProfile && hasInstanceRequirements {
+		return fmt.Errorf("instanceProfile and instanceRequirements are mutually exclusive")
+	}
+
 	// If both zone and subnet are specified, ensure they are compatible
 	// For now, we skip zone-subnet compatibility checks since we validate 
 	// actual subnet resources via API calls in validateIBMCloudResources

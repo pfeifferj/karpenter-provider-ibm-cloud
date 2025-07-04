@@ -91,6 +91,7 @@ type InstanceTypeRequirements struct {
 
 // IBMNodeClassSpec defines the desired state of IBMNodeClass
 // +kubebuilder:validation:XValidation:rule="has(self.instanceProfile) || has(self.instanceRequirements)", message="either instanceProfile or instanceRequirements must be specified"
+// +kubebuilder:validation:XValidation:rule="!(has(self.instanceProfile) && has(self.instanceRequirements))", message="instanceProfile and instanceRequirements are mutually exclusive"
 type IBMNodeClassSpec struct {
 	// Region is the IBM Cloud region where nodes will be created
 	// +required
