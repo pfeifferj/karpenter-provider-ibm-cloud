@@ -174,12 +174,6 @@ func detectCNIPlugin(ctx context.Context, client kubernetes.Interface) (string, 
 		return "weave", nil
 	}
 
-	// Check for AWS VPC CNI
-	_, err = client.AppsV1().DaemonSets("kube-system").Get(ctx, "aws-node", metav1.GetOptions{})
-	if err == nil {
-		return "aws-vpc-cni", nil
-	}
-
 	// Check for generic CNI via config maps
 	configMaps, err := client.CoreV1().ConfigMaps("kube-system").List(ctx, metav1.ListOptions{})
 	if err != nil {
