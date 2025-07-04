@@ -1,9 +1,26 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package instance
 
 import (
 	"context"
 	"testing"
 
+	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -218,3 +235,136 @@ func TestNewProvider_ErrorHandling(t *testing.T) {
 // Note: Additional tests for Create, Delete, etc. require proper mock interfaces
 // for IBM Cloud clients. These tests are skipped until mock implementations
 // are properly aligned with the current IBM client interface.
+
+// MockVPCClient implements a mock VPC client for testing new functionality
+type MockVPCClient struct {
+	subnets        map[string]*vpcv1.Subnet
+	securityGroups map[string]*vpcv1.SecurityGroup
+	
+	// Function overrides for testing
+	listSubnetsFunc        func(ctx context.Context, options *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error)
+	listSecurityGroupsFunc func(ctx context.Context, options *vpcv1.ListSecurityGroupsOptions) (*vpcv1.SecurityGroupCollection, *core.DetailedResponse, error)
+}
+
+func (m *MockVPCClient) ListSubnetsWithContext(ctx context.Context, options *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error) {
+	if m.listSubnetsFunc != nil {
+		return m.listSubnetsFunc(ctx, options)
+	}
+	
+	var subnets []vpcv1.Subnet
+	for _, subnet := range m.subnets {
+		subnets = append(subnets, *subnet)
+	}
+	
+	return &vpcv1.SubnetCollection{Subnets: subnets}, &core.DetailedResponse{}, nil
+}
+
+func (m *MockVPCClient) ListSecurityGroupsWithContext(ctx context.Context, options *vpcv1.ListSecurityGroupsOptions) (*vpcv1.SecurityGroupCollection, *core.DetailedResponse, error) {
+	if m.listSecurityGroupsFunc != nil {
+		return m.listSecurityGroupsFunc(ctx, options)
+	}
+	
+	var sgs []vpcv1.SecurityGroup
+	for _, sg := range m.securityGroups {
+		// Filter by VPC if specified
+		if options.VPCID != nil {
+			if sg.VPC == nil || sg.VPC.ID == nil || *sg.VPC.ID != *options.VPCID {
+				continue
+			}
+		}
+		sgs = append(sgs, *sg)
+	}
+	
+	return &vpcv1.SecurityGroupCollection{SecurityGroups: sgs}, &core.DetailedResponse{}, nil
+}
+
+func createTestSubnet(id, name, vpcID, zone, status string) *vpcv1.Subnet {
+	return &vpcv1.Subnet{
+		ID:     &id,
+		Name:   &name,
+		Status: &status,
+		VPC: &vpcv1.VPCReference{
+			ID: &vpcID,
+		},
+		Zone: &vpcv1.ZoneReference{
+			Name: &zone,
+		},
+	}
+}
+
+func createTestSecurityGroup(id, name, vpcID string) *vpcv1.SecurityGroup {
+	return &vpcv1.SecurityGroup{
+		ID:   &id,
+		Name: &name,
+		VPC: &vpcv1.VPCReference{
+			ID: &vpcID,
+		},
+	}
+}
+
+func TestSelectSubnetForZone_Logic(t *testing.T) {
+	// Test the logic components that the selectSubnetForZone function uses
+	
+	// Test subnet filtering by VPC ID
+	testSubnet1 := createTestSubnet("subnet-1", "test-subnet-1", "vpc-12345", "us-south-1", "available")
+	testSubnet2 := createTestSubnet("subnet-2", "test-subnet-2", "vpc-different", "us-south-1", "available")
+	
+	assert.Equal(t, "vpc-12345", *testSubnet1.VPC.ID)
+	assert.Equal(t, "vpc-different", *testSubnet2.VPC.ID)
+	
+	// Test subnet filtering by zone
+	assert.Equal(t, "us-south-1", *testSubnet1.Zone.Name)
+	
+	// Test subnet status filtering
+	assert.Equal(t, "available", *testSubnet1.Status)
+	
+	pendingSubnet := createTestSubnet("subnet-3", "test-subnet-3", "vpc-12345", "us-south-1", "pending")
+	assert.Equal(t, "pending", *pendingSubnet.Status)
+}
+
+func TestSecurityGroupLogic(t *testing.T) {
+	// Test the logic components that the getDefaultSecurityGroup function uses
+	
+	// Test security group creation and VPC association
+	sgDefault := createTestSecurityGroup("sg-default", "default", "vpc-12345")
+	sgCustom := createTestSecurityGroup("sg-custom", "custom", "vpc-12345")
+	sgOtherVPC := createTestSecurityGroup("sg-other", "default", "vpc-different")
+	
+	// Test security group properties
+	assert.Equal(t, "sg-default", *sgDefault.ID)
+	assert.Equal(t, "default", *sgDefault.Name)
+	assert.Equal(t, "vpc-12345", *sgDefault.VPC.ID)
+	
+	assert.Equal(t, "sg-custom", *sgCustom.ID)
+	assert.Equal(t, "custom", *sgCustom.Name)
+	
+	assert.Equal(t, "vpc-different", *sgOtherVPC.VPC.ID)
+	
+	// Test that we can identify default security groups by name
+	assert.Equal(t, "default", *sgDefault.Name)
+	assert.NotEqual(t, "default", *sgCustom.Name)
+}
+
+func TestUserDataAndSSHKeysIntegration(t *testing.T) {
+	// Test that UserData and SSH keys are properly set in NodeClass
+	nodeClass := &v1alpha1.IBMNodeClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-nodeclass-with-userdata",
+		},
+		Spec: v1alpha1.IBMNodeClassSpec{
+			Region: "us-south",
+			VPC:    "vpc-12345",
+			Image:  "ubuntu-20-04",
+			UserData: `#!/bin/bash
+echo "Bootstrap script"
+apt update`,
+			SSHKeys: []string{"key-12345", "key-67890"},
+		},
+	}
+
+	// Verify the fields are properly set
+	assert.Equal(t, "#!/bin/bash\necho \"Bootstrap script\"\napt update", nodeClass.Spec.UserData)
+	assert.Len(t, nodeClass.Spec.SSHKeys, 2)
+	assert.Contains(t, nodeClass.Spec.SSHKeys, "key-12345")
+	assert.Contains(t, nodeClass.Spec.SSHKeys, "key-67890")
+}

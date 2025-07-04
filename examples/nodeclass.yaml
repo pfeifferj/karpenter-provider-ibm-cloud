@@ -7,12 +7,5 @@ spec:
   vpc: "r006-a8efb117-fd5e-4f63-ae16-4fb9faafa4ff"
   zone: us-south-1
   subnet: "0717-197e06f4-b500-426c-bc0f-900b215f996c"
-  instanceRequirements:
-    architecture: amd64
-    minimumCPU: 2
-    minimumMemory: 4
-  placementStrategy:
-    zoneBalance: Balanced
-    subnetSelection:
-      minimumAvailableIPs: 10
   image: ubuntu-24-04-amd64
+  instanceProfile: bx2-4x16  # Required field for instance creation

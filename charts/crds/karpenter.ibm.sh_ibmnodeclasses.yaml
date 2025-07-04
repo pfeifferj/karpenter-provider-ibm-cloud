@@ -41,16 +41,20 @@ spec:
             properties:
               image:
                 description: Image is the ID of the image to use for nodes
+                minLength: 1
                 type: string
               instanceProfile:
                 description: |-
                   InstanceProfile is the name of the instance profile to use
                   If not specified, instance types will be automatically selected based on requirements
+                  Either InstanceProfile or InstanceRequirements must be specified
+                minLength: 1
                 type: string
               instanceRequirements:
                 description: |-
                   InstanceRequirements defines requirements for automatic instance type selection
                   Only used when InstanceProfile is not specified
+                  Either InstanceProfile or InstanceRequirements must be specified
                 properties:
                   architecture:
                     description: |-
@@ -119,6 +123,7 @@ spec:
                 type: string
               region:
                 description: Region is the IBM Cloud region where nodes will be created
+                minLength: 1
                 type: string
               resourceGroup:
                 description: ResourceGroup is the ID of the resource group for the
@@ -151,6 +156,7 @@ spec:
                 type: string
               vpc:
                 description: VPC is the ID of the VPC where nodes will be created
+                minLength: 1
                 type: string
               zone:
                 description: |-
@@ -162,6 +168,9 @@ spec:
             - region
             - vpc
             type: object
+            x-kubernetes-validations:
+            - message: either instanceProfile or instanceRequirements must be specified
+              rule: has(self.instanceProfile) || has(self.instanceRequirements)
           status:
             description: Status defines the observed state of IBMNodeClass
             properties:

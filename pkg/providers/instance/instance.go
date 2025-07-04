@@ -30,6 +30,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/image"
 )
 
 type IBMCloudInstanceProvider struct {
@@ -99,14 +100,24 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 		Name: &[]string{fmt.Sprintf("%s-eth0", nodeClaim.Name)}[0],
 	}
 
-	// Set subnet if specified in NodeClass
+	// Set subnet - either from NodeClass or auto-select from VPC
+	var subnetID string
 	if nodeClass.Spec.Subnet != "" {
-		primaryNetworkInterface.Subnet = &vpcv1.SubnetIdentity{
-			ID: &nodeClass.Spec.Subnet,
+		subnetID = nodeClass.Spec.Subnet
+	} else {
+		// Auto-select subnet from VPC in the specified zone
+		subnet, subnetErr := p.selectSubnetForZone(ctx, vpcClient, nodeClass.Spec.VPC, zone)
+		if subnetErr != nil {
+			return nil, fmt.Errorf("auto-selecting subnet for zone %s: %w", zone, subnetErr)
 		}
+		subnetID = *subnet.ID
+	}
+	
+	primaryNetworkInterface.Subnet = &vpcv1.SubnetIdentity{
+		ID: &subnetID,
 	}
 
-	// Add security groups if specified
+	// Add security groups - either from NodeClass or VPC default
 	if len(nodeClass.Spec.SecurityGroups) > 0 {
 		securityGroups := make([]vpcv1.SecurityGroupIdentityIntf, len(nodeClass.Spec.SecurityGroups))
 		for i, sgID := range nodeClass.Spec.SecurityGroups {
@@ -115,6 +126,22 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 			}
 		}
 		primaryNetworkInterface.SecurityGroups = securityGroups
+	} else {
+		// Use VPC default security group if none specified
+		defaultSG, sgErr := p.getDefaultSecurityGroup(ctx, vpcClient, nodeClass.Spec.VPC)
+		if sgErr != nil {
+			return nil, fmt.Errorf("getting default security group for VPC %s: %w", nodeClass.Spec.VPC, sgErr)
+		}
+		primaryNetworkInterface.SecurityGroups = []vpcv1.SecurityGroupIdentityIntf{
+			&vpcv1.SecurityGroupIdentity{ID: defaultSG.ID},
+		}
+	}
+
+	// Resolve image identifier to image ID
+	imageResolver := image.NewResolver(vpcClient, nodeClass.Spec.Region)
+	imageID, err := imageResolver.ResolveImage(ctx, nodeClass.Spec.Image)
+	if err != nil {
+		return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
 	}
 
 	// Create instance prototype with all required fields
@@ -130,9 +157,25 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 			ID: &nodeClass.Spec.VPC,
 		},
 		Image: &vpcv1.ImageIdentity{
-			ID: &nodeClass.Spec.Image,
+			ID: &imageID,
 		},
 		PrimaryNetworkInterface: primaryNetworkInterface,
+	}
+
+	// Add UserData if specified
+	if nodeClass.Spec.UserData != "" {
+		instancePrototype.UserData = &nodeClass.Spec.UserData
+	}
+
+	// Add SSH keys if specified
+	if len(nodeClass.Spec.SSHKeys) > 0 {
+		keys := make([]vpcv1.KeyIdentityIntf, len(nodeClass.Spec.SSHKeys))
+		for i, keyID := range nodeClass.Spec.SSHKeys {
+			keys[i] = &vpcv1.KeyIdentity{
+				ID: &keyID,
+			}
+		}
+		instancePrototype.Keys = keys
 	}
 
 	// Add tags if specified - placeholder for future VPC SDK tag support
@@ -197,6 +240,68 @@ func (p *IBMCloudInstanceProvider) Delete(ctx context.Context, node *corev1.Node
 	}
 
 	return nil
+}
+
+// selectSubnetForZone selects an available subnet in the specified VPC and zone
+func (p *IBMCloudInstanceProvider) selectSubnetForZone(ctx context.Context, vpcClient *ibm.VPCClient, vpcID, zone string) (*vpcv1.Subnet, error) {
+	// List subnets in the VPC
+	options := &vpcv1.ListSubnetsOptions{
+		ResourceGroupID: nil, // Get subnets from all resource groups
+	}
+
+	subnets, _, err := vpcClient.ListSubnetsWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("listing subnets: %w", err)
+	}
+
+	// Filter subnets by VPC and zone
+	var availableSubnets []vpcv1.Subnet
+	for _, subnet := range subnets.Subnets {
+		// Check if subnet belongs to the correct VPC
+		if subnet.VPC != nil && subnet.VPC.ID != nil && *subnet.VPC.ID == vpcID {
+			// Check if subnet is in the correct zone
+			if subnet.Zone != nil && subnet.Zone.Name != nil && *subnet.Zone.Name == zone {
+				// Check if subnet is available (status is available)
+				if subnet.Status != nil && *subnet.Status == "available" {
+					availableSubnets = append(availableSubnets, subnet)
+				}
+			}
+		}
+	}
+
+	if len(availableSubnets) == 0 {
+		return nil, fmt.Errorf("no available subnets found in VPC %s zone %s", vpcID, zone)
+	}
+
+	// Return the first available subnet (could implement more sophisticated selection)
+	return &availableSubnets[0], nil
+}
+
+// getDefaultSecurityGroup gets the default security group for a VPC
+func (p *IBMCloudInstanceProvider) getDefaultSecurityGroup(ctx context.Context, vpcClient *ibm.VPCClient, vpcID string) (*vpcv1.SecurityGroup, error) {
+	// List security groups for the VPC
+	options := &vpcv1.ListSecurityGroupsOptions{
+		VPCID: &vpcID,
+	}
+
+	securityGroups, _, err := vpcClient.ListSecurityGroupsWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("listing security groups: %w", err)
+	}
+
+	// Find the default security group
+	for _, sg := range securityGroups.SecurityGroups {
+		if sg.Name != nil && *sg.Name == "default" {
+			return &sg, nil
+		}
+	}
+
+	// If no default found, return the first available security group
+	if len(securityGroups.SecurityGroups) > 0 {
+		return &securityGroups.SecurityGroups[0], nil
+	}
+
+	return nil, fmt.Errorf("no security groups found for VPC %s", vpcID)
 }
 
 func (p *IBMCloudInstanceProvider) GetInstance(ctx context.Context, node *corev1.Node) (*Instance, error) {

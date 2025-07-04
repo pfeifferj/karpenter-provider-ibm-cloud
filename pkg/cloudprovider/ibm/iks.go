@@ -115,6 +115,21 @@ func (c *IKSClient) GetWorkerDetails(ctx context.Context, clusterID, workerID st
 
 	// Check for API errors
 	if resp.StatusCode != http.StatusOK {
+		// Parse error response to get more details
+		var errorResp struct {
+			Code        string `json:"code"`
+			Description string `json:"description"`
+			Type        string `json:"type"`
+		}
+		if err := json.Unmarshal(body, &errorResp); err == nil {
+			// Handle specific error codes gracefully
+			switch errorResp.Code {
+			case "E3917": // Cluster provider not permitted for given operation
+				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, errorResp.Description)
+			default:
+				return nil, fmt.Errorf("IKS API error (code: %s): %s", errorResp.Code, errorResp.Description)
+			}
+		}
 		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
