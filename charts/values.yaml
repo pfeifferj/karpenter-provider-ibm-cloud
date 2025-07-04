@@ -85,6 +85,14 @@ credentials:
   # Required: vpc api key for vpc operations
   vpc_api_key: ""
 
+# IKS cluster configuration (for IKS integration)
+# Optional: IKS cluster ID for IKS API integration
+iksClusterID: ""
+# Optional: cluster name for identification
+clusterName: ""
+# Bootstrap mode: auto, cloud-init, or iks-api
+bootstrapMode: "auto"
+
 # Controller configuration
 controller:
   metrics:

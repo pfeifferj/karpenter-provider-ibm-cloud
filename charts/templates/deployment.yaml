@@ -68,6 +68,16 @@ spec:
               value: {{ .Values.controllerVerbosity | default "4" | quote }}
             - name: CONTROLLER_MANAGER_LOG_LEVEL
               value: {{ .Values.controllerLogLevel | default "debug" | quote }}
+            {{- if .Values.iksClusterID }}
+            - name: IKS_CLUSTER_ID
+              value: {{ .Values.iksClusterID | quote }}
+            {{- end }}
+            {{- if .Values.clusterName }}
+            - name: CLUSTER_NAME
+              value: {{ .Values.clusterName | quote }}
+            {{- end }}
+            - name: BOOTSTRAP_MODE
+              value: {{ .Values.bootstrapMode | default "auto" | quote }}
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metrics.port }}
