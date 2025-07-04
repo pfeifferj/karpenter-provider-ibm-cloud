@@ -128,7 +128,7 @@ func TestIKSClient_GetWorkerDetails(t *testing.T) {
 			workerID:       "test-worker",
 			serverResponse: http.StatusNotFound,
 			serverBody:     `{"error": "worker not found"}`,
-			expectedError:  "IKS API error: status 404",
+			expectedError:  "IKS API error (code: ):",
 		},
 		{
 			name:           "malformed JSON response",

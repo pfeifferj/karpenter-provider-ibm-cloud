@@ -8,6 +8,7 @@ require (
 	github.com/IBM/vpc-go-sdk v0.59.0
 	github.com/awslabs/operatorpkg v0.0.0-20250616190804-f562c7d91bac
 	github.com/go-logr/logr v1.4.3
+	github.com/go-openapi/strfmt v0.23.0
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis v0.0.0-20241211100634-c281d834aa94
 	github.com/prometheus/client_golang v1.22.0
@@ -39,7 +40,6 @@ require (
 	github.com/go-openapi/errors v0.22.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
-	github.com/go-openapi/strfmt v0.23.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect

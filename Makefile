@@ -84,3 +84,15 @@ vendor: ## update modules and populate local vendor directory
 .PHONY: clean
 clean: ## Clean build artifacts
 	rm -rf $(BUILD_DIR)
+
+.PHONY: license
+license: ## Add license headers to all Go files
+	hack/boilerplate.sh
+
+.PHONY: verify-license
+verify-license: ## Verify all Go files have license headers
+	hack/verify-boilerplate.sh
+
+.PHONY: pre-commit
+pre-commit: ## Run pre-commit checks (license headers + linting)
+	hack/pre-commit.sh
