@@ -159,6 +159,26 @@ type IBMNodeClassSpec struct {
 	// Tags to apply to the instances
 	// +optional
 	Tags map[string]string `json:"tags,omitempty"`
+
+	// BootstrapMode determines how nodes should be bootstrapped to join the cluster
+	// Valid values are:
+	// - "cloud-init" - Use cloud-init scripts to bootstrap nodes (default)
+	// - "iks-api" - Use IKS Worker Pool API to add nodes to cluster
+	// - "auto" - Automatically select the best method based on cluster type
+	// +optional
+	// +kubebuilder:validation:Enum=cloud-init;iks-api;auto
+	// +kubebuilder:default=auto
+	BootstrapMode *string `json:"bootstrapMode,omitempty"`
+
+	// IKSClusterID is the IKS cluster ID for API-based bootstrapping
+	// Required when BootstrapMode is "iks-api"
+	// +optional
+	IKSClusterID string `json:"iksClusterID,omitempty"`
+
+	// IKSWorkerPoolID is the worker pool ID to add nodes to
+	// Used with IKS API bootstrapping mode
+	// +optional
+	IKSWorkerPoolID string `json:"iksWorkerPoolID,omitempty"`
 }
 
 // IBMNodeClassStatus defines the observed state of IBMNodeClass
