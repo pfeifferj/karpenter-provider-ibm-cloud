@@ -224,45 +224,20 @@ After changes pass tests and are merged to main:
 
 These CI workflows ensure chart quality through pre-merge validation and maintain the Helm repository for easy installation.
 
-## 📚 Documentation
+## Documentation
 
 ### Quick Start
-- **[Getting Started Guide](./docs/getting-started.md)** - Get up and running in under 10 minutes
-- **[Installation Guide](./docs/installation.md)** - Detailed installation instructions
-- **[Configuration Reference](./docs/configuration.md)** - Complete configuration options
+- **[Getting Started Guide](./docs/getting-started.md)** 
 
-### Core Features
-- **[Bootstrap Methods](./docs/bootstrap-methods.md)** - Node bootstrap configuration (cloud-init, IKS API, auto)
-- **[Supported CNI/CRI](./docs/supported-cni-cri.md)** - Container networking and runtime support
-- **[Instance Management](./docs/instance-management.md)** - Instance provisioning and lifecycle
-- **[Networking](./docs/networking.md)** - VPC, subnets, and security groups
-
-### Advanced Topics
-- **[Limitations](./docs/limitations.md)** - Current limitations and workarounds
-- **[Troubleshooting](./docs/troubleshooting.md)** - Common issues and solutions
-- **[Performance Tuning](./docs/performance.md)** - Optimization recommendations
-- **[Feature Requests](./docs/feature-requests.md)** - How to request new features
-
-### Reference
-- **[API Reference](./docs/api-reference.md)** - Complete API documentation
-- **[Examples](./examples/)** - Configuration examples
-- **[Metrics](./docs/metrics.md)** - Available metrics and monitoring
-
-## 🆘 Getting Help
+## Getting Help
 
 ### Missing CNI/CRI Support?
 We support **Calico**, **Cilium**, and **Flannel** CNI plugins, plus **containerd** and **CRI-O** container runtimes. 
 
 **Need support for additional CNI plugins or container runtimes?** Please:
-1. [Open a GitHub Issue](https://github.com/pfeifferj/karpenter-provider-ibm-cloud/issues/new?template=feature_request.md) using our feature request template
+1. [Open a GitHub Issue](https://github.com/pfeifferj/karpenter-provider-ibm-cloud/issues/new)
 2. Include your use case and IBM Cloud context
 3. Check our [Supported CNI/CRI documentation](./docs/supported-cni-cri.md) for current status
-
-### Other Issues
-- **📖 Documentation**: [Complete docs](./docs/) with guides and references
-- **🐛 Bug Reports**: [GitHub Issues](https://github.com/pfeifferj/karpenter-provider-ibm-cloud/issues)
-- **💬 Questions**: [GitHub Discussions](https://github.com/pfeifferj/karpenter-provider-ibm-cloud/discussions)
-- **🚀 Feature Requests**: [Feature Request Guide](./docs/feature-requests.md)
 
 ## Contributing
 
