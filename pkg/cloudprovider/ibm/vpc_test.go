@@ -217,8 +217,20 @@ func TestCreateInstance(t *testing.T) {
 				client = &VPCClient{}
 			}
 
-			prototype := &vpcv1.InstancePrototype{
+			prototype := &vpcv1.InstancePrototypeInstanceByImage{
 				Name: &instanceName,
+				Image: &vpcv1.ImageIdentity{
+					ID: &[]string{"test-image-id"}[0],
+				},
+				Zone: &vpcv1.ZoneIdentity{
+					Name: &[]string{"us-south-1"}[0],
+				},
+				Profile: &vpcv1.InstanceProfileIdentity{
+					Name: &[]string{"bx2-2x8"}[0],
+				},
+				VPC: &vpcv1.VPCIdentity{
+					ID: &[]string{"test-vpc-id"}[0],
+				},
 			}
 
 			instance, err := client.CreateInstance(ctx, prototype)
@@ -948,7 +960,7 @@ func TestVPCClientErrorHandling(t *testing.T) {
 				return &VPCClient{}
 			},
 			operation: func(c *VPCClient) error {
-				_, err := c.CreateInstance(ctx, &vpcv1.InstancePrototype{})
+				_, err := c.CreateInstance(ctx, &vpcv1.InstancePrototypeInstanceByImage{})
 				return err
 			},
 			wantErr:     true,
