@@ -2,6 +2,13 @@ name: Test Helm Chart
 
 on:
   pull_request:
+    paths:
+      - 'charts/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
   workflow_dispatch:
 
 jobs:
