@@ -412,3 +412,143 @@ func TestClusterConfigDiscovery(t *testing.T) {
 	t.Logf("Discovered cluster config: DNS=%s, CIDR=%s, CNI=%s, IPFamily=%s",
 		config.DNSClusterIP, config.ClusterCIDR, config.CNIPlugin, config.IPFamily)
 }
+
+func TestBootstrapProvider_IKSModeDetection_Fix(t *testing.T) {
+	ctx := context.Background()
+	
+	// Create fake Kubernetes client with cluster resources
+	fakeClient := createFakeKubernetesClient()
+	
+	// Create mock IBM client
+	mockClient := &ibm.Client{}
+	
+	// Create bootstrap provider
+	provider := NewProvider(mockClient, fakeClient)
+	
+	tests := []struct {
+		name               string
+		nodeClassMode      *string
+		nodeClassClusterID string
+		envBootstrapMode   string
+		envIKSClusterID    string
+		expectedMode       BootstrapMode
+		expectIKSManaged   bool
+		expectedClusterID  string
+	}{
+		{
+			name:               "NodeClass explicit IKS mode with cluster ID",
+			nodeClassMode:      stringPtr("iks-api"),
+			nodeClassClusterID: "d1jnl8od0fjpn1553n3g",
+			envBootstrapMode:   "",
+			envIKSClusterID:    "",
+			expectedMode:       BootstrapModeIKSAPI,
+			expectIKSManaged:   true,
+			expectedClusterID:  "d1jnl8od0fjpn1553n3g",
+		},
+		{
+			name:               "Environment IKS mode with cluster ID",
+			nodeClassMode:      nil,
+			nodeClassClusterID: "",
+			envBootstrapMode:   "iks-api",
+			envIKSClusterID:    "d1jnl8od0fjpn1553n3g",
+			expectedMode:       BootstrapModeIKSAPI,
+			expectIKSManaged:   true,
+			expectedClusterID:  "d1jnl8od0fjpn1553n3g",
+		},
+		{
+			name:               "Auto mode with NodeClass cluster ID",
+			nodeClassMode:      nil,
+			nodeClassClusterID: "d1jnl8od0fjpn1553n3g",
+			envBootstrapMode:   "",
+			envIKSClusterID:    "",
+			expectedMode:       BootstrapModeAuto,
+			expectIKSManaged:   true,
+			expectedClusterID:  "d1jnl8od0fjpn1553n3g",
+		},
+		{
+			name:               "Auto mode with environment cluster ID",
+			nodeClassMode:      nil,
+			nodeClassClusterID: "",
+			envBootstrapMode:   "",
+			envIKSClusterID:    "d1jnl8od0fjpn1553n3g",
+			expectedMode:       BootstrapModeAuto,
+			expectIKSManaged:   true,
+			expectedClusterID:  "d1jnl8od0fjpn1553n3g",
+		},
+		{
+			name:               "NodeClass overrides environment",
+			nodeClassMode:      nil,
+			nodeClassClusterID: "nodeclass-cluster-id",
+			envBootstrapMode:   "",
+			envIKSClusterID:    "env-cluster-id",
+			expectedMode:       BootstrapModeAuto,
+			expectIKSManaged:   true,
+			expectedClusterID:  "nodeclass-cluster-id",
+		},
+		{
+			name:               "No IKS configuration",
+			nodeClassMode:      nil,
+			nodeClassClusterID: "",
+			envBootstrapMode:   "",
+			envIKSClusterID:    "",
+			expectedMode:       BootstrapModeAuto,
+			expectIKSManaged:   false,
+			expectedClusterID:  "",
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clean environment
+			_ = os.Unsetenv("BOOTSTRAP_MODE")
+			_ = os.Unsetenv("IKS_CLUSTER_ID")
+			
+			// Set environment variables
+			if tt.envBootstrapMode != "" {
+				_ = os.Setenv("BOOTSTRAP_MODE", tt.envBootstrapMode)
+			}
+			if tt.envIKSClusterID != "" {
+				_ = os.Setenv("IKS_CLUSTER_ID", tt.envIKSClusterID)
+			}
+			
+			// Create NodeClass
+			nodeClass := &v1alpha1.IBMNodeClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclass",
+				},
+				Spec: v1alpha1.IBMNodeClassSpec{
+					Region: "us-south",
+					VPC:    "test-vpc",
+					Image:  "test-image",
+				},
+			}
+			
+			if tt.nodeClassMode != nil {
+				nodeClass.Spec.BootstrapMode = tt.nodeClassMode
+			}
+			if tt.nodeClassClusterID != "" {
+				nodeClass.Spec.IKSClusterID = tt.nodeClassClusterID
+			}
+			
+			// Test the fix: create cluster info and determine bootstrap mode
+			clusterInfo, err := provider.getClusterInfo(ctx)
+			require.NoError(t, err)
+			
+			// Test the fixed bootstrap mode detection logic
+			actualMode := provider.determineBootstrapMode(nodeClass, clusterInfo)
+			
+			// Verify results
+			assert.Equal(t, tt.expectedMode, actualMode)
+			assert.Equal(t, tt.expectIKSManaged, clusterInfo.IsIKSManaged)
+			assert.Equal(t, tt.expectedClusterID, clusterInfo.IKSClusterID)
+			
+			// Clean up environment
+			_ = os.Unsetenv("BOOTSTRAP_MODE")
+			_ = os.Unsetenv("IKS_CLUSTER_ID")
+		})
+	}
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
