@@ -54,8 +54,8 @@ func (p *IBMBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 		return "", fmt.Errorf("discovering cluster config: %w", err)
 	}
 
-	// Get cluster information
-	clusterInfo, err := p.getClusterInfo(ctx)
+	// Get cluster information with NodeClass context
+	clusterInfo, err := p.getClusterInfoWithNodeClass(ctx, nodeClass)
 	if err != nil {
 		return "", fmt.Errorf("getting cluster info: %w", err)
 	}
@@ -130,6 +130,27 @@ func (p *IBMBootstrapProvider) determineBootstrapMode(nodeClass *v1alpha1.IBMNod
 
 // getClusterInfo retrieves cluster information
 func (p *IBMBootstrapProvider) getClusterInfo(ctx context.Context) (*ClusterInfo, error) {
+	// Check if this is an IKS managed cluster and try to get kubeconfig from IKS API first
+	if p.isIKSManaged() {
+		clusterID := p.getIKSClusterID()
+		if clusterID != "" {
+			if kubeconfig, err := p.getKubeconfigFromIKS(ctx, clusterID); err == nil {
+				// Successfully retrieved kubeconfig from IKS API
+				endpoint, caData, err := p.parseKubeconfig(kubeconfig)
+				if err != nil {
+					return nil, fmt.Errorf("parsing kubeconfig from IKS API: %w", err)
+				}
+				return &ClusterInfo{
+					Endpoint:     endpoint,
+					CAData:       caData,
+					ClusterName:  p.getClusterName(),
+					IsIKSManaged: p.isIKSManaged(),
+				}, nil
+			}
+			// If IKS API fails, continue with fallback methods
+		}
+	}
+
 	// Get cluster endpoint from kube-system configmap or service
 	config, err := p.k8sClient.CoreV1().ConfigMaps("kube-system").Get(ctx, "cluster-info", metav1.GetOptions{})
 	if err != nil {
@@ -267,4 +288,66 @@ func (p *IBMBootstrapProvider) parseKubeconfig(kubeconfig string) (string, []byt
 	}
 	
 	return endpoint, caData, nil
+}
+
+// getKubeconfigFromIKS retrieves kubeconfig from IKS API
+func (p *IBMBootstrapProvider) getKubeconfigFromIKS(ctx context.Context, clusterID string) (string, error) {
+	if p.client == nil {
+		return "", fmt.Errorf("IBM client not initialized")
+	}
+	
+	iksClient := p.client.GetIKSClient()
+	if iksClient == nil {
+		return "", fmt.Errorf("IKS client not available")
+	}
+	
+	return iksClient.GetClusterConfig(ctx, clusterID)
+}
+
+// getIKSClusterID retrieves the IKS cluster ID from environment or context
+func (p *IBMBootstrapProvider) getIKSClusterID() string {
+	// Check environment variable first
+	if clusterID := os.Getenv("IKS_CLUSTER_ID"); clusterID != "" {
+		return clusterID
+	}
+	
+	// Could also check from cluster-info ConfigMap data if available
+	// For now, just return empty string if not found
+	return ""
+}
+
+// getClusterInfoWithNodeClass retrieves cluster information with access to NodeClass
+func (p *IBMBootstrapProvider) getClusterInfoWithNodeClass(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass) (*ClusterInfo, error) {
+	// Check if this is an IKS managed cluster and try to get kubeconfig from IKS API first
+	isIKSManaged := p.isIKSManaged() || nodeClass.Spec.IKSClusterID != ""
+	if isIKSManaged {
+		clusterID := nodeClass.Spec.IKSClusterID
+		if clusterID == "" {
+			clusterID = os.Getenv("IKS_CLUSTER_ID")
+		}
+		
+		if clusterID != "" {
+			kubeconfig, err := p.getKubeconfigFromIKS(ctx, clusterID)
+			if err == nil && kubeconfig != "" {
+				// Successfully retrieved kubeconfig from IKS API
+				endpoint, caData, parseErr := p.parseKubeconfig(kubeconfig)
+				if parseErr != nil {
+					return nil, fmt.Errorf("parsing kubeconfig from IKS API: %w", parseErr)
+				}
+				return &ClusterInfo{
+					Endpoint:     endpoint,
+					CAData:       caData,
+					ClusterName:  p.getClusterName(),
+					IsIKSManaged: true,
+					IKSClusterID: clusterID,
+				}, nil
+			}
+			// If IKS API fails, log the error and continue with fallback methods
+			logger := log.FromContext(ctx)
+			logger.Info("Failed to get kubeconfig from IKS API, falling back to ConfigMap", "error", err)
+		}
+	}
+
+	// Fall back to the standard getClusterInfo method
+	return p.getClusterInfo(ctx)
 }
