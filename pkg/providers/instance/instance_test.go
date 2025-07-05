@@ -539,6 +539,7 @@ func TestCreateKubernetesClient(t *testing.T) {
 }
 
 // TestBootstrapProviderInitialization tests the bootstrap provider initialization
+// Note: Detailed bootstrap provider functionality is tested in the bootstrap package
 func TestBootstrapProviderInitialization(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -546,22 +547,6 @@ func TestBootstrapProviderInitialization(t *testing.T) {
 		expectError  bool
 		errorMsg     string
 	}{
-		{
-			name: "successful initialization with valid client",
-			setupClient: func() *IBMCloudInstanceProvider {
-				// Create a fake controller-runtime client
-				scheme := runtime.NewScheme()
-				_ = v1alpha1.SchemeBuilder.AddToScheme(scheme)
-				fakeCtrlClient := fakeClient.NewClientBuilder().WithScheme(scheme).Build()
-				
-				return &IBMCloudInstanceProvider{
-					client:     nil, // IBM client can be nil for this test
-					kubeClient: fakeCtrlClient,
-				}
-			},
-			expectError: true, // Will still fail due to REST config, but shows progress
-			errorMsg:    "creating kubernetes client",
-		},
 		{
 			name: "missing controller-runtime client",
 			setupClient: func() *IBMCloudInstanceProvider {
@@ -571,21 +556,6 @@ func TestBootstrapProviderInitialization(t *testing.T) {
 				}
 			},
 			expectError: true,
-			errorMsg:    "controller-runtime client not set",
-		},
-		{
-			name: "bootstrap provider pre-initialized check",
-			setupClient: func() *IBMCloudInstanceProvider {
-				// Create a provider with a pre-set bootstrap provider to test the nil check
-				provider := &IBMCloudInstanceProvider{
-					client:     nil,
-					kubeClient: nil,
-				}
-				// Simulate that bootstrap provider is already set (even if nil, it's been initialized)
-				// The actual implementation checks if bootstrapProvider != nil
-				return provider
-			},
-			expectError: true, // Will still fail due to missing kubeClient, but tests the flow
 			errorMsg:    "controller-runtime client not set",
 		},
 	}
