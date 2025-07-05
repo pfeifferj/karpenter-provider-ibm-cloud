@@ -131,4 +131,7 @@ type ClusterInfo struct {
 	
 	// IsIKSManaged indicates if this is an IKS-managed cluster
 	IsIKSManaged bool
+	
+	// IKSWorkerPoolID is the IKS worker pool ID (if applicable)
+	IKSWorkerPoolID string
 }
