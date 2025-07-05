@@ -552,3 +552,224 @@ func TestBootstrapProvider_IKSModeDetection_Fix(t *testing.T) {
 func stringPtr(s string) *string {
 	return &s
 }
+
+func TestIBMBootstrapProvider_getKubeconfigFromIKS(t *testing.T) {
+	tests := []struct {
+		name          string
+		client        *ibm.Client
+		expectedError string
+	}{
+		{
+			name:          "nil client",
+			client:        nil,
+			expectedError: "IBM client not initialized",
+		},
+		{
+			name: "client with nil IKS client components",
+			client: &ibm.Client{},
+			expectedError: "client not properly initialized",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &IBMBootstrapProvider{
+				client: tt.client,
+			}
+
+			ctx := context.Background()
+			_, err := provider.getKubeconfigFromIKS(ctx, "test-cluster-id")
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedError)
+		})
+	}
+}
+
+func TestIBMBootstrapProvider_getIKSClusterID(t *testing.T) {
+	tests := []struct {
+		name        string
+		envValue    string
+		expectedID  string
+	}{
+		{
+			name:        "cluster ID from environment",
+			envValue:    "cluster-from-env",
+			expectedID:  "cluster-from-env",
+		},
+		{
+			name:        "no cluster ID set",
+			envValue:    "",
+			expectedID:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clean up environment
+			_ = os.Unsetenv("IKS_CLUSTER_ID")
+			
+			if tt.envValue != "" {
+				_ = os.Setenv("IKS_CLUSTER_ID", tt.envValue)
+			}
+
+			provider := &IBMBootstrapProvider{}
+			clusterID := provider.getIKSClusterID()
+
+			assert.Equal(t, tt.expectedID, clusterID)
+
+			// Clean up
+			_ = os.Unsetenv("IKS_CLUSTER_ID")
+		})
+	}
+}
+
+func TestIBMBootstrapProvider_getClusterInfoWithNodeClass(t *testing.T) {
+	tests := []struct {
+		name              string
+		nodeClass         *v1alpha1.IBMNodeClass
+		envClusterID      string
+		expectIKSAttempt  bool
+		expectFallback    bool
+	}{
+		{
+			name: "IKS mode with NodeClass cluster ID",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				Spec: v1alpha1.IBMNodeClassSpec{
+					IKSClusterID: "cluster-from-nodeclass",
+				},
+			},
+			expectIKSAttempt: true,
+			expectFallback:   true, // Since mock client will fail
+		},
+		{
+			name: "IKS mode with environment cluster ID",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				Spec: v1alpha1.IBMNodeClassSpec{},
+			},
+			envClusterID:     "cluster-from-env",
+			expectIKSAttempt: true,
+			expectFallback:   true,
+		},
+		{
+			name: "no IKS configuration",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				Spec: v1alpha1.IBMNodeClassSpec{},
+			},
+			expectIKSAttempt: false,
+			expectFallback:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clean up environment
+			_ = os.Unsetenv("IKS_CLUSTER_ID")
+			
+			if tt.envClusterID != "" {
+				_ = os.Setenv("IKS_CLUSTER_ID", tt.envClusterID)
+			}
+
+			// Create fake Kubernetes client
+			fakeClient := createFakeKubernetesClient()
+			
+			// Create mock IBM client (will fail IKS calls gracefully)
+			mockClient := &ibm.Client{}
+			
+			provider := NewProvider(mockClient, fakeClient)
+
+			ctx := context.Background()
+			clusterInfo, err := provider.getClusterInfoWithNodeClass(ctx, tt.nodeClass)
+
+			// Should always succeed due to fallback
+			require.NoError(t, err)
+			require.NotNil(t, clusterInfo)
+
+			// Verify basic cluster info structure
+			assert.NotEmpty(t, clusterInfo.Endpoint)
+			assert.NotEmpty(t, clusterInfo.ClusterName)
+
+			// Clean up
+			_ = os.Unsetenv("IKS_CLUSTER_ID")
+		})
+	}
+}
+
+func TestIBMBootstrapProvider_parseKubeconfig(t *testing.T) {
+	tests := []struct {
+		name          string
+		kubeconfig    string
+		expectedURL   string
+		expectCAData  bool
+		expectedError string
+	}{
+		{
+			name: "valid kubeconfig",
+			kubeconfig: `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://c111.us-south.containers.cloud.ibm.com:30409
+    certificate-authority-data: dGVzdC1jYS1kYXRh
+  name: test-cluster`,
+			expectedURL:  "https://c111.us-south.containers.cloud.ibm.com:30409",
+			expectCAData: true,
+		},
+		{
+			name: "kubeconfig without CA data",
+			kubeconfig: `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://c111.us-south.containers.cloud.ibm.com:30409
+  name: test-cluster`,
+			expectedURL:  "https://c111.us-south.containers.cloud.ibm.com:30409",
+			expectCAData: false,
+		},
+		{
+			name: "kubeconfig without server",
+			kubeconfig: `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority-data: dGVzdC1jYS1kYXRh
+  name: test-cluster`,
+			expectedError: "endpoint not found in kubeconfig",
+		},
+		{
+			name: "invalid base64 CA data",
+			kubeconfig: `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://c111.us-south.containers.cloud.ibm.com:30409
+    certificate-authority-data: invalid-base64!@#$
+  name: test-cluster`,
+			expectedError: "decoding CA data:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &IBMBootstrapProvider{}
+			
+			endpoint, caData, err := provider.parseKubeconfig(tt.kubeconfig)
+
+			if tt.expectedError != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedURL, endpoint)
+				
+				if tt.expectCAData {
+					assert.NotEmpty(t, caData)
+					// Verify it's valid base64 decoded data
+					assert.Equal(t, "test-ca-data", string(caData))
+				} else {
+					assert.Empty(t, caData)
+				}
+			}
+		})
+	}
+}

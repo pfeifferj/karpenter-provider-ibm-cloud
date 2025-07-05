@@ -477,3 +477,126 @@ func TestIKSClient_GetVPCInstanceIDFromWorker_CoverageGaps(t *testing.T) {
 func stringPtr(s string) *string {
 	return &s
 }
+
+func TestIKSClient_GetClusterConfig(t *testing.T) {
+	tests := []struct {
+		name           string
+		response       string
+		statusCode     int
+		expectedError  string
+		expectedConfig string
+	}{
+		{
+			name:       "successful config retrieval",
+			statusCode: 200,
+			response: `{
+				"config": "apiVersion: v1\nkind: Config\nclusters:\n- cluster:\n    server: https://c111.us-south.containers.cloud.ibm.com:30409\n    certificate-authority-data: LS0tLS1CRUdJTi...\n  name: test-cluster\ncontexts:\n- context:\n    cluster: test-cluster\n    user: test-user\n  name: test-context\ncurrent-context: test-context\nusers:\n- name: test-user\n  user:\n    token: test-token"
+			}`,
+			expectedConfig: "apiVersion: v1\nkind: Config\nclusters:\n- cluster:\n    server: https://c111.us-south.containers.cloud.ibm.com:30409\n    certificate-authority-data: LS0tLS1CRUdJTi...\n  name: test-cluster\ncontexts:\n- context:\n    cluster: test-cluster\n    user: test-user\n  name: test-context\ncurrent-context: test-context\nusers:\n- name: test-user\n  user:\n    token: test-token",
+		},
+		{
+			name:       "API error response",
+			statusCode: 403,
+			response: `{
+				"code": "E0403",
+				"description": "Access denied to cluster config",
+				"type": "Authentication"
+			}`,
+			expectedError: "IKS API error (code: E0403): Access denied to cluster config",
+		},
+		{
+			name:          "invalid JSON response",
+			statusCode:    200,
+			response:      `{invalid json`,
+			expectedError: "parsing response:",
+		},
+		{
+			name:       "empty config response",
+			statusCode: 200,
+			response: `{
+				"config": ""
+			}`,
+			expectedConfig: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test server
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/clusters/test-cluster-id/config", r.URL.Path)
+				assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(tt.response))
+			}))
+			defer server.Close()
+
+			// Create client with mock authenticator
+			client := &Client{
+				iamClient: &IAMClient{
+					Authenticator: &mockAuthenticator{
+						token: "test-token",
+					},
+				},
+			}
+
+			// Create IKS client with test server URL
+			iksClient := NewIKSClient(client)
+			iksClient.baseURL = server.URL
+			iksClient.httpClient = &http.Client{Timeout: 5 * time.Second}
+
+			// Test GetClusterConfig
+			ctx := context.Background()
+			config, err := iksClient.GetClusterConfig(ctx, "test-cluster-id")
+
+			if tt.expectedError != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedConfig, config)
+			}
+		})
+	}
+}
+
+func TestIKSClient_GetClusterConfig_ClientNotInitialized(t *testing.T) {
+	tests := []struct {
+		name          string
+		client        *Client
+		expectedError string
+	}{
+		{
+			name:          "nil client",
+			client:        nil,
+			expectedError: "client not properly initialized",
+		},
+		{
+			name: "nil IAM client",
+			client: &Client{
+				iamClient: nil,
+			},
+			expectedError: "client not properly initialized",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iksClient := &IKSClient{
+				client:  tt.client,
+				baseURL: "https://containers.cloud.ibm.com/global/v1",
+				httpClient: &http.Client{
+					Timeout: 30 * time.Second,
+				},
+			}
+
+			ctx := context.Background()
+			_, err := iksClient.GetClusterConfig(ctx, "test-cluster-id")
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedError)
+		})
+	}
+}

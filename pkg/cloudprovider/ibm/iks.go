@@ -195,3 +195,68 @@ func (c *IKSClient) GetVPCInstanceIDFromWorker(ctx context.Context, clusterID, w
 	return "", fmt.Errorf("VPC instance not found for worker %s (IP: %s, subnet: %s)", 
 		workerID, primaryInterface.IPAddress, primaryInterface.SubnetID)
 }
+
+// GetClusterConfig retrieves the kubeconfig for the specified cluster
+func (c *IKSClient) GetClusterConfig(ctx context.Context, clusterID string) (string, error) {
+	if c.client == nil || c.client.iamClient == nil {
+		return "", fmt.Errorf("client not properly initialized")
+	}
+	
+	// Get IAM token for authentication
+	token, err := c.client.iamClient.GetToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("getting IAM token: %w", err)
+	}
+
+	// Construct API URL for cluster config
+	url := fmt.Sprintf("%s/clusters/%s/config", c.baseURL, clusterID)
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Make request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("making request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	// Check for API errors
+	if resp.StatusCode != http.StatusOK {
+		// Parse error response to get more details
+		var errorResp struct {
+			Code        string `json:"code"`
+			Description string `json:"description"`
+			Type        string `json:"type"`
+		}
+		if err := json.Unmarshal(body, &errorResp); err == nil {
+			return "", fmt.Errorf("IKS API error (code: %s): %s", errorResp.Code, errorResp.Description)
+		}
+		return "", fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response - the API returns the kubeconfig as a string
+	var configResp struct {
+		Config string `json:"config"`
+	}
+	if err := json.Unmarshal(body, &configResp); err != nil {
+		return "", fmt.Errorf("parsing response: %w", err)
+	}
+
+	return configResp.Config, nil
+}
