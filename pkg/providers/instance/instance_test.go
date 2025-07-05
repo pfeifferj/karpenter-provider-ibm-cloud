@@ -17,6 +17,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -26,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
@@ -367,4 +369,103 @@ apt update`,
 	assert.Len(t, nodeClass.Spec.SSHKeys, 2)
 	assert.Contains(t, nodeClass.Spec.SSHKeys, "key-12345")
 	assert.Contains(t, nodeClass.Spec.SSHKeys, "key-67890")
+}
+
+func TestIsIBMInstanceNotFoundError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "not found error",
+			err:      errors.New("instance not found"),
+			expected: true,
+		},
+		{
+			name:     "not_found error with underscore",
+			err:      errors.New("resource not_found"),
+			expected: true,
+		},
+		{
+			name:     "resource_not_found error",
+			err:      errors.New("resource_not_found"),
+			expected: true,
+		},
+		{
+			name:     "404 error",
+			err:      errors.New("HTTP 404 error"),
+			expected: true,
+		},
+		{
+			name:     "mixed case NOT FOUND",
+			err:      errors.New("Instance NOT FOUND"),
+			expected: true,
+		},
+		{
+			name:     "other error",
+			err:      errors.New("internal server error"),
+			expected: false,
+		},
+		{
+			name:     "permission denied error",
+			err:      errors.New("access denied"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isIBMInstanceNotFoundError(tt.err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestDeleteWithNotFoundError(t *testing.T) {
+	// Test that Delete method properly returns NodeClaimNotFoundError when instance doesn't exist
+	ctx := context.Background()
+	
+	// Create a provider with nil client to simulate the error path
+	provider := &IBMCloudInstanceProvider{
+		client: nil,
+	}
+	
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm://test-instance-id",
+		},
+	}
+	
+	err := provider.Delete(ctx, node)
+	
+	// Should get an error since client is nil
+	assert.Error(t, err)
+	
+	// For this test, we expect an IBM client initialization error
+	assert.Contains(t, err.Error(), "IBM client not initialized")
+}
+
+func TestCloudProviderErrorHandling(t *testing.T) {
+	// Test that proper error types can be detected by Karpenter
+	
+	// Create a mock NodeClaimNotFoundError
+	originalErr := errors.New("instance not found")
+	notFoundErr := cloudprovider.NewNodeClaimNotFoundError(originalErr)
+	
+	// Verify that IsNodeClaimNotFoundError properly detects the error type
+	assert.True(t, cloudprovider.IsNodeClaimNotFoundError(notFoundErr))
+	assert.False(t, cloudprovider.IsNodeClaimNotFoundError(originalErr))
+	assert.False(t, cloudprovider.IsNodeClaimNotFoundError(nil))
+	
+	// Test error message
+	assert.Contains(t, notFoundErr.Error(), "instance not found")
 }

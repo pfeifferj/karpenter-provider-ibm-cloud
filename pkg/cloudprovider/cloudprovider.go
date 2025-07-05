@@ -301,6 +301,11 @@ func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 
 	if err := c.instanceProvider.Delete(ctx, node); err != nil {
+		// Return NodeClaimNotFoundError unchanged - this is expected during cleanup
+		if cloudprovider.IsNodeClaimNotFoundError(err) {
+			log.Info("Instance already deleted or not found")
+			return err
+		}
 		log.Error(err, "Failed to delete node")
 		return err
 	}
