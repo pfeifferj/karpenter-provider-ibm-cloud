@@ -5,9 +5,9 @@ entries:
       helm.sh/resource-policy: keep
     apiVersion: v2
     appVersion: 0.35.0
-    created: "2025-07-04T22:09:06.232584611Z"
+    created: "2025-07-05T09:53:48.157035061Z"
     description: A Helm chart for Karpenter's IBM Cloud Provider.
-    digest: bb8a46efbd1d2db51160a30bc87fce0277d44b12d1a404543851bd7ee7447b7c
+    digest: 976e23d51bf69e1a72d08a376cbccebb1757e9dd0965a02a55bdd63663e7df84
     home: https://karpenter.sh/
     icon: https://repository-images.githubusercontent.com/278480393/dab059c8-caa1-4b55-aaa7-3d30e47a5616
     keywords:
@@ -25,4 +25,4 @@ entries:
     urls:
     - https://pfeifferj.github.io/karpenter-provider-ibm-cloud/karpenter-ibm-0.35.0.tgz
     version: 0.35.0
-generated: "2025-07-04T22:09:06.22756307Z"
+generated: "2025-07-05T09:53:48.151288602Z"
