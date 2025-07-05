@@ -19,6 +19,7 @@ package instance
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
@@ -99,15 +100,20 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 		return nil, fmt.Errorf("kubernetes client not set")
 	}
 
-	vpcClient, err := p.client.GetVPCClient()
-	if err != nil {
-		return nil, fmt.Errorf("getting VPC client: %w", err)
-	}
-
 	// Get the NodeClass to extract configuration
 	nodeClass := &v1alpha1.IBMNodeClass{}
 	if getErr := p.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); getErr != nil {
 		return nil, fmt.Errorf("getting NodeClass %s: %w", nodeClaim.Spec.NodeClassRef.Name, getErr)
+	}
+
+	// Check if this is IKS mode - if so, use worker pool resize instead of VPC instance creation
+	if p.isIKSMode(nodeClass) {
+		return p.createIKSWorker(ctx, nodeClass, nodeClaim)
+	}
+
+	vpcClient, err := p.client.GetVPCClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC client: %w", err)
 	}
 
 	// Extract instance profile - prefer NodeClass, fallback to labels
@@ -541,6 +547,33 @@ func (p *IBMCloudInstanceProvider) generateBootstrapUserData(ctx context.Context
 	}
 
 	return userData, nil
+}
+
+// isIKSMode checks if the NodeClass is configured for IKS mode
+func (p *IBMCloudInstanceProvider) isIKSMode(nodeClass *v1alpha1.IBMNodeClass) bool {
+	// Check if bootstrap mode is explicitly set to IKS API
+	if nodeClass.Spec.BootstrapMode != nil && *nodeClass.Spec.BootstrapMode == "iks-api" {
+		return true
+	}
+	
+	// Check if IKS cluster ID is provided (implies IKS mode)
+	if nodeClass.Spec.IKSClusterID != "" {
+		return true
+	}
+	
+	// Check environment variable
+	if os.Getenv("IKS_CLUSTER_ID") != "" {
+		return true
+	}
+	
+	return false
+}
+
+// createIKSWorker creates a worker node using IKS worker pool resize API
+func (p *IBMCloudInstanceProvider) createIKSWorker(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
+	// For now, return an error indicating this is not yet implemented
+	// The actual implementation would call the IKS worker pool resize API
+	return nil, fmt.Errorf("IKS worker pool resize API not yet implemented - need to call PATCH /v1/clusters/{id}/workerpools/{poolId} with state=resizing and sizePerZone+1")
 }
 
 // isIBMInstanceNotFoundError checks if the error indicates an instance was not found in IBM Cloud VPC

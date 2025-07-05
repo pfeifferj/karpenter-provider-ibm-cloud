@@ -133,23 +133,12 @@ func TestBootstrapProvider_GetUserData_IKSMode(t *testing.T) {
 	// Generate user data
 	userData, err := provider.GetUserData(ctx, nodeClass, nodeClaim)
 	require.NoError(t, err)
-	require.NotEmpty(t, userData)
 	
-	// Decode base64 user data
-	decodedBytes, err := base64.StdEncoding.DecodeString(userData)
-	require.NoError(t, err)
+	// For IKS mode, user data should be empty since IKS handles node provisioning
+	// through worker pool resize API, not bootstrap scripts
+	assert.Empty(t, userData, "IKS mode should return empty user data")
 	
-	decodedUserData := string(decodedBytes)
-	
-	// Verify IKS API script contains expected elements
-	assert.Contains(t, decodedUserData, "#!/bin/bash")
-	assert.Contains(t, decodedUserData, "IKS API node registration")
-	assert.Contains(t, decodedUserData, "add_worker_to_cluster")
-	assert.Contains(t, decodedUserData, "wait_for_worker_ready")
-	assert.Contains(t, decodedUserData, "CLUSTER_ID=\"test-cluster-id\"")
-	assert.Contains(t, decodedUserData, "echo 'IKS custom data'") // Custom user data included
-	
-	t.Logf("Generated IKS API script length: %d bytes", len(decodedUserData))
+	t.Logf("IKS mode correctly returned empty user data")
 }
 
 func TestBootstrapProvider_GetUserData_AutoMode(t *testing.T) {
