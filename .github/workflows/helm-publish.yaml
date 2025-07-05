@@ -6,6 +6,9 @@ on:
       - main
     paths:
       - 'charts/**'
+  release:
+    types: [published]
+  workflow_dispatch:
 
 jobs:
   package-and-publish:
