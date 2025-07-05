@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
@@ -74,9 +75,23 @@ func (p *IBMCloudInstanceProvider) initBootstrapProvider(ctx context.Context) er
 
 // createKubernetesClient creates a kubernetes.Interface from the controller-runtime client
 func (p *IBMCloudInstanceProvider) createKubernetesClient() (kubernetes.Interface, error) {
-	// This is a placeholder - in production you'd properly convert the client
-	// For now, return nil and handle gracefully
-	return nil, fmt.Errorf("kubernetes client conversion not implemented - using fallback user data")
+	if p.kubeClient == nil {
+		return nil, fmt.Errorf("controller-runtime client not set")
+	}
+	
+	// Get the REST config using controller-runtime config
+	restConfig, err := config.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("getting REST config: %w", err)
+	}
+	
+	// Create kubernetes client from the REST config
+	k8sClient, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("creating kubernetes client: %w", err)
+	}
+	
+	return k8sClient, nil
 }
 
 func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
