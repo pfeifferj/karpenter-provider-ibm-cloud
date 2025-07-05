@@ -48,7 +48,18 @@ func NewProvider(client *ibm.Client, k8sClient kubernetes.Interface) *IBMBootstr
 func (p *IBMBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error) {
 	logger := log.FromContext(ctx)
 	
-	// Discover cluster configuration
+	// Determine bootstrap mode early to skip unnecessary operations for IKS
+	bootstrapMode := p.determineBootstrapMode(nodeClass, nil)
+	logger.Info("Using bootstrap mode", "mode", bootstrapMode)
+
+	// For IKS mode, we don't need bootstrap scripts - just resize the worker pool
+	if bootstrapMode == BootstrapModeIKSAPI {
+		// IKS handles node provisioning through worker pool resize API
+		// Return empty user data since IKS manages the bootstrap process
+		return "", nil
+	}
+
+	// For non-IKS modes, do full cluster discovery
 	clusterConfig, err := DiscoverClusterConfig(ctx, p.k8sClient)
 	if err != nil {
 		return "", fmt.Errorf("discovering cluster config: %w", err)
@@ -59,10 +70,6 @@ func (p *IBMBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 	if err != nil {
 		return "", fmt.Errorf("getting cluster info: %w", err)
 	}
-
-	// Determine bootstrap mode
-	bootstrapMode := p.determineBootstrapMode(nodeClass, clusterInfo)
-	logger.Info("Using bootstrap mode", "mode", bootstrapMode)
 
 	// Build bootstrap options
 	options := Options{
@@ -102,7 +109,7 @@ func (p *IBMBootstrapProvider) determineBootstrapMode(nodeClass *v1alpha1.IBMNod
 	if nodeClass.Spec.BootstrapMode != nil {
 		mode := BootstrapMode(*nodeClass.Spec.BootstrapMode)
 		// Update cluster info for IKS mode detection
-		if mode == BootstrapModeIKSAPI {
+		if mode == BootstrapModeIKSAPI && clusterInfo != nil {
 			p.updateClusterInfoForIKS(nodeClass, clusterInfo)
 		}
 		return mode
@@ -111,7 +118,7 @@ func (p *IBMBootstrapProvider) determineBootstrapMode(nodeClass *v1alpha1.IBMNod
 	// Check environment variable
 	if mode := os.Getenv("BOOTSTRAP_MODE"); mode != "" {
 		bootstrapMode := BootstrapMode(mode)
-		if bootstrapMode == BootstrapModeIKSAPI {
+		if bootstrapMode == BootstrapModeIKSAPI && clusterInfo != nil {
 			p.updateClusterInfoForIKS(nodeClass, clusterInfo)
 		}
 		return bootstrapMode
@@ -120,7 +127,7 @@ func (p *IBMBootstrapProvider) determineBootstrapMode(nodeClass *v1alpha1.IBMNod
 	// Auto mode - check for IKS configuration
 	// Enhanced IKS detection: check both environment variable AND NodeClass
 	hasIKSClusterID := os.Getenv("IKS_CLUSTER_ID") != "" || nodeClass.Spec.IKSClusterID != ""
-	if hasIKSClusterID {
+	if hasIKSClusterID && clusterInfo != nil {
 		p.updateClusterInfoForIKS(nodeClass, clusterInfo)
 	}
 
