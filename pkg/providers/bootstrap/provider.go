@@ -100,12 +100,28 @@ func (p *IBMBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 func (p *IBMBootstrapProvider) determineBootstrapMode(nodeClass *v1alpha1.IBMNodeClass, clusterInfo *ClusterInfo) BootstrapMode {
 	// Check if bootstrap mode is specified in node class
 	if nodeClass.Spec.BootstrapMode != nil {
-		return BootstrapMode(*nodeClass.Spec.BootstrapMode)
+		mode := BootstrapMode(*nodeClass.Spec.BootstrapMode)
+		// Update cluster info for IKS mode detection
+		if mode == BootstrapModeIKSAPI {
+			p.updateClusterInfoForIKS(nodeClass, clusterInfo)
+		}
+		return mode
 	}
 
 	// Check environment variable
 	if mode := os.Getenv("BOOTSTRAP_MODE"); mode != "" {
-		return BootstrapMode(mode)
+		bootstrapMode := BootstrapMode(mode)
+		if bootstrapMode == BootstrapModeIKSAPI {
+			p.updateClusterInfoForIKS(nodeClass, clusterInfo)
+		}
+		return bootstrapMode
+	}
+
+	// Auto mode - check for IKS configuration
+	// Enhanced IKS detection: check both environment variable AND NodeClass
+	hasIKSClusterID := os.Getenv("IKS_CLUSTER_ID") != "" || nodeClass.Spec.IKSClusterID != ""
+	if hasIKSClusterID {
+		p.updateClusterInfoForIKS(nodeClass, clusterInfo)
 	}
 
 	// Default to auto mode
@@ -205,6 +221,23 @@ func (p *IBMBootstrapProvider) getClusterName() string {
 // isIKSManaged checks if this is an IKS-managed cluster
 func (p *IBMBootstrapProvider) isIKSManaged() bool {
 	return os.Getenv("IKS_CLUSTER_ID") != ""
+}
+
+// updateClusterInfoForIKS updates cluster info with IKS configuration from NodeClass or environment
+func (p *IBMBootstrapProvider) updateClusterInfoForIKS(nodeClass *v1alpha1.IBMNodeClass, clusterInfo *ClusterInfo) {
+	clusterInfo.IsIKSManaged = true
+	
+	// Set IKS cluster ID from NodeClass or environment variable
+	if nodeClass.Spec.IKSClusterID != "" {
+		clusterInfo.IKSClusterID = nodeClass.Spec.IKSClusterID
+	} else if envClusterID := os.Getenv("IKS_CLUSTER_ID"); envClusterID != "" {
+		clusterInfo.IKSClusterID = envClusterID
+	}
+	
+	// Set worker pool ID if specified
+	if nodeClass.Spec.IKSWorkerPoolID != "" {
+		clusterInfo.IKSWorkerPoolID = nodeClass.Spec.IKSWorkerPoolID
+	}
 }
 
 // parseKubeconfig parses kubeconfig to extract endpoint and CA data
