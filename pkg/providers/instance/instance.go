@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -273,11 +274,39 @@ func (p *IBMCloudInstanceProvider) Create(ctx context.Context, nodeClaim *v1.Nod
 	return node, nil
 }
 
-func (p *IBMCloudInstanceProvider) Delete(ctx context.Context, node *corev1.Node) error {
-	// Extract instance ID from provider ID first to validate the format
-	providerID := node.Spec.ProviderID
+// GetByProviderID retrieves instance details from IBM Cloud VPC
+func (p *IBMCloudInstanceProvider) GetByProviderID(ctx context.Context, providerID string) (*vpcv1.Instance, error) {
 	if !strings.HasPrefix(providerID, "ibm://") {
-		return fmt.Errorf("invalid provider ID format: %s", providerID)
+		return nil, fmt.Errorf("invalid provider ID format: %s", providerID)
+	}
+	
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client not initialized")
+	}
+	
+	vpcClient, err := p.client.GetVPCClient()
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC client: %w", err)
+	}
+
+	instanceID := strings.TrimPrefix(providerID, "ibm://")
+	instance, err := vpcClient.GetInstance(ctx, instanceID)
+	if err != nil {
+		// Return NodeClaimNotFoundError when instance doesn't exist - required for proper finalizer removal
+		if isIBMInstanceNotFoundError(err) {
+			return nil, cloudprovider.NewNodeClaimNotFoundError(err)
+		}
+		return nil, fmt.Errorf("getting instance: %w", err)
+	}
+	return instance, nil
+}
+
+func (p *IBMCloudInstanceProvider) Delete(ctx context.Context, node *corev1.Node) error {
+	// Check if instance exists before attempting deletion to handle cleanup scenarios
+	_, err := p.GetByProviderID(ctx, node.Spec.ProviderID)
+	if err != nil {
+		// If instance not found, propagate the NodeClaimNotFoundError for proper cleanup
+		return err
 	}
 	
 	if p.client == nil {
@@ -289,10 +318,14 @@ func (p *IBMCloudInstanceProvider) Delete(ctx context.Context, node *corev1.Node
 		return fmt.Errorf("getting VPC client: %w", err)
 	}
 
-	instanceID := strings.TrimPrefix(providerID, "ibm://")
+	instanceID := strings.TrimPrefix(node.Spec.ProviderID, "ibm://")
 
 	err = vpcClient.DeleteInstance(ctx, instanceID)
 	if err != nil {
+		// Handle case where instance was deleted between Get and Delete calls
+		if isIBMInstanceNotFoundError(err) {
+			return cloudprovider.NewNodeClaimNotFoundError(err)
+		}
 		return fmt.Errorf("deleting instance: %w", err)
 	}
 
@@ -493,5 +526,19 @@ func (p *IBMCloudInstanceProvider) generateBootstrapUserData(ctx context.Context
 	}
 
 	return userData, nil
+}
+
+// isIBMInstanceNotFoundError checks if the error indicates an instance was not found in IBM Cloud VPC
+func isIBMInstanceNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// Check IBM Cloud SDK error patterns for "not found" scenarios
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "not found") || 
+		   strings.Contains(errStr, "not_found") ||
+		   strings.Contains(errStr, "resource_not_found") ||
+		   strings.Contains(errStr, "404")
 }
 
