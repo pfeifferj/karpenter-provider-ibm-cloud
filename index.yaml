@@ -4,10 +4,10 @@ entries:
   - annotations:
       helm.sh/resource-policy: keep
     apiVersion: v2
-    appVersion: 0.35.0
-    created: "2025-07-05T09:53:48.157035061Z"
+    appVersion: 0.2.24
+    created: "2025-07-05T10:04:59.47447986Z"
     description: A Helm chart for Karpenter's IBM Cloud Provider.
-    digest: 976e23d51bf69e1a72d08a376cbccebb1757e9dd0965a02a55bdd63663e7df84
+    digest: 7b8b55d6d53813714f5f0f3f90ff4d95cb9af72b3368a036067276ee7e25c17b
     home: https://karpenter.sh/
     icon: https://repository-images.githubusercontent.com/278480393/dab059c8-caa1-4b55-aaa7-3d30e47a5616
     keywords:
@@ -23,6 +23,6 @@ entries:
     - https://github.com/kubernetes-sigs/karpenter/
     type: application
     urls:
-    - https://pfeifferj.github.io/karpenter-provider-ibm-cloud/karpenter-ibm-0.35.0.tgz
-    version: 0.35.0
-generated: "2025-07-05T09:53:48.151288602Z"
+    - https://pfeifferj.github.io/karpenter-provider-ibm-cloud/karpenter-ibm-0.2.24.tgz
+    version: 0.2.24
+generated: "2025-07-05T10:04:59.469001067Z"
