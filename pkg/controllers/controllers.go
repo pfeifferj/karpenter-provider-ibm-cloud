@@ -47,7 +47,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
 	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
-	// nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
+	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
 	nodeclaasstatus "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/status"
 	nodeclasstermination "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/termination"
@@ -127,10 +127,10 @@ func NewControllers(
 	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, cloudProvider)
 	controllers = append(controllers, garbageCollectionCtrl)
 
-	// Add tagging controller
-	// TODO: Update tagging controller to work with new provider architecture
-	// taggingCtrl := nodeclaimtagging.NewController(kubeClient, instanceProvider)
-	// controllers = append(controllers, taggingCtrl)
+	// Add tagging controller (VPC mode only)
+	if taggingCtrl, err := nodeclaimtagging.NewController(kubeClient); err == nil {
+		controllers = append(controllers, taggingCtrl)
+	}
 
 	// Add instance type controller
 	if instanceTypeCtrl, err := providersinstancetype.NewController(); err == nil {
