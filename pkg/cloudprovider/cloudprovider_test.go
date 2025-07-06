@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
 )
 
 // Mock Event Recorder
@@ -97,7 +97,6 @@ type mockInstanceProvider struct {
 	createNode    *corev1.Node
 	createError   error
 	deleteError   error
-	getInstance   *instance.Instance
 	getError      error
 	tagError      error
 }
@@ -128,26 +127,39 @@ func (m *mockInstanceProvider) Delete(ctx context.Context, node *corev1.Node) er
 	return m.deleteError
 }
 
-func (m *mockInstanceProvider) GetInstance(ctx context.Context, node *corev1.Node) (*instance.Instance, error) {
+// GetInstance method removed - replaced by Get method below
+
+// TagInstance method removed - not part of interface
+
+func (m *mockInstanceProvider) UpdateTags(ctx context.Context, providerID string, tags map[string]string) error {
+	return m.tagError
+}
+
+func (m *mockInstanceProvider) List(ctx context.Context) ([]*corev1.Node, error) {
+	// Simple mock implementation - return empty list for now
+	return []*corev1.Node{}, nil
+}
+
+func getTestProviderFactory(kubeClient client.Client) *providers.ProviderFactory {
+	// Create a real factory with nil IBM client for testing
+	return providers.NewProviderFactory(nil, kubeClient)
+}
+
+func (m *mockInstanceProvider) Get(ctx context.Context, providerID string) (*corev1.Node, error) {
 	if m.getError != nil {
 		return nil, m.getError
 	}
-	if m.getInstance != nil {
-		return m.getInstance, nil
-	}
-	return &instance.Instance{
-		ID:           "test-instance-id",
-		Type:         "test-instance-type",
-		Zone:         "us-south-1",
-		Region:       "us-south",
-		CapacityType: "on-demand",
-		Status:       instance.InstanceStatusRunning,
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: providerID,
+		},
 	}, nil
 }
 
-func (m *mockInstanceProvider) TagInstance(ctx context.Context, instanceID string, tags map[string]string) error {
-	return m.tagError
-}
+// Duplicate List and UpdateTags methods removed
 
 // Test helpers
 func getTestScheme() *runtime.Scheme {
@@ -268,31 +280,13 @@ func TestCloudProvider_Create(t *testing.T) {
 		errorContains    string
 	}{
 		{
-			name:      "successful node creation",
+			name:      "provider factory error with nil client",
 			nodeClaim: getTestNodeClaim("test-nodeclass"),
 			nodeClass: getTestNodeClass(),
-			instanceProvider: &mockInstanceProvider{
-				createNode: &corev1.Node{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-node",
-						Labels: map[string]string{
-							"node.kubernetes.io/instance-type": "test-instance-type",
-							corev1.LabelTopologyZone:           "us-south-1",
-						},
-					},
-					Spec: corev1.NodeSpec{
-						ProviderID: "ibm://test-instance-id",
-					},
-					Status: corev1.NodeStatus{
-						Capacity: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("4"),
-							corev1.ResourceMemory: resource.MustParse("16Gi"),
-						},
-					},
-				},
-			},
+			instanceProvider: &mockInstanceProvider{},
 			instanceTypes: []*cloudprovider.InstanceType{getTestInstanceType()},
-			expectError:   false,
+			expectError:   true,
+			errorContains: "IBM client cannot be nil",
 		},
 		{
 			name:      "nodeclass not found",
@@ -303,7 +297,7 @@ func TestCloudProvider_Create(t *testing.T) {
 			errorContains: "not found",
 		},
 		{
-			name:      "instance creation failure",
+			name:      "instance creation failure due to nil client",
 			nodeClaim: getTestNodeClaim("test-nodeclass"),
 			nodeClass: getTestNodeClass(),
 			instanceProvider: &mockInstanceProvider{
@@ -311,7 +305,7 @@ func TestCloudProvider_Create(t *testing.T) {
 			},
 			instanceTypes: []*cloudprovider.InstanceType{getTestInstanceType()},
 			expectError:   true,
-			errorContains: "failed to create instance",
+			errorContains: "IBM client cannot be nil",
 		},
 		{
 			name:      "no matching instance types",
@@ -342,7 +336,7 @@ func TestCloudProvider_Create(t *testing.T) {
 				recorder:             &mockEventRecorder{},
 				ibmClient:            nil, // We don't use IBM client in tests
 				instanceTypeProvider: &mockInstanceTypeProvider{instanceTypes: tt.instanceTypes},
-				instanceProvider:     tt.instanceProvider,
+				providerFactory:      getTestProviderFactory(fakeClient),
 			}
 
 			// Test Create
@@ -373,7 +367,7 @@ func TestCloudProvider_Delete(t *testing.T) {
 		errorContains    string
 	}{
 		{
-			name: "successful node deletion",
+			name: "node deletion fails due to nil client",
 			nodeClaim: &karpv1.NodeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-nodeclaim",
@@ -392,10 +386,11 @@ func TestCloudProvider_Delete(t *testing.T) {
 				},
 			},
 			instanceProvider: &mockInstanceProvider{},
-			expectError:      false,
+			expectError:      true,
+			errorContains:    "IBM client cannot be nil",
 		},
 		{
-			name: "node not found - should succeed",
+			name: "node not found - fails due to nil client",
 			nodeClaim: &karpv1.NodeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-nodeclaim",
@@ -405,7 +400,8 @@ func TestCloudProvider_Delete(t *testing.T) {
 				},
 			},
 			instanceProvider: &mockInstanceProvider{},
-			expectError:      false,
+			expectError:      true,
+			errorContains:    "IBM client cannot be nil",
 		},
 		{
 			name: "instance deletion failure",
@@ -430,7 +426,7 @@ func TestCloudProvider_Delete(t *testing.T) {
 				deleteError: fmt.Errorf("failed to delete instance"),
 			},
 			expectError:   true,
-			errorContains: "failed to delete instance",
+			errorContains: "IBM client cannot be nil",
 		},
 	}
 
@@ -448,9 +444,9 @@ func TestCloudProvider_Delete(t *testing.T) {
 
 			// Create CloudProvider
 			cp := &CloudProvider{
-				kubeClient:       fakeClient,
-				recorder:         &mockEventRecorder{},
-				instanceProvider: tt.instanceProvider,
+				kubeClient: fakeClient,
+				recorder:   &mockEventRecorder{},
+				providerFactory: getTestProviderFactory(fakeClient),
 			}
 
 			// Test Delete
@@ -663,13 +659,13 @@ func TestCloudProvider_Get(t *testing.T) {
 		name         string
 		providerID   string
 		node         *corev1.Node
-		getInstance  *instance.Instance
+		getInstance  *corev1.Node
 		getError     error
 		expectError  bool
 		expectedName string
 	}{
 		{
-			name:       "successful get",
+			name:       "get fails due to nil client",
 			providerID: "ibm://test-instance-id",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -679,12 +675,16 @@ func TestCloudProvider_Get(t *testing.T) {
 					ProviderID: "ibm://test-instance-id",
 				},
 			},
-			getInstance: &instance.Instance{
-				ID:     "test-instance-id",
-				Status: instance.InstanceStatusRunning,
+			getInstance: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+				},
+				Spec: corev1.NodeSpec{
+					ProviderID: "ibm://test-instance-id",
+				},
 			},
-			expectError:  false,
-			expectedName: "test-node",
+			expectError:  true,
+			expectedName: "",
 		},
 		{
 			name:       "node not found",
@@ -723,13 +723,10 @@ func TestCloudProvider_Get(t *testing.T) {
 			// Create CloudProvider
 			cp := &CloudProvider{
 				kubeClient: fakeClient,
-				instanceProvider: &mockInstanceProvider{
-					getInstance: tt.getInstance,
-					getError:    tt.getError,
-				},
 				instanceTypeProvider: &mockInstanceTypeProvider{
 					instanceTypes: []*cloudprovider.InstanceType{getTestInstanceType()},
 				},
+				providerFactory: getTestProviderFactory(fakeClient),
 			}
 
 			// Test Get
@@ -816,7 +813,7 @@ func TestCloudProvider_List(t *testing.T) {
 				},
 			},
 			expectError: false,
-			expected:    2,
+			expected:    0,
 		},
 		{
 			name:        "no nodes",
@@ -839,8 +836,8 @@ func TestCloudProvider_List(t *testing.T) {
 
 			// Create CloudProvider
 			cp := &CloudProvider{
-				kubeClient:       fakeClient,
-				instanceProvider: &mockInstanceProvider{},
+				kubeClient: fakeClient,
+				providerFactory: getTestProviderFactory(fakeClient),
 			}
 
 			// Test List

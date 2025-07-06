@@ -16,9 +16,37 @@ limitations under the License.
 package ibm
 
 import (
+	"context"
 	"os"
 	"testing"
 )
+
+// MockCredentialStore implements SecureCredentialManager for testing
+type MockCredentialStore struct {
+	vpcAPIKey string
+	ibmAPIKey string
+	region    string
+}
+
+func (m *MockCredentialStore) GetVPCAPIKey(ctx context.Context) (string, error) {
+	return m.vpcAPIKey, nil
+}
+
+func (m *MockCredentialStore) GetIBMAPIKey(ctx context.Context) (string, error) {
+	return m.ibmAPIKey, nil
+}
+
+func (m *MockCredentialStore) GetRegion(ctx context.Context) (string, error) {
+	return m.region, nil
+}
+
+func (m *MockCredentialStore) RotateCredentials(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockCredentialStore) ClearCredentials() {
+	// No-op for mock
+}
 
 func TestNewClient(t *testing.T) {
 	tests := []struct {
@@ -112,10 +140,17 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestGetVPCClient(t *testing.T) {
+	// Create a mock credential store for testing
+	mockCredStore := &MockCredentialStore{
+		vpcAPIKey: "test-key",
+		ibmAPIKey: "test-ibm-key",
+		region:    "us-south",
+	}
+	
 	client := &Client{
 		vpcURL:      "https://test.vpc.url/v1",
 		vpcAuthType: "iam",
-		vpcAPIKey:   "test-key",
+		credStore:   mockCredStore,
 		region:      "us-south",
 	}
 
@@ -130,7 +165,6 @@ func TestGetVPCClient(t *testing.T) {
 
 func TestGetGlobalCatalogClient(t *testing.T) {
 	client := &Client{
-		ibmAPIKey: "test-key",
 		iamClient: NewIAMClient("test-key"),
 	}
 

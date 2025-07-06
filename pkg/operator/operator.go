@@ -25,19 +25,14 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
 )
 
 // Operator wraps the core Karpenter operator with IBM-specific providers
 type Operator struct {
 	*operator.Operator
 	UnavailableOfferings *cache.UnavailableOfferings
-	IBMClient            *ibm.Client
-	InstanceProvider     instance.Provider
-	InstanceTypeProvider instancetype.Provider
-	SubnetProvider       subnet.Provider
+	ProviderFactory      *providers.ProviderFactory
 }
 
 func NewOperator(ctx context.Context, coreOperator *operator.Operator) (context.Context, *Operator) {
@@ -54,35 +49,14 @@ func NewOperator(ctx context.Context, coreOperator *operator.Operator) (context.
 		os.Exit(1)
 	}
 
-	// Create providers
-	instanceTypeProvider, err := instancetype.NewProvider()
-	if err != nil {
-		log.FromContext(ctx).Error(err, "Failed to create instance type provider")
-		os.Exit(1)
-	}
-
-	instanceProvider, err := instance.NewProvider()
-	if err != nil {
-		log.FromContext(ctx).Error(err, "Failed to create instance provider")
-		os.Exit(1)
-	}
-	instanceProvider.SetKubeClient(coreOperator.GetClient())
-
-	subnetProvider, err := subnet.NewProvider()
-	if err != nil {
-		log.FromContext(ctx).Error(err, "Failed to create subnet provider")
-		os.Exit(1)
-	}
-
+	// Create provider factory with all providers
+	providerFactory := providers.NewProviderFactory(ibmClient, coreOperator.GetClient())
 	unavailableOfferings := cache.NewUnavailableOfferings()
 
 	return ctx, &Operator{
 		Operator:             coreOperator,
 		UnavailableOfferings: unavailableOfferings,
-		IBMClient:            ibmClient,
-		InstanceProvider:     instanceProvider,
-		InstanceTypeProvider: instanceTypeProvider,
-		SubnetProvider:       subnetProvider,
+		ProviderFactory:      providerFactory,
 	}
 }
 

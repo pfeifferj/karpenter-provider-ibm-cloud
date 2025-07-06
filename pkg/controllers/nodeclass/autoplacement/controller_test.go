@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 // mockInstanceTypeProvider implements instancetype.Provider interface

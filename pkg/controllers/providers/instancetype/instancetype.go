@@ -26,7 +26,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/karpenter/pkg/operator/injection"
 
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/pricing"
 )
 
 type Controller struct {
@@ -34,10 +36,17 @@ type Controller struct {
 }
 
 func NewController() (*Controller, error) {
-	provider, err := instancetype.NewProvider()
+	// Create IBM client
+	client, err := ibm.NewClient()
 	if err != nil {
-		return nil, fmt.Errorf("creating instance type provider: %w", err)
+		return nil, fmt.Errorf("creating IBM client: %w", err)
 	}
+
+	// Create pricing provider
+	pricingProvider := pricing.NewIBMPricingProvider(client)
+
+	// Create instance type provider
+	provider := instancetype.NewProvider(client, pricingProvider)
 
 	return &Controller{
 		instanceTypeProvider: provider,

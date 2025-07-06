@@ -46,9 +46,10 @@ func TestClient_GetIKSClient(t *testing.T) {
 	iksClient := client.GetIKSClient()
 	assert.NotNil(t, iksClient)
 	
-	// Verify it returns a properly configured IKS client
-	assert.Equal(t, "https://containers.cloud.ibm.com/global/v1", iksClient.baseURL)
-	assert.NotNil(t, iksClient.httpClient)
+	// Verify it returns an IKS client interface
+	// We can't test private fields on the interface, but we can verify 
+	// it implements the expected interface methods
+	assert.Implements(t, (*IKSClientInterface)(nil), iksClient)
 	
 	// Verify multiple calls return different instances (since we create on-demand)
 	iksClient2 := client.GetIKSClient()
@@ -449,7 +450,7 @@ func TestIKSClient_GetVPCInstanceIDFromWorker_CoverageGaps(t *testing.T) {
 
 			// Create client with invalid configuration to force VPC client error
 			client := &Client{
-				vpcAPIKey: "", // Empty API key will cause VPC client creation to fail
+				credStore: &MockCredentialStore{vpcAPIKey: ""}, // Empty API key will cause VPC client creation to fail
 				iamClient: &IAMClient{
 					Authenticator: &mockAuthenticator{
 						token: "test-token",
