@@ -18,6 +18,7 @@ package cloudprovider
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -38,9 +39,10 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
+	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 const CloudProviderName = "ibmcloud"
@@ -53,24 +55,31 @@ type CloudProvider struct {
 	ibmClient  *ibm.Client
 
 	instanceTypeProvider instancetype.Provider
-	instanceProvider     instance.Provider
+	providerFactory      *providers.ProviderFactory
 	subnetProvider       subnet.Provider
+	defaultProviderMode  commonTypes.ProviderMode
 }
 
 func New(kubeClient client.Client,
 	recorder events.Recorder,
 	ibmClient *ibm.Client,
 	instanceTypeProvider instancetype.Provider,
-	instanceProvider instance.Provider,
 	subnetProvider subnet.Provider) *CloudProvider {
+	// Determine the default provider mode based on environment
+	defaultMode := commonTypes.VPCMode
+	if os.Getenv("IKS_CLUSTER_ID") != "" {
+		defaultMode = commonTypes.IKSMode
+	}
+	
 	return &CloudProvider{
 		kubeClient: kubeClient,
 		recorder:   recorder,
 		ibmClient:  ibmClient,
 
 		instanceTypeProvider: instanceTypeProvider,
-		instanceProvider:     instanceProvider,
+		providerFactory:      providers.NewProviderFactory(ibmClient, kubeClient),
 		subnetProvider:       subnetProvider,
+		defaultProviderMode:  defaultMode,
 	}
 }
 
@@ -78,18 +87,31 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 	log := log.FromContext(ctx).WithValues("providerID", providerID)
 	log.Info("Getting instance details")
 
-	node := &corev1.Node{
-		Spec: corev1.NodeSpec{
-			ProviderID: providerID,
-		},
+	// For Get operations without NodeClass, use a minimal NodeClass with default provider mode
+	nodeClass := &v1alpha1.IBMNodeClass{}
+	if c.defaultProviderMode == commonTypes.IKSMode {
+		// Set IKS cluster ID from environment to trigger IKS mode
+		nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
 	}
-
-	instance, err := c.instanceProvider.GetInstance(ctx, node)
+	
+	// Get the appropriate instance provider
+	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
+	if err != nil {
+		log.Error(err, "Failed to get instance provider")
+		return nil, fmt.Errorf("getting instance provider, %w", err)
+	}
+	
+	// Get the instance details
+	node, err := instanceProvider.Get(ctx, providerID)
 	if err != nil {
 		log.Error(err, "Failed to get instance")
 		return nil, fmt.Errorf("getting instance, %w", err)
 	}
-	log.Info("Found instance", "type", instance.Type, "zone", instance.Zone)
+	
+	// Extract instance info from node
+	instanceTypeName := node.Labels["node.kubernetes.io/instance-type"]
+	zone := node.Labels["topology.kubernetes.io/zone"]
+	log.Info("Found instance", "type", instanceTypeName, "zone", zone)
 
 	instanceTypes, err := c.instanceTypeProvider.List(ctx)
 	if err != nil {
@@ -98,7 +120,7 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 	}
 
 	instanceType, _ := lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool {
-		return i.Name == instance.Type
+		return i.Name == instanceTypeName
 	})
 	if instanceType != nil {
 		log.Info("Resolved instance type", "type", instanceType.Name)
@@ -146,7 +168,18 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 		// Handle IKS managed nodes (format: ibm://account-id///cluster-id/worker-id)
 		// These nodes are supported - the instance provider will map IKS worker to VPC instance
 
-		_, err := c.instanceProvider.GetInstance(ctx, &node)
+		// For List operations, use default provider mode
+		nodeClass := &v1alpha1.IBMNodeClass{}
+		if c.defaultProviderMode == commonTypes.IKSMode {
+			nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
+		}
+		
+		instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
+		if err != nil {
+			continue // Skip if we can't get provider
+		}
+		
+		_, err = instanceProvider.Get(ctx, node.Spec.ProviderID)
 		if err != nil {
 			// Check if this is an IKS managed cluster that doesn't allow Karpenter management
 			if strings.Contains(err.Error(), "not configured for Karpenter management") {
@@ -248,7 +281,15 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	log.Info("Found compatible instance types", "count", len(compatible), "types", lo.Map(compatible, func(it *cloudprovider.InstanceType, _ int) string { return it.Name }))
 
 	log.Info("Creating instance")
-	node, err := c.instanceProvider.Create(ctx, nodeClaim)
+	
+	// Get the appropriate instance provider based on NodeClass configuration
+	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
+	if err != nil {
+		log.Error(err, "Failed to get instance provider")
+		return nil, fmt.Errorf("getting instance provider, %w", err)
+	}
+	
+	node, err := instanceProvider.Create(ctx, nodeClaim)
 	if err != nil {
 		log.Error(err, "Failed to create instance")
 		return nil, fmt.Errorf("creating instance, %w", err)
@@ -300,7 +341,31 @@ func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		},
 	}
 
-	if err := c.instanceProvider.Delete(ctx, node); err != nil {
+	// For Delete operations, get the NodeClass to determine provider mode
+	nodeClass := &v1alpha1.IBMNodeClass{}
+	// Try to get the NodeClass from the nodeClaim's nodeClassRef
+	if nodeClaim.Spec.NodeClassRef != nil && nodeClaim.Spec.NodeClassRef.Name != "" {
+		if getErr := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); getErr != nil {
+			// If we can't get NodeClass, use default provider mode
+			if c.defaultProviderMode == commonTypes.IKSMode {
+				nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
+			}
+		}
+	} else {
+		// No NodeClass reference, use default provider mode
+		if c.defaultProviderMode == commonTypes.IKSMode {
+			nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
+		}
+	}
+	
+	// Get the appropriate instance provider
+	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
+	if err != nil {
+		log.Error(err, "Failed to get instance provider")
+		return fmt.Errorf("getting instance provider, %w", err)
+	}
+	
+	if err := instanceProvider.Delete(ctx, node); err != nil {
 		// Return NodeClaimNotFoundError unchanged - this is expected during cleanup
 		if cloudprovider.IsNodeClaimNotFoundError(err) {
 			log.Info("Instance already deleted or not found")

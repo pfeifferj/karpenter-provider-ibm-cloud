@@ -29,8 +29,8 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/image"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/image"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 // Controller reconciles an IBMNodeClass object to update its status
@@ -53,10 +53,7 @@ func NewController(kubeClient client.Client) (*Controller, error) {
 	}
 
 	// Create subnet provider for validation
-	subnetProvider, err := subnet.NewProvider()
-	if err != nil {
-		return nil, fmt.Errorf("creating subnet provider: %w", err)
-	}
+	subnetProvider := subnet.NewProvider(ibmClient)
 
 	return &Controller{
 		kubeClient:     kubeClient,

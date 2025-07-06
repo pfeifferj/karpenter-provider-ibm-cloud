@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -259,4 +260,179 @@ func (c *IKSClient) GetClusterConfig(ctx context.Context, clusterID string) (str
 	}
 
 	return configResp.Config, nil
+}
+
+// WorkerPool represents an IKS worker pool
+type WorkerPool struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Flavor       string            `json:"flavor"`
+	Zone         string            `json:"zone"`
+	SizePerZone  int               `json:"sizePerZone"`
+	ActualSize   int               `json:"actualSize"`
+	State        string            `json:"state"`
+	Labels       map[string]string `json:"labels"`
+	CreatedAt    time.Time         `json:"createdAt"`
+	UpdatedAt    time.Time         `json:"updatedAt"`
+}
+
+// WorkerPoolResizeRequest represents a request to resize a worker pool
+type WorkerPoolResizeRequest struct {
+	State       string `json:"state"`
+	SizePerZone int    `json:"sizePerZone"`
+}
+
+// ListWorkerPools retrieves all worker pools for a cluster
+func (c *IKSClient) ListWorkerPools(ctx context.Context, clusterID string) ([]*WorkerPool, error) {
+	// Get IAM token for authentication
+	token, err := c.client.iamClient.GetToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting IAM token: %w", err)
+	}
+
+	// Construct API URL
+	url := fmt.Sprintf("%s/clusters/%s/workerpools", c.baseURL, clusterID)
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Make request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("making request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	// Check for API errors
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var workerPools []*WorkerPool
+	if err := json.Unmarshal(body, &workerPools); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+
+	return workerPools, nil
+}
+
+// ResizeWorkerPool resizes a worker pool by adding one node
+func (c *IKSClient) ResizeWorkerPool(ctx context.Context, clusterID, poolID string, newSize int) error {
+	// Get IAM token for authentication
+	token, err := c.client.iamClient.GetToken(ctx)
+	if err != nil {
+		return fmt.Errorf("getting IAM token: %w", err)
+	}
+
+	// Prepare request payload
+	request := WorkerPoolResizeRequest{
+		State:       "resizing",
+		SizePerZone: newSize,
+	}
+
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("marshaling request: %w", err)
+	}
+
+	// Construct API URL
+	url := fmt.Sprintf("%s/clusters/%s/workerpools/%s", c.baseURL, clusterID, poolID)
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "PATCH", url, strings.NewReader(string(requestBody)))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Make request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("making request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	// Check for API errors
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("IKS worker pool resize failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// GetWorkerPool retrieves a specific worker pool
+func (c *IKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID string) (*WorkerPool, error) {
+	// Get IAM token for authentication
+	token, err := c.client.iamClient.GetToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting IAM token: %w", err)
+	}
+
+	// Construct API URL
+	url := fmt.Sprintf("%s/clusters/%s/workerpools/%s", c.baseURL, clusterID, poolID)
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Make request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("making request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	// Check for API errors
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var workerPool WorkerPool
+	if err := json.Unmarshal(body, &workerPool); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+
+	return &workerPool, nil
 }

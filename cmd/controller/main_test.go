@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -37,8 +36,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 // Mock Event Recorder
@@ -116,43 +114,7 @@ func (m *mockInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovi
 	return instanceTypes
 }
 
-// Mock Instance Provider
-type mockInstanceProvider struct{}
-
-func (m *mockInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
-	return &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: nodeClaim.Name,
-			Labels: map[string]string{
-				"node.kubernetes.io/instance-type": "test-instance-type",
-			},
-		},
-		Spec: corev1.NodeSpec{
-			ProviderID: "ibm://test-instance-id",
-		},
-	}, nil
-}
-
-func (m *mockInstanceProvider) SetKubeClient(client client.Client) {}
-
-func (m *mockInstanceProvider) Delete(ctx context.Context, node *corev1.Node) error {
-	return nil
-}
-
-func (m *mockInstanceProvider) GetInstance(ctx context.Context, node *corev1.Node) (*instance.Instance, error) {
-	return &instance.Instance{
-		ID:           "test-instance-id",
-		Type:         "test-instance-type",
-		Zone:         "us-south-1",
-		Region:       "us-south",
-		CapacityType: "on-demand",
-		Status:       instance.InstanceStatusRunning,
-	}, nil
-}
-
-func (m *mockInstanceProvider) TagInstance(ctx context.Context, instanceID string, tags map[string]string) error {
-	return nil
-}
+// mockInstanceProvider removed - was unused
 
 // Mock Subnet Provider
 type mockSubnetProvider struct{}
@@ -274,7 +236,6 @@ func TestReconcile(t *testing.T) {
 		&mockEventRecorder{},
 		&ibm.Client{},
 		&mockInstanceTypeProvider{},
-		&mockInstanceProvider{},
 		&mockSubnetProvider{},
 	)
 

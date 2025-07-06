@@ -31,8 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 const (

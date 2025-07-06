@@ -32,7 +32,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 // =============================================================================
@@ -531,10 +531,7 @@ func TestControllerReconcile(t *testing.T) {
 				}
 				
 				// Create subnet provider for validation
-				subnetProvider, err = subnet.NewProvider()
-				if err != nil {
-					t.Logf("Warning: Could not create subnet provider: %v", err)
-				}
+				subnetProvider = subnet.NewProvider(ibmClient)
 			}
 
 			controller := &Controller{
@@ -853,8 +850,7 @@ func TestControllerWithRealIBMCloud(t *testing.T) {
 			require.NoError(t, err, "Should be able to create IBM client with provided credentials")
 
 			// Create subnet provider
-			subnetProvider, err := subnet.NewProvider()
-			require.NoError(t, err, "Should be able to create subnet provider")
+			subnetProvider := subnet.NewProvider(ibmClient)
 
 			controller := &Controller{
 				kubeClient:     client,
@@ -926,8 +922,7 @@ func TestIBMCloudResourceValidation(t *testing.T) {
 	require.NoError(t, err, "Should be able to create IBM client")
 
 	// Create subnet provider
-	subnetProvider, err := subnet.NewProvider()
-	require.NoError(t, err, "Should be able to create subnet provider")
+	subnetProvider := subnet.NewProvider(ibmClient)
 
 	controller := &Controller{
 		ibmClient:      ibmClient,

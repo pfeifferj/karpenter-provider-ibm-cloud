@@ -47,14 +47,13 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
 	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
-	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
+	// nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
 	nodeclaasstatus "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/status"
 	nodeclasstermination "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/termination"
 	providersinstancetype "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 	controllerspricing "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/pricing"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
 )
 
 // RecorderAdapter adapts between events.Recorder and record.EventRecorder
@@ -100,7 +99,6 @@ func NewControllers(
 	recorder events.Recorder,
 	unavailableOfferings *cache.UnavailableOfferings,
 	cloudProvider cloudprovider.CloudProvider,
-	instanceProvider instance.Provider,
 	instanceTypeProvider instancetype.Provider,
 ) []controller.Controller {
 	// Create event recorder adapter
@@ -130,8 +128,9 @@ func NewControllers(
 	controllers = append(controllers, garbageCollectionCtrl)
 
 	// Add tagging controller
-	taggingCtrl := nodeclaimtagging.NewController(kubeClient, instanceProvider)
-	controllers = append(controllers, taggingCtrl)
+	// TODO: Update tagging controller to work with new provider architecture
+	// taggingCtrl := nodeclaimtagging.NewController(kubeClient, instanceProvider)
+	// controllers = append(controllers, taggingCtrl)
 
 	// Add instance type controller
 	if instanceTypeCtrl, err := providersinstancetype.NewController(); err == nil {
