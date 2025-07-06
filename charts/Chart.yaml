@@ -2,8 +2,8 @@ apiVersion: v2
 name: karpenter-ibm
 description: A Helm chart for Karpenter's IBM Cloud Provider.
 type: application
-version: 0.3.1
-appVersion: 0.3.1
+version: 0.3.2
+appVersion: 0.3.2
 keywords:
   - cluster
   - node
