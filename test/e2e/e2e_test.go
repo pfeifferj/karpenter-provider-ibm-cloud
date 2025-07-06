@@ -37,9 +37,9 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/pricing"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 const (
@@ -101,19 +101,10 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 	ibmClient, err := ibm.NewClient()
 	require.NoError(t, err)
 
-	// Create providers
-	instanceTypeProvider, err := instancetype.NewProvider()
-	require.NoError(t, err)
-
-	instanceProvider, err := instance.NewProvider()
-	require.NoError(t, err)
-	instanceProvider.SetKubeClient(kubeClient)
-
-	// Create subnet provider
-	subnetProvider, err := subnet.NewProvider()
-	if err != nil {
-		t.Fatalf("Failed to create subnet provider: %v", err)
-	}
+	// Create providers using the provider factory pattern
+	pricingProvider := pricing.NewIBMPricingProvider(ibmClient)
+	instanceTypeProvider := instancetype.NewProvider(ibmClient, pricingProvider)
+	subnetProvider := subnet.NewProvider(ibmClient)
 
 	// Create cloud provider
 	cloudProvider := ibmcloud.New(
@@ -121,7 +112,6 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 		nil, // No event recorder needed for tests
 		ibmClient,
 		instanceTypeProvider,
-		instanceProvider,
 		subnetProvider,
 	)
 

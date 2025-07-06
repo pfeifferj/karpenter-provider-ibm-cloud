@@ -17,33 +17,45 @@ package tagging
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/awslabs/operatorpkg/singleton"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	vpcProvider "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/instance"
 )
 
 // Controller reconciles NodeClaim objects to ensure proper tagging of IBM Cloud instances
 //+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch
 type Controller struct {
 	kubeClient       client.Client
-	instanceProvider instance.Provider
+	ibmClient        *ibm.Client
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client, instanceProvider instance.Provider) *Controller {
-	return &Controller{
-		kubeClient:       kubeClient,
-		instanceProvider: instanceProvider,
+func NewController(kubeClient client.Client) (*Controller, error) {
+	// Create IBM client for tagging operations
+	ibmClient, err := ibm.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("creating IBM client: %w", err)
 	}
+	
+	return &Controller{
+		kubeClient: kubeClient,
+		ibmClient:  ibmClient,
+	}, nil
 }
 
 // Reconcile executes a control loop for the resource
@@ -69,11 +81,22 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			return reconcile.Result{}, err
 		}
 
-		// Extract instance ID from provider ID
+		// Extract provider ID
 		if node.Spec.ProviderID == "" {
 			continue
 		}
-		instanceID := strings.TrimPrefix(node.Spec.ProviderID, "ibm://")
+
+		// Get the NodeClass to determine if this is a VPC instance
+		nodeClass := &v1alpha1.IBMNodeClass{}
+		if err := c.kubeClient.Get(ctx, k8stypes.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
+			log.FromContext(ctx).Error(err, "Failed to get NodeClass", "nodeclass", nodeClaim.Spec.NodeClassRef.Name)
+			continue
+		}
+
+		// Only process VPC instances (skip IKS for now)
+		if !c.isVPCMode(nodeClass) {
+			continue
+		}
 
 		// Build tags map
 		tags := map[string]string{
@@ -93,13 +116,47 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			}
 		}
 
-		// Update instance tags using the instance provider
-		if err := c.instanceProvider.TagInstance(ctx, instanceID, tags); err != nil {
-			return reconcile.Result{}, err
+		// Update instance tags using VPC provider
+		if err := c.updateVPCInstanceTags(ctx, node.Spec.ProviderID, tags); err != nil {
+			log.FromContext(ctx).Error(err, "Failed to update VPC instance tags", "provider_id", node.Spec.ProviderID)
+			continue
 		}
 	}
 
 	return reconcile.Result{}, nil
+}
+
+// isVPCMode determines if a NodeClass is configured for VPC mode
+func (c *Controller) isVPCMode(nodeClass *v1alpha1.IBMNodeClass) bool {
+	// Check if IKS cluster ID is provided (implies IKS mode)
+	if nodeClass.Spec.IKSClusterID != "" {
+		return false
+	}
+	
+	// Check bootstrap mode
+	if nodeClass.Spec.BootstrapMode != nil {
+		switch *nodeClass.Spec.BootstrapMode {
+		case "iks-api":
+			return false
+		case "cloud-init":
+			return true
+		}
+	}
+	
+	// Default to VPC mode if VPC is specified
+	return nodeClass.Spec.VPC != ""
+}
+
+// updateVPCInstanceTags updates tags on a VPC instance
+func (c *Controller) updateVPCInstanceTags(ctx context.Context, providerID string, tags map[string]string) error {
+	// Create VPC provider for this specific operation
+	vpcProvider, err := vpcProvider.NewVPCInstanceProvider(c.ibmClient, c.kubeClient)
+	if err != nil {
+		return fmt.Errorf("creating VPC provider: %w", err)
+	}
+	
+	// Use the VPC provider to update tags
+	return vpcProvider.UpdateTags(ctx, providerID, tags)
 }
 
 // Name returns the name of the controller

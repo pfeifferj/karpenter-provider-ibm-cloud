@@ -53,8 +53,7 @@ import (
 	nodeclasstermination "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/termination"
 	providersinstancetype "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 	controllerspricing "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/pricing"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
 )
 
 // RecorderAdapter adapts between events.Recorder and record.EventRecorder
@@ -100,7 +99,6 @@ func NewControllers(
 	recorder events.Recorder,
 	unavailableOfferings *cache.UnavailableOfferings,
 	cloudProvider cloudprovider.CloudProvider,
-	instanceProvider instance.Provider,
 	instanceTypeProvider instancetype.Provider,
 ) []controller.Controller {
 	// Create event recorder adapter
@@ -129,9 +127,10 @@ func NewControllers(
 	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, cloudProvider)
 	controllers = append(controllers, garbageCollectionCtrl)
 
-	// Add tagging controller
-	taggingCtrl := nodeclaimtagging.NewController(kubeClient, instanceProvider)
-	controllers = append(controllers, taggingCtrl)
+	// Add tagging controller (VPC mode only)
+	if taggingCtrl, err := nodeclaimtagging.NewController(kubeClient); err == nil {
+		controllers = append(controllers, taggingCtrl)
+	}
 
 	// Add instance type controller
 	if instanceTypeCtrl, err := providersinstancetype.NewController(); err == nil {

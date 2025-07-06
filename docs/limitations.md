@@ -63,6 +63,38 @@ spec:
 
 ## Provider-Specific Limitations
 
+### Bootstrap Mode Limitations
+
+#### IKS Mode Instance Type Constraint
+- **Impact**: When using IKS mode (when `iksClusterID` is specified or `bootstrapMode: "iks-api"`), the provisioner cannot dynamically select instance types based on pod requirements
+- **Root Cause**: IKS Worker Pool Resize API (`PATCH /v1/clusters/{id}/workerpools/{poolId}`) adds nodes with instance types pre-configured in the worker pool
+- **Current Behavior**: 
+  - `instanceProfile` and `instanceRequirements` fields in IBMNodeClass are ignored in IKS mode
+  - All new nodes use the instance type configured in the existing worker pool
+- **Workarounds**:
+  - Pre-create separate worker pools for different instance types
+  - Use multiple NodeClasses targeting different worker pools
+
+```yaml
+# Example: Multiple NodeClasses for different instance types in IKS mode
+---
+apiVersion: karpenter.ibm.sh/v1alpha1
+kind: IBMNodeClass
+metadata:
+  name: small-instances
+spec:
+  iksClusterID: "cluster-id"
+  iksWorkerPoolID: "worker-pool-small"  # Pre-configured with small instances
+---
+apiVersion: karpenter.ibm.sh/v1alpha1
+kind: IBMNodeClass
+metadata:
+  name: large-instances
+spec:
+  iksClusterID: "cluster-id"
+  iksWorkerPoolID: "worker-pool-large"  # Pre-configured with large instances
+```
+
 ### Tagging and Metadata
 
 #### Basic Tagging Support
