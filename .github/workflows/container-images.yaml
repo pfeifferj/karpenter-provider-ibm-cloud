@@ -47,6 +47,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build custom base image with IBM Cloud CLI
+        run: |
+          # Build custom base image for both architectures
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file Dockerfile.base \
+            --tag karpenter-ibm-base:latest \
+            --load \
+            .
+
       - name: Set image tags
         id: tags
         run: |
