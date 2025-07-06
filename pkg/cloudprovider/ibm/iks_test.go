@@ -36,7 +36,7 @@ func TestNewIKSClient(t *testing.T) {
 	
 	assert.NotNil(t, iksClient)
 	assert.Equal(t, client, iksClient.client)
-	assert.Equal(t, "https://containers.cloud.ibm.com/global/v1", iksClient.baseURL)
+	assert.Equal(t, "https://containers.cloud.ibm.com/v1", iksClient.baseURL)
 	assert.NotNil(t, iksClient.httpClient)
 }
 

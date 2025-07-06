@@ -1,0 +1,16 @@
+# Ko configuration for Karpenter IBM Cloud Provider
+# This configuration ensures the container includes IBM Cloud CLI for E3917 fallback
+
+# Use custom base image with IBM Cloud CLI
+# Build this image first: docker build -f Dockerfile.base -t karpenter-ibm-base:latest .
+baseImportPaths:
+  github.com/pfeifferj/karpenter-provider-ibm-cloud/cmd/controller: karpenter-ibm-base:latest
+
+# Default settings
+defaultPlatforms:
+  - linux/amd64
+  - linux/arm64
+
+# Environment variables for runtime
+env:
+  - CGO_ENABLED=0

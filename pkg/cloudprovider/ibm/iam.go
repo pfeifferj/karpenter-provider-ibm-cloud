@@ -64,6 +64,7 @@ func NewIAMClient(apiKey string) *IAMClient {
 		Authenticator: &iamAuthenticator{
 			auth: &core.IamAuthenticator{
 				ApiKey: apiKey,
+				// Remove scope - IBM SDK doesn't support custom scopes this way
 			},
 		},
 	}
