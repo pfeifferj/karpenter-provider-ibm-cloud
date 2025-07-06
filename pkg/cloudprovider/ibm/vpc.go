@@ -72,6 +72,17 @@ func NewVPCClient(baseURL, authType, apiKey, region string) (*VPCClient, error) 
 	}, nil
 }
 
+// NewVPCClientWithMock creates a VPC client with a mock SDK client for testing
+func NewVPCClientWithMock(mockClient vpcClientInterface) *VPCClient {
+	return &VPCClient{
+		baseURL:  "test",
+		authType: "test",
+		apiKey:   "test",
+		region:   "test",
+		client:   mockClient,
+	}
+}
+
 func (c *VPCClient) CreateInstance(ctx context.Context, instancePrototype vpcv1.InstancePrototypeIntf) (*vpcv1.Instance, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("VPC client not initialized")

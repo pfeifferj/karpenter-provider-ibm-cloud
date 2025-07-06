@@ -28,16 +28,16 @@ import (
 
 func main() {
 	// Create core operator (handles options context properly)
-	ctx, op := operator.NewOperator(coreoperator.NewOperator())
+	coreCtx, coreOp := coreoperator.NewOperator()
+	ctx, op := operator.NewOperator(coreCtx, coreOp)
 
-	// Create IBM cloud provider using operator's providers
+	// Create IBM cloud provider using providers from the factory
 	ibmCloudProvider := ibmcloud.New(
 		op.GetClient(),
 		op.EventRecorder,
-		op.IBMClient,
-		op.InstanceTypeProvider,
-		op.InstanceProvider,
-		op.SubnetProvider,
+		op.ProviderFactory.GetClient(),
+		op.ProviderFactory.GetInstanceTypeProvider(),
+		op.ProviderFactory.GetSubnetProvider(),
 	)
 	cloudProvider := metrics.Decorate(ibmCloudProvider)
 	clusterState := state.NewCluster(op.Clock, op.GetClient(), cloudProvider)
@@ -61,8 +61,7 @@ func main() {
 			op.EventRecorder,
 			op.UnavailableOfferings,
 			cloudProvider,
-			op.InstanceProvider,
-			op.InstanceTypeProvider,
+			op.ProviderFactory.GetInstanceTypeProvider(),
 		)...).
 		Start(ctx)
 }
