@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -31,6 +32,28 @@ type IKSClient struct {
 	client    *Client
 	baseURL   string
 	httpClient *http.Client
+}
+
+// setIKSHeaders sets the required headers for IKS API requests
+func (c *IKSClient) setIKSHeaders(req *http.Request, token string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "IBM-Cloud-CLI/1.0.0")
+	
+	// Add regional targeting for global endpoint
+	region := c.client.GetRegion()
+	req.Header.Set("X-Region", region)
+	
+	// Add resource group context if available
+	if resourceGroupID := os.Getenv("IBM_RESOURCE_GROUP_ID"); resourceGroupID != "" {
+		req.Header.Set("X-Auth-Resource-Group", resourceGroupID)
+	}
+	
+	// Add headers to mimic IBM Cloud CLI behavior
+	req.Header.Set("X-CLI-Request", "true")
+	req.Header.Set("X-Service-Name", "containers-kubernetes")
+	req.Header.Set("X-Auth-User-Token", token)
 }
 
 // IKSWorkerDetails represents the response from IKS worker API
@@ -69,9 +92,13 @@ type IKSLifecycleStatus struct {
 
 // NewIKSClient creates a new IKS API client
 func NewIKSClient(client *Client) *IKSClient {
+	// Use correct containers API endpoint matching IBM Cloud CLI
+	// CLI uses v1 without 'global' prefix
+	baseURL := "https://containers.cloud.ibm.com/v1"
+	
 	return &IKSClient{
 		client:  client,
-		baseURL: "https://containers.cloud.ibm.com/global/v1",
+		baseURL: baseURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -96,8 +123,7 @@ func (c *IKSClient) GetWorkerDetails(ctx context.Context, clusterID, workerID st
 	}
 
 	// Set headers
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setIKSHeaders(req, token)
 
 	// Make request
 	resp, err := c.httpClient.Do(req)
@@ -219,8 +245,7 @@ func (c *IKSClient) GetClusterConfig(ctx context.Context, clusterID string) (str
 	}
 
 	// Set headers
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setIKSHeaders(req, token)
 
 	// Make request
 	resp, err := c.httpClient.Do(req)
@@ -300,8 +325,7 @@ func (c *IKSClient) ListWorkerPools(ctx context.Context, clusterID string) ([]*W
 	}
 
 	// Set headers
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setIKSHeaders(req, token)
 
 	// Make request
 	resp, err := c.httpClient.Do(req)
@@ -361,8 +385,7 @@ func (c *IKSClient) ResizeWorkerPool(ctx context.Context, clusterID, poolID stri
 	}
 
 	// Set headers
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setIKSHeaders(req, token)
 
 	// Make request
 	resp, err := c.httpClient.Do(req)
@@ -405,8 +428,7 @@ func (c *IKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID string)
 	}
 
 	// Set headers
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setIKSHeaders(req, token)
 
 	// Make request
 	resp, err := c.httpClient.Do(req)

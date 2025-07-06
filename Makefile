@@ -85,6 +85,14 @@ vendor: ## update modules and populate local vendor directory
 clean: ## Clean build artifacts
 	rm -rf $(BUILD_DIR)
 
+.PHONY: docker-base
+docker-base: ## Build custom base image with IBM Cloud CLI
+	docker build -f Dockerfile.base -t karpenter-ibm-base:latest .
+
+.PHONY: docker-build
+docker-build: docker-base build ## Build container image locally using Ko
+	ko build --local ./cmd/controller
+
 .PHONY: license
 license: ## Add license headers to all Go files
 	hack/boilerplate.sh
