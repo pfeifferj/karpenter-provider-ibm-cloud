@@ -93,7 +93,8 @@ func (c *Client) GetGlobalCatalogClient() (*GlobalCatalogClient, error) {
 
 // GetIKSClient returns a configured IKS API client interface
 func (c *Client) GetIKSClient() IKSClientInterface {
-	return NewIKSClient(c)
+	// Use hybrid client that falls back to CLI on E3917 errors
+	return NewHybridIKSClient(c)
 }
 
 // GetIAMClient returns the IAM client
