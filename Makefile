@@ -91,7 +91,7 @@ docker-base: ## Build custom base image with IBM Cloud CLI
 
 .PHONY: docker-build
 docker-build: docker-base build ## Build container image locally using Ko
-	ko build --local ./cmd/controller
+	KO_CONFIG_PATH=.ko.local.yaml ko build --local ./cmd/controller
 
 .PHONY: license
 license: ## Add license headers to all Go files

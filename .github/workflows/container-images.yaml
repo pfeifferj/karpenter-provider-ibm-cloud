@@ -47,11 +47,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build custom base image with IBM Cloud CLI
+      - name: Build and push custom base image with IBM Cloud CLI
         run: |
-          # Build custom base image for both architectures
+          # Build and push custom base image for both architectures
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
+            --file Dockerfile.base \
+            --tag ghcr.io/${{ github.repository }}/base:latest \
+            --push \
+            .
+          
+          # Also build for local use by Ko (single arch)
+          docker buildx build \
+            --platform linux/amd64 \
             --file Dockerfile.base \
             --tag karpenter-ibm-base:latest \
             --load \
