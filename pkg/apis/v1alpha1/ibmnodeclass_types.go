@@ -92,15 +92,22 @@ type InstanceTypeRequirements struct {
 // IBMNodeClassSpec defines the desired state of IBMNodeClass
 // +kubebuilder:validation:XValidation:rule="has(self.instanceProfile) || has(self.instanceRequirements)", message="either instanceProfile or instanceRequirements must be specified"
 // +kubebuilder:validation:XValidation:rule="!(has(self.instanceProfile) && has(self.instanceRequirements))", message="instanceProfile and instanceRequirements are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="self.bootstrapMode != 'iks-api' || has(self.iksClusterID)", message="iksClusterID is required when bootstrapMode is 'iks-api'"
+// +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == ''", message="zone must be within the specified region"
+// +kubebuilder:validation:XValidation:rule="self.vpc.matches('^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')", message="vpc must be a valid IBM Cloud VPC ID format"
+// +kubebuilder:validation:XValidation:rule="self.subnet == '' || self.subnet.matches('^[0-9]{4}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')", message="subnet must be a valid IBM Cloud subnet ID format"
+// +kubebuilder:validation:XValidation:rule="self.image.matches('^[a-z0-9-]+$')", message="image must contain only lowercase letters, numbers, and hyphens"
 type IBMNodeClassSpec struct {
 	// Region is the IBM Cloud region where nodes will be created
 	// +required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^[a-z]{2}-[a-z]+$"
 	Region string `json:"region"`
 
 	// Zone is the availability zone where nodes will be created
 	// If not specified, zones will be automatically selected based on placement strategy
 	// +optional
+	// +kubebuilder:validation:Pattern="^[a-z]{2}-[a-z]+-[0-9]+$"
 	Zone string `json:"zone,omitempty"`
 
 	// InstanceProfile is the name of the instance profile to use
@@ -108,6 +115,7 @@ type IBMNodeClassSpec struct {
 	// Either InstanceProfile or InstanceRequirements must be specified
 	// +optional
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^[a-z0-9]+-[0-9]+x[0-9]+$"
 	InstanceProfile string `json:"instanceProfile,omitempty"`
 
 	// InstanceRequirements defines requirements for automatic instance type selection
@@ -137,15 +145,19 @@ type IBMNodeClassSpec struct {
 	PlacementStrategy *PlacementStrategy `json:"placementStrategy,omitempty"`
 
 	// SecurityGroups is a list of security group IDs to attach to nodes
-	// +optional
-	SecurityGroups []string `json:"securityGroups,omitempty"`
+	// At least one security group must be specified for VPC instance creation
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:Items:Pattern="^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+	SecurityGroups []string `json:"securityGroups"`
 
 	// UserData contains user data script to run on instance initialization
 	// +optional
 	UserData string `json:"userData,omitempty"`
 
-	// SSHKeys is a list of SSH key IDs to add to the instance
+	// SSHKeys is a list of SSH key names to add to the instance
 	// +optional
+	// +kubebuilder:validation:Items:MinLength=1
+	// +kubebuilder:validation:Items:Pattern="^[a-z0-9-]+$"
 	SSHKeys []string `json:"sshKeys,omitempty"`
 
 	// ResourceGroup is the ID of the resource group for the instance
@@ -173,6 +185,7 @@ type IBMNodeClassSpec struct {
 	// IKSClusterID is the IKS cluster ID for API-based bootstrapping
 	// Required when BootstrapMode is "iks-api"
 	// +optional
+	// +kubebuilder:validation:Pattern="^[a-z0-9]+$"
 	IKSClusterID string `json:"iksClusterID,omitempty"`
 
 	// IKSWorkerPoolID is the worker pool ID to add nodes to
