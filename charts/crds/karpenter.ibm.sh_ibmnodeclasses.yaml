@@ -56,6 +56,7 @@ spec:
                 description: |-
                   IKSClusterID is the IKS cluster ID for API-based bootstrapping
                   Required when BootstrapMode is "iks-api"
+                pattern: ^[a-z0-9]+$
                 type: string
               iksWorkerPoolID:
                 description: |-
@@ -72,6 +73,7 @@ spec:
                   If not specified, instance types will be automatically selected based on requirements
                   Either InstanceProfile or InstanceRequirements must be specified
                 minLength: 1
+                pattern: ^[a-z0-9]+-[0-9]+x[0-9]+$
                 type: string
               instanceRequirements:
                 description: |-
@@ -147,19 +149,22 @@ spec:
               region:
                 description: Region is the IBM Cloud region where nodes will be created
                 minLength: 1
+                pattern: ^[a-z]{2}-[a-z]+$
                 type: string
               resourceGroup:
                 description: ResourceGroup is the ID of the resource group for the
                   instance
                 type: string
               securityGroups:
-                description: SecurityGroups is a list of security group IDs to attach
-                  to nodes
+                description: |-
+                  SecurityGroups is a list of security group IDs to attach to nodes
+                  At least one security group must be specified for VPC instance creation
                 items:
                   type: string
+                minItems: 1
                 type: array
               sshKeys:
-                description: SSHKeys is a list of SSH key IDs to add to the instance
+                description: SSHKeys is a list of SSH key names to add to the instance
                 items:
                   type: string
                 type: array
@@ -185,10 +190,12 @@ spec:
                 description: |-
                   Zone is the availability zone where nodes will be created
                   If not specified, zones will be automatically selected based on placement strategy
+                pattern: ^[a-z]{2}-[a-z]+-[0-9]+$
                 type: string
             required:
             - image
             - region
+            - securityGroups
             - vpc
             type: object
             x-kubernetes-validations:
@@ -196,6 +203,17 @@ spec:
               rule: has(self.instanceProfile) || has(self.instanceRequirements)
             - message: instanceProfile and instanceRequirements are mutually exclusive
               rule: '!(has(self.instanceProfile) && has(self.instanceRequirements))'
+            - message: iksClusterID is required when bootstrapMode is 'iks-api'
+              rule: self.bootstrapMode != 'iks-api' || has(self.iksClusterID)
+            - message: zone must be within the specified region
+              rule: self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1])
+                || self.zone == ''
+            - message: vpc must be a valid IBM Cloud VPC ID format
+              rule: self.vpc.matches('^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+            - message: subnet must be a valid IBM Cloud subnet ID format
+              rule: self.subnet == '' || self.subnet.matches('^[0-9]{4}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+            - message: image must contain only lowercase letters, numbers, and hyphens
+              rule: self.image.matches('^[a-z0-9-]+$')
           status:
             description: Status defines the observed state of IBMNodeClass
             properties:
