@@ -38,6 +38,7 @@ import (
 
 	"github.com/awslabs/operatorpkg/controller"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -47,6 +48,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
 	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
+	nodeclaimregistration "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
 	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
 	nodeclaasstatus "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/status"
@@ -96,6 +98,7 @@ func NewControllers(
 	mgr manager.Manager,
 	clk clock.Clock,
 	kubeClient client.Client,
+	kubernetesClient kubernetes.Interface,
 	recorder events.Recorder,
 	unavailableOfferings *cache.UnavailableOfferings,
 	cloudProvider cloudprovider.CloudProvider,
@@ -126,6 +129,11 @@ func NewControllers(
 	// Add garbage collection controller
 	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, cloudProvider)
 	controllers = append(controllers, garbageCollectionCtrl)
+
+	// Add NodeClaim registration controller for proper labeling and status management
+	if registrationCtrl, err := nodeclaimregistration.NewController(kubeClient); err == nil {
+		controllers = append(controllers, registrationCtrl)
+	}
 
 	// Add tagging controller (VPC mode only)
 	if taggingCtrl, err := nodeclaimtagging.NewController(kubeClient); err == nil {

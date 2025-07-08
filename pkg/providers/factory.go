@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
@@ -36,13 +37,14 @@ import (
 type ProviderFactory struct {
 	client          *ibm.Client
 	kubeClient      client.Client
+	kubernetesClient kubernetes.Interface
 	pricingProvider pricing.Provider
 	subnetProvider  subnet.Provider
 	instanceTypeProvider instancetype.Provider
 }
 
 // NewProviderFactory creates a new provider factory
-func NewProviderFactory(client *ibm.Client, kubeClient client.Client) *ProviderFactory {
+func NewProviderFactory(client *ibm.Client, kubeClient client.Client, kubernetesClient kubernetes.Interface) *ProviderFactory {
 	// Create shared providers
 	pricingProvider := pricing.NewIBMPricingProvider(client)
 	subnetProvider := subnet.NewProvider(client)
@@ -51,6 +53,7 @@ func NewProviderFactory(client *ibm.Client, kubeClient client.Client) *ProviderF
 	return &ProviderFactory{
 		client:               client,
 		kubeClient:           kubeClient,
+		kubernetesClient:     kubernetesClient,
 		pricingProvider:      pricingProvider,
 		subnetProvider:       subnetProvider,
 		instanceTypeProvider: instanceTypeProvider,
@@ -69,7 +72,12 @@ func (f *ProviderFactory) GetInstanceProvider(nodeClass *v1alpha1.IBMNodeClass) 
 	case commonTypes.IKSMode:
 		return iksProvider.NewIKSWorkerPoolProvider(f.client, f.kubeClient)
 	case commonTypes.VPCMode:
-		return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
+		if f.kubernetesClient != nil {
+			return vpcProvider.NewVPCInstanceProviderWithKubernetesClient(f.client, f.kubeClient, f.kubernetesClient)
+		} else {
+			// Fallback to standard constructor (will use in-cluster config)
+			return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
+		}
 	default:
 		return nil, fmt.Errorf("unknown provider mode: %s", mode)
 	}
@@ -86,7 +94,12 @@ func (f *ProviderFactory) GetVPCProvider(nodeClass *v1alpha1.IBMNodeClass) (comm
 		return nil, fmt.Errorf("VPC provider requested but NodeClass is configured for %s mode", mode)
 	}
 	
-	return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
+	if f.kubernetesClient != nil {
+		return vpcProvider.NewVPCInstanceProviderWithKubernetesClient(f.client, f.kubeClient, f.kubernetesClient)
+	} else {
+		// Fallback to standard constructor (will use in-cluster config)
+		return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
+	}
 }
 
 // GetIKSProvider returns an IKS-specific provider

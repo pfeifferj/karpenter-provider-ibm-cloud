@@ -277,7 +277,7 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 				// Don't add any cluster info sources - both configmap and service will fail
 			},
 			expectError:   true,
-			errorContains: "discovering cluster config",
+			errorContains: "getting internal API server endpoint",
 		},
 	}
 
