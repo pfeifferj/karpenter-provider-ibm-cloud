@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/karpenter/pkg/operator"
 
@@ -33,6 +34,7 @@ type Operator struct {
 	*operator.Operator
 	UnavailableOfferings *cache.UnavailableOfferings
 	ProviderFactory      *providers.ProviderFactory
+	KubernetesClient     kubernetes.Interface
 }
 
 func NewOperator(ctx context.Context, coreOperator *operator.Operator) (context.Context, *Operator) {
@@ -49,14 +51,22 @@ func NewOperator(ctx context.Context, coreOperator *operator.Operator) (context.
 		os.Exit(1)
 	}
 
+	// Create kubernetes client from the manager's config
+	kubernetesClient, err := kubernetes.NewForConfig(coreOperator.GetConfig())
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Failed to create kubernetes client")
+		os.Exit(1)
+	}
+
 	// Create provider factory with all providers
-	providerFactory := providers.NewProviderFactory(ibmClient, coreOperator.GetClient())
+	providerFactory := providers.NewProviderFactory(ibmClient, coreOperator.GetClient(), kubernetesClient)
 	unavailableOfferings := cache.NewUnavailableOfferings()
 
 	return ctx, &Operator{
 		Operator:             coreOperator,
 		UnavailableOfferings: unavailableOfferings,
 		ProviderFactory:      providerFactory,
+		KubernetesClient:     kubernetesClient,
 	}
 }
 

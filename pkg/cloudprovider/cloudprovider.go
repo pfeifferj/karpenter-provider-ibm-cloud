@@ -77,7 +77,7 @@ func New(kubeClient client.Client,
 		ibmClient:  ibmClient,
 
 		instanceTypeProvider: instanceTypeProvider,
-		providerFactory:      providers.NewProviderFactory(ibmClient, kubeClient),
+		providerFactory:      providers.NewProviderFactory(ibmClient, kubeClient, nil),
 		subnetProvider:       subnetProvider,
 		defaultProviderMode:  defaultMode,
 	}

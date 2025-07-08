@@ -43,6 +43,7 @@ func main() {
 			op.Manager,
 			op.Clock,
 			op.GetClient(),
+			op.KubernetesClient,
 			op.EventRecorder,
 			op.UnavailableOfferings,
 			cloudProvider,

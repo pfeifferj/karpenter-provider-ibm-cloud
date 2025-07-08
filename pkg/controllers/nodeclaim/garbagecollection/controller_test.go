@@ -499,3 +499,181 @@ func TestGarbageCollect_HandleNodeDeleteError(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, cloudProvider.deletedProviderIDs, "test-provider-id")
 }
+
+func TestReconcile_HandleStuckTerminatingNodeClaims(t *testing.T) {
+	// Create a stuck terminating NodeClaim (deletion timestamp > 10 minutes ago)
+	deletionTime := metav1.Time{Time: time.Now().Add(-15 * time.Minute)}
+	stuckNodeClaim := &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "stuck-nodeclaim",
+			DeletionTimestamp: &deletionTime,
+			Finalizers:        []string{"test-finalizer"},
+		},
+		Spec: karpv1.NodeClaimSpec{
+			NodeClassRef: &karpv1.NodeClassReference{
+				Group: "karpenter.ibm.sh",
+				Kind:  "IBMNodeClass",
+				Name:  "test-nodeclass",
+			},
+		},
+		Status: karpv1.NodeClaimStatus{
+			ProviderID: "ibm:///us-south/stuck-instance",
+			NodeName:   "stuck-node",
+		},
+	}
+
+	// Create a stuck node in NotReady state
+	stuckNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "stuck-node",
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm:///us-south/stuck-instance",
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{
+					Type:   corev1.NodeReady,
+					Status: corev1.ConditionFalse,
+					Reason: "NodeStatusUnknown",
+				},
+			},
+		},
+	}
+
+	cloudProvider := newMockCloudProvider()
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(stuckNodeClaim, stuckNode).
+		Build()
+
+	controller := NewController(kubeClient, cloudProvider)
+
+	result, err := controller.Reconcile(context.Background())
+	
+	assert.NoError(t, err)
+	assert.NotZero(t, result.RequeueAfter)
+
+	// Check that the stuck NodeClaim's finalizers were removed
+	var updatedNodeClaim karpv1.NodeClaim
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "stuck-nodeclaim"}, &updatedNodeClaim)
+	if err == nil {
+		assert.Empty(t, updatedNodeClaim.Finalizers, "stuck NodeClaim finalizers should be removed")
+	}
+	
+	// Verify cloud provider delete was called for stuck instance
+	assert.Contains(t, cloudProvider.deletedProviderIDs, "ibm:///us-south/stuck-instance")
+}
+
+func TestReconcile_SkipRecentTerminatingNodeClaims(t *testing.T) {
+	// Create a NodeClaim that's terminating but within timeout
+	recentDeletionTime := metav1.Time{Time: time.Now().Add(-5 * time.Minute)}
+	recentNodeClaim := &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "recent-nodeclaim",
+			DeletionTimestamp: &recentDeletionTime,
+			Finalizers:        []string{"test-finalizer"},
+		},
+		Spec: karpv1.NodeClaimSpec{
+			NodeClassRef: &karpv1.NodeClassReference{
+				Group: "karpenter.ibm.sh",
+				Kind:  "IBMNodeClass",
+				Name:  "test-nodeclass",
+			},
+		},
+		Status: karpv1.NodeClaimStatus{
+			ProviderID: "ibm:///us-south/recent-instance",
+		},
+	}
+
+	cloudProvider := newMockCloudProvider()
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(recentNodeClaim).
+		Build()
+
+	controller := NewController(kubeClient, cloudProvider)
+
+	result, err := controller.Reconcile(context.Background())
+	
+	assert.NoError(t, err)
+	assert.NotZero(t, result.RequeueAfter)
+
+	// Should NOT force cleanup recent NodeClaim
+	var updatedNodeClaim karpv1.NodeClaim
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "recent-nodeclaim"}, &updatedNodeClaim)
+	assert.NoError(t, err)
+	assert.Contains(t, updatedNodeClaim.Finalizers, "test-finalizer", "recent NodeClaim finalizers should remain")
+	
+	// Should not delete recent instance
+	assert.NotContains(t, cloudProvider.deletedProviderIDs, "ibm:///us-south/recent-instance")
+}
+
+func TestForceCleanupStuckNodeClaim_WithStuckPods(t *testing.T) {
+	// Create stuck terminating pod
+	podDeletionTime := metav1.Time{Time: time.Now().Add(-5 * time.Minute)}
+	stuckPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "stuck-pod",
+			Namespace:         "default",
+			DeletionTimestamp: &podDeletionTime,
+			Finalizers:        []string{"test-pod-finalizer"},
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "stuck-node",
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+	}
+
+	stuckNodeClaim := &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "stuck-nodeclaim",
+			DeletionTimestamp: &metav1.Time{Time: time.Now().Add(-15 * time.Minute)},
+			Finalizers:        []string{"test-finalizer"},
+		},
+		Status: karpv1.NodeClaimStatus{
+			ProviderID: "ibm:///us-south/stuck-instance",
+			NodeName:   "stuck-node",
+		},
+	}
+
+	stuckNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "stuck-node",
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm:///us-south/stuck-instance",
+		},
+	}
+
+	cloudProvider := newMockCloudProvider()
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(stuckNodeClaim, stuckNode, stuckPod).
+		WithIndex(&corev1.Pod{}, "spec.nodeName", func(obj client.Object) []string {
+			pod := obj.(*corev1.Pod)
+			if pod.Spec.NodeName == "" {
+				return nil
+			}
+			return []string{pod.Spec.NodeName}
+		}).
+		Build()
+
+	controller := NewController(kubeClient, cloudProvider)
+
+	err := controller.forceCleanupStuckNodeClaim(context.Background(), stuckNodeClaim)
+	
+	assert.NoError(t, err)
+	
+	// Verify finalizers were removed from NodeClaim
+	var updatedNodeClaim karpv1.NodeClaim
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "stuck-nodeclaim"}, &updatedNodeClaim)
+	if err == nil {
+		assert.Empty(t, updatedNodeClaim.Finalizers)
+	}
+	
+	// Verify cloud provider delete was called
+	assert.Contains(t, cloudProvider.deletedProviderIDs, "ibm:///us-south/stuck-instance")
+}
