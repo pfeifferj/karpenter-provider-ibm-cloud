@@ -58,6 +58,7 @@ type CloudProvider struct {
 	providerFactory      *providers.ProviderFactory
 	subnetProvider       subnet.Provider
 	defaultProviderMode  commonTypes.ProviderMode
+	circuitBreaker       *CircuitBreaker
 }
 
 func New(kubeClient client.Client,
@@ -71,6 +72,10 @@ func New(kubeClient client.Client,
 		defaultMode = commonTypes.IKSMode
 	}
 	
+	// Initialize circuit breaker with default config
+	logger := log.FromContext(context.Background()).WithName("circuit-breaker")
+	circuitBreaker := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logger)
+	
 	return &CloudProvider{
 		kubeClient: kubeClient,
 		recorder:   recorder,
@@ -80,6 +85,7 @@ func New(kubeClient client.Client,
 		providerFactory:      providers.NewProviderFactory(ibmClient, kubeClient, nil),
 		subnetProvider:       subnetProvider,
 		defaultProviderMode:  defaultMode,
+		circuitBreaker:       circuitBreaker,
 	}
 }
 
@@ -282,18 +288,32 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 
 	log.Info("Creating instance")
 	
+	// Circuit breaker check - validate against failure rate and concurrency safeguards
+	if cbErr := c.circuitBreaker.CanProvision(ctx, nodeClass.Name, nodeClass.Spec.Region, 0); cbErr != nil {
+		log.Error(cbErr, "Circuit breaker blocked provisioning",
+			"nodeClass", nodeClass.Name,
+			"region", nodeClass.Spec.Region)
+		c.recorder.Publish(ibmevents.NodeClaimFailedToResolveNodeClass(nodeClaim))
+		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("circuit breaker blocked provisioning: %w", cbErr))
+	}
+	
 	// Get the appropriate instance provider based on NodeClass configuration
 	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 	if err != nil {
 		log.Error(err, "Failed to get instance provider")
+		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
 		return nil, fmt.Errorf("getting instance provider, %w", err)
 	}
 	
 	node, err := instanceProvider.Create(ctx, nodeClaim)
 	if err != nil {
 		log.Error(err, "Failed to create instance")
+		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
+	
+	// Record successful provisioning
+	c.circuitBreaker.RecordSuccess(nodeClass.Name, nodeClass.Spec.Region)
 	log.Info("Successfully created instance", "providerID", node.Spec.ProviderID)
 
 	instanceType, _ := lo.Find(compatible, func(i *cloudprovider.InstanceType) bool {
