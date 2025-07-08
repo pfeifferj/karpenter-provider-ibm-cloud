@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -337,6 +338,7 @@ func TestCloudProvider_Create(t *testing.T) {
 				ibmClient:            nil, // We don't use IBM client in tests
 				instanceTypeProvider: &mockInstanceTypeProvider{instanceTypes: tt.instanceTypes},
 				providerFactory:      getTestProviderFactory(fakeClient),
+				circuitBreaker:       NewCircuitBreaker(DefaultCircuitBreakerConfig(), logr.Discard()),
 			}
 
 			// Test Create

@@ -71,9 +71,16 @@ manifests: ## generate the controller-gen kubernetes manifests
 .PHONY: test
 test: vendor unit
 
+.PHONY: ci
+ci: vendor unit lint ## Run all CI checks (tests + linting)
+
 .PHONY: unit
 unit: 
 	go test $(GTEST_ARGS) ./...
+
+.PHONY: lint
+lint: ## Run golangci-lint
+	golangci-lint run --timeout=5m
 
 .PHONY: vendor
 vendor: ## update modules and populate local vendor directory
