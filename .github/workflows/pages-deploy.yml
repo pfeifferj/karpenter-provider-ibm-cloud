@@ -1,0 +1,108 @@
+name: Deploy Documentation and Helm Charts to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'charts/**'
+      - '.github/workflows/pages-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.12.0'
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-mkdocs
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install MkDocs and dependencies
+        run: pip install -r docs/requirements.txt
+
+      - name: Build documentation
+        run: mkdocs build
+
+      - name: Package Helm charts
+        run: |
+          mkdir -p _helm-repo
+          
+          # Package all charts
+          for chart in charts/*/; do
+            if [ -f "$chart/Chart.yaml" ]; then
+              echo "Packaging chart: $chart"
+              helm package "$chart" --destination _helm-repo
+            fi
+          done
+          
+          # Generate index
+          helm repo index _helm-repo --url https://pfeifferj.github.io/karpenter-provider-ibm-cloud/charts
+
+      - name: Combine site content
+        run: |
+          # Copy docs to site root
+          cp -r site/* .
+          
+          # Add helm charts under /charts path
+          mkdir -p charts
+          cp -r _helm-repo/* charts/
+          
+          # Clean up build directories
+          rm -rf site _helm-repo
+
+      - name: Upload artifact for gh-pages
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-site
+          path: .
+          retention-days: 1
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Download built site
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation-site
+          path: _site
+          
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: _site
+          publish_branch: gh-pages
+          force_orphan: true

@@ -4,19 +4,6 @@ This document outlines the current limitations, constraints, and known issues wi
 
 ## IBM Cloud Platform Limitations
 
-### Instance Types and Capacity
-
-#### No Spot Instance Support
-
-#### Limited Instance Type Availability
-
-```yaml
-# Recommended: Multi-zone placement strategy
-spec:
-  placementStrategy:
-    zoneBalance: AvailabilityFirst
-```
-
 ### Networking Constraints
 
 #### Single Zone per NodeClass
@@ -119,52 +106,7 @@ spec:
 - **Missing**: Dynamic security group creation and management
 - **Workaround**: Pre-create security groups with required rules
 
-## Scale and Performance Constraints
-
-### Node Provisioning Limits
-
-#### API Rate Limits
-- **IBM Cloud VPC API**: Standard rate limits apply
-- **Impact**: May slow provisioning during high-scale events
-- **Mitigation**: Built-in retry logic and exponential backoff
-- **Monitoring**: Check controller logs for rate limit errors
-
-#### Concurrent Provisioning
-- **Current**: Limited by IBM Cloud API quotas
-- **Recommendation**: Monitor quota usage in IBM Cloud console
-- **Scaling**: Contact IBM Cloud support for quota increases
-
-### Resource Quotas
-
-#### VPC Resource Limits
-- **Instances per VPC**: Subject to IBM Cloud quotas
-- **Security Groups**: Limited per VPC
-- **Subnets**: Limited per VPC
-- **Monitoring**: Track usage via IBM Cloud monitoring
-
 ## Integration Limitations
-
-### Kubernetes Integration
-
-#### **Limited Admission Controller Support**
-- **Current**: Basic validation only
-- **Missing**: Advanced admission controller features
-- **Impact**: Complex validation rules not supported
-
-#### **Custom Resource Validation**
-- **CEL Validation**: Basic implementation
-- **Missing**: Complex cross-field validation
-- **Workaround**: Additional validation in controllers
-
-### Monitoring and Observability
-
-#### **Limited Metrics**
-- **Available**: Basic provisioning metrics
-- **Missing**:
-  - Detailed cost metrics
-  - Advanced performance metrics
-  - IBM Cloud specific metrics
-- **Roadmap**: Enhanced metrics in future releases
 
 ## Getting Help with Limitations
 
