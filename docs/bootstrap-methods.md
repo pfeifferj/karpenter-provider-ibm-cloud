@@ -1,57 +1,107 @@
 # Bootstrap Methods
 
+The Karpenter IBM Cloud Provider provides automatic node bootstrap capabilities to seamlessly join IBM Cloud VPC instances to your Kubernetes cluster. This document explains the available bootstrap methods and their configurations.
+
 ## Overview
 
-The Karpenter IBM Cloud Provider supports three bootstrap methods to join nodes to your Kubernetes cluster:
+The provider supports three bootstrap approaches:
 
-1. **Cloud-Init Bootstrap** - Full Kubernetes setup via cloud-init scripts
-2. **IKS API Bootstrap** - Native IBM Kubernetes Service integration
-3. **Auto Bootstrap** - Intelligent method selection
+1. **Auto Bootstrap** (Default) - Intelligent automatic method selection (Experimental)
+2. **VPC Bootstrap** - Direct cloud-init integration for self-managed clusters  
+3. **IKS Bootstrap** - Native IBM Kubernetes Service integration (Experimental)
 
-Each method has specific use cases, advantages, and requirements.
+The provider aims to automatically detect your cluster configuration and generates appropriate bootstrap scripts with no manual userData needed.
 
-## Cloud-Init Bootstrap
+## Auto Bootstrap (Experimentaal)
 
 ### When to Use
-- Self-managed Kubernetes clusters using VPC/non-IKS environments
+- **Simplified configuration** without manual bootstrap decisions
+
+### How It Works
+Auto Bootstrap should select the right bootstrap method based on your configuration:
+
+1. **IKS Detection**: If `iksClusterID` is provided and accessible → Uses IKS Bootstrap
+2. **VPC Fallback**: Otherwise → Uses VPC Bootstrap with automatic cluster discovery
 
 ### Configuration
 ```yaml
 apiVersion: karpenter.ibm.sh/v1alpha1
 kind: IBMNodeClass
 metadata:
-  name: nodeclass-cloudinit
+  name: auto-bootstrap-nodeclass
 spec:
-  bootstrapMode: cloud-init
   region: us-south
-  vpc: vpc-12345
-  image: ubuntu-20-04
-  userData: |
-    #!/bin/bash
-    echo "Custom user configuration"
+  zone: us-south-1
+  vpc: vpc-12345678
+  image: r006-ubuntu-20-04
+  
+  # Auto bootstrap (default - no bootstrapMode needed)
+  # Optionally provide IKS cluster ID for IKS preference
+  iksClusterID: "cluster-12345678"  # Optional
+  
+  # No userData required - fully automatic!
 ```
 
-### Features
+### Automatic Features
+- **Cluster Discovery**: Automatically detects cluster API endpoint and CA certificate
+- **Token Management**: Generates and refreshes bootstrap tokens automatically  
+- **Network Detection**: Discovers cluster CIDR and DNS configuration
+- **System Configuration**: Enables IP forwarding, disables swap, configures hostname
+- **Runtime Selection**: Auto-detects and configures container runtime (containerd/crio)
 
-#### Automatic Cluster Discovery
-- Detects cluster endpoint and CA certificate
-- Discovers DNS cluster IP automatically
-- Configures cluster CIDR from existing nodes
+## VPC Bootstrap (Cloud-Init)
 
-#### Dynamic CNI Detection
-- Auto-detects Calico, Cilium, or Flannel
-- Configures network plugins automatically
-- Falls back to generic CNI configuration
+### When to Use
+- **Self-managed Kubernetes clusters** running on IBM Cloud VPC
+- **Custom cluster configurations** requiring specific setup
 
-#### Container Runtime Setup
-- Installs and configures containerd (default)
-- Supports CRI-O 
-- Auto-detects runtime from cluster
+### Configuration
+```yaml
+apiVersion: karpenter.ibm.sh/v1alpha1
+kind: IBMNodeClass
+metadata:
+  name: vpc-bootstrap-nodeclass
+spec:
+  region: us-south
+  zone: us-south-1
+  vpc: vpc-12345678
+  image: r006-ubuntu-20-04
+  
+  # Explicit VPC bootstrap mode (optional - auto-detected)
+  bootstrapMode: vpc
+  
+  # Optional custom pre-bootstrap setup
+  userData: |
+    #!/bin/bash
+    echo "Custom pre-bootstrap configuration"
+    # Bootstrap script automatically appended
+```
 
-#### Complete Kubernetes Setup
-- Installs kubelet, kubeadm, kubectl
-- Configures systemd services
-- Sets up proper node labels and taints
+### Automatic Features
+
+#### **Intelligent Cluster Discovery**
+- **API Endpoint Detection**: Automatically finds internal cluster API server endpoint
+- **Certificate Authority**: Extracts cluster CA certificate from existing nodes
+- **DNS Configuration**: Discovers cluster DNS service IP and domain
+- **Network Setup**: Detects cluster pod and service CIDR ranges
+
+#### **Container Runtime Management**
+- **Containerd** (Default): Installs and configures containerd runtime
+- **CRI-O Support**: Alternative container runtime option
+- **Auto-Detection**: Analyzes existing cluster nodes to match runtime
+
+#### **CNI Plugin Integration**
+-  **Calico**: Full support with automatic configuration
+-  **Cilium**: Advanced networking with eBPF support  
+-  **Flannel**: Lightweight overlay networking
+-  **Auto-Detection**: Matches CNI plugin used by existing cluster nodes
+
+#### **Complete Kubernetes Setup**
+- **System Preparation**: Configures system requirements (swap, IP forwarding, hostname)
+- **Package Installation**: Installs kubelet, kubeadm, kubectl with correct versions
+- **Service Configuration**: Sets up systemd services and startup scripts
+- **Node Labeling**: Applies proper Karpenter and workload labels
+- **Bootstrap Process**: Executes kubeadm join with proper configuration
 
 ### Customization Options
 
@@ -83,204 +133,138 @@ export CNI_PLUGIN=cilium
 export DEBUG=true
 ```
 
-## IKS API Bootstrap
+## IKS Bootstrap (Experimental)
 
 ### When to Use
-- IBM Kubernetes Service (IKS) clusters
+- **IBM Kubernetes Service (IKS) clusters** with existing worker pools
+- **Consistent worker pool management** across teams
 
 ### Configuration
 ```yaml
 apiVersion: karpenter.ibm.sh/v1alpha1
 kind: IBMNodeClass
 metadata:
-  name: nodeclass-iks
+  name: iks-bootstrap-nodeclass
 spec:
-  bootstrapMode: iks-api
   region: us-south
-  vpc: vpc-12345
-  image: ubuntu-20-04
-  iksClusterID: bq4f2r4w0g0r5v8dufsg
-  iksWorkerPoolID: bq4f2r4w0g0r5v8dufsg-pool  # Optional
+  zone: us-south-1
+  vpc: vpc-iks-12345
+  image: r006-ubuntu-20-04
+  
+  # IKS-specific configuration
+  iksClusterID: "cluster-12345678"        # Required: Your IKS cluster ID
+  iksWorkerPoolID: "pool-default"         # Optional: specific worker pool
+  
+  # Optional: Custom post-registration setup
   userData: |
     #!/bin/bash
-    echo "Custom post-registration setup"
+    echo "Post-IKS registration customization"
+    # Custom configuration after node joins IKS cluster
 ```
 
 ### Features
 
-#### Native IKS Integration
-- Uses IBM Kubernetes Service APIs
-- Automatic worker registration
-- Consistent with IKS worker pools
+#### **Native IKS Integration**
+- **Worker Pool API**: Uses IBM Kubernetes Service worker pool resize APIs
+- **Automatic Registration**: Nodes automatically join IKS cluster through worker pools
 
-#### Simplified Configuration
-- No Kubernetes installation required
-- Automatic cluster configuration
-- IBM-managed security and compliance
+### Important Constraints
 
-#### Health Monitoring
-- Built-in health checks
-- Integration with IKS monitoring
-- Automatic failure detection
+#### **Instance Type Limitations**
+- **Constraint**: Cannot dynamically select instance types in IKS mode
+- **Reason**: IKS Worker Pool API uses pre-configured instance types
+- **Impact**: `instanceProfile` and `instanceRequirements` are ignored
+- **Solution**: Pre-create worker pools for different instance types
+
+```yaml
+# Example: Multiple NodeClasses for different instance types
+---
+apiVersion: karpenter.ibm.sh/v1alpha1
+kind: IBMNodeClass
+metadata:
+  name: iks-small-instances
+spec:
+  iksClusterID: "cluster-12345678"
+  iksWorkerPoolID: "pool-small"     # Pre-configured with bx2-2x8
+---
+apiVersion: karpenter.ibm.sh/v1alpha1
+kind: IBMNodeClass
+metadata:
+  name: iks-large-instances
+spec:
+  iksClusterID: "cluster-12345678"  
+  iksWorkerPoolID: "pool-large"     # Pre-configured with bx2-8x32
+```
 
 ### Requirements
 
-#### **IKS Cluster ID**
-- Must be a valid IKS cluster ID
-- Cluster must be in same region as nodes
-- API key must have access to cluster
-
-## Auto Bootstrap
-
-### When to Use
-- Simplified configuration
-
-### Configuration
-```yaml
-apiVersion: karpenter.ibm.sh/v1alpha1
-kind: IBMNodeClass
-metadata:
-  name: nodeclass-auto
-spec:
-  bootstrapMode: auto  # Default value
-  region: us-south
-  vpc: vpc-12345
-  image: ubuntu-20-04
-  # Optional: Provide IKS cluster ID for IKS API preference
-  iksClusterID: bq4f2r4w0g0r5v8dufsg
-```
-
-### Selection Logic
-
-#### **Method Selection Priority**:
-1. **IKS API Mode** (if conditions met):
-   - Valid `iksClusterID` provided
-   - IKS cluster accessible
-   - API credentials valid
-
-2. **Cloud-Init Mode** (fallback):
-   - No IKS cluster ID provided
-   - IKS API unavailable
-   - Self-managed cluster detected
-
-### Environment Variable Support
-
-All bootstrap modes support environment variable configuration:
-
-```bash
-# Bootstrap mode override
-export BOOTSTRAP_MODE=cloud-init  # or iks-api, auto
-
-# IKS configuration
-export IKS_CLUSTER_ID=your-cluster-id
-export IKS_WORKER_POOL_ID=your-pool-id
-
-# Container runtime
-export CONTAINER_RUNTIME=containerd  # or crio
-
-# CNI plugin
-export CNI_PLUGIN=calico  # or cilium, flannel
-
-# Debug settings
-export DEBUG=true
-```
+#### **IKS Cluster Access**
+- Valid IKS cluster ID in same region as nodes
+- API key with IKS cluster access permissions
+- Worker pools pre-configured with desired instance types
 
 ## Advanced Configuration
 
-### Multi-Mode Deployment
+### Environment Variables
+All bootstrap modes support environment variable customization:
 
-**Scenario**: Different NodeClasses for different workloads
+```bash
+# Bootstrap behavior
+export KARPENTER_LOG_LEVEL=debug         # Enhanced logging
+export BOOTSTRAP_TIMEOUT=600             # Bootstrap timeout in seconds
 
-```yaml
-# Production workloads - IKS API for consistency
----
-apiVersion: karpenter.ibm.sh/v1alpha1
-kind: IBMNodeClass
-metadata:
-  name: production-nodes
-spec:
-  bootstrapMode: iks-api
-  iksClusterID: prod-cluster-id
-  instanceProfile: mx2-4x32
-  
-# Development workloads - Cloud-init for flexibility  
----
-apiVersion: karpenter.ibm.sh/v1alpha1
-kind: IBMNodeClass
-metadata:
-  name: dev-nodes
-spec:
-  bootstrapMode: cloud-init
-  instanceProfile: bx2-2x8
-  userData: |
-    #!/bin/bash
-    # Development-specific configuration
-    echo "dev=true" >> /etc/environment
-```
+# Container runtime preferences
+export CONTAINER_RUNTIME=containerd      # or crio
+export CONTAINERD_VERSION=1.7.2          # Specific version
 
-### Bootstrap Customization
+# CNI plugin preferences  
+export CNI_PLUGIN=calico                 # or cilium, flannel
+export CNI_VERSION=v3.26.0               # Specific CNI version
 
-#### **Custom CNI Configuration**
-```yaml
-spec:
-  bootstrapMode: cloud-init
-  userData: |
-    #!/bin/bash
-    # Install custom CNI plugin
-    curl -L -o /opt/cni/bin/custom-cni https://releases.example.com/cni
-    
-    # Custom CNI configuration
-    cat > /etc/cni/net.d/10-custom.conf <<EOF
-    {
-      "cniVersion": "0.4.0",
-      "name": "custom-network",
-      "type": "custom-cni"
-    }
-    EOF
-```
-
-#### **Security Hardening**
-```yaml
-spec:
-  userData: |
-    #!/bin/bash
-    # Security configurations
-    echo "net.ipv4.ip_forward=0" >> /etc/sysctl.conf
-    
-    # Install security tools
-    apt-get install -y fail2ban aide
-    
-    # Configure firewall
-    ufw enable
-    ufw default deny incoming
+# System configuration
+export ENABLE_IP_FORWARDING=true         # Enable IP forwarding
+export DISABLE_SWAP=true                 # Disable swap
+export HOSTNAME_STRATEGY=ibm-cloud       # Hostname configuration strategy
 ```
 
 ## Troubleshooting Bootstrap Issues
 
-### Common Problems
+### Common Problems and Solutions
 
-#### **Bootstrap Script Failures**
+#### **Bootstrap Script Debugging**
 ```bash
-# Check bootstrap logs
-sudo journalctl -u cloud-final
-sudo tail -f /var/log/cloud-init-output.log
+# Check cloud-init logs on the instance
+ssh ubuntu@<instance-ip> "sudo journalctl -u cloud-final"
+ssh ubuntu@<instance-ip> "sudo tail -f /var/log/cloud-init-output.log"
 
-# Debug bootstrap script
-sudo cat /var/lib/cloud/instance/scripts/part-001
+# View the generated bootstrap script
+ssh ubuntu@<instance-ip> "sudo cat /var/lib/cloud/instance/scripts/*"
+
+# Check bootstrap script execution status
+ssh ubuntu@<instance-ip> "sudo systemctl status cloud-final"
 ```
 
 #### **Cluster Join Failures**
 ```bash
-# Check kubelet status
-sudo systemctl status kubelet
-sudo journalctl -u kubelet --no-pager
+# Check kubelet status and logs
+ssh ubuntu@<instance-ip> "sudo systemctl status kubelet"
+ssh ubuntu@<instance-ip> "sudo journalctl -u kubelet --no-pager -n 50"
 
 # Verify cluster connectivity
-kubectl config view
-curl -k https://CLUSTER_ENDPOINT/healthz
+ssh ubuntu@<instance-ip> "curl -k https://CLUSTER_ENDPOINT/healthz"
+
+# Check kubeadm join process
+ssh ubuntu@<instance-ip> "sudo journalctl | grep kubeadm"
 ```
 
-## Related Documentation
+#### **Network Connectivity Issues**
+```bash
+# Test DNS resolution
+ssh ubuntu@<instance-ip> "nslookup kubernetes.default.svc.cluster.local"
 
-- [Supported CNI/CRI](./supported-cni-cri.md) - Compatible network and runtime plugins
-- [Limitations](./limitations.md) - Current constraints and workarounds
+# Check if required ports are accessible
+ssh ubuntu@<instance-ip> "nc -zv CLUSTER_ENDPOINT 6443"
+
+# Verify security group rules allow cluster communication
+ibmcloud is security-group <security-group-id> --output json
+```
