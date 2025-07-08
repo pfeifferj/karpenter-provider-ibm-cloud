@@ -466,6 +466,12 @@ func (p *VPCInstanceProvider) getBasicBootstrapScript(nodeClass *v1alpha1.IBMNod
 # Karpenter IBM Cloud Provider - Basic Bootstrap
 # This is a fallback script when automatic bootstrap generation fails
 echo "$(date): Basic bootstrap for region %s"
+
+# Essential system configuration for kubeadm (CRITICAL FIX)
+echo "$(date): Configuring system for kubeadm..."
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf && sysctl -p
+swapoff -a && sed -i '/swap/d' /etc/fstab
+
 echo "$(date): Manual configuration required for cluster joining"
 echo "$(date): Set nodeClass.spec.userData with proper bootstrap script"
 # To make nodes join the cluster, you need to provide:
