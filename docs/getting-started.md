@@ -1,202 +1,132 @@
-# Quick Start Guide
+# Getting Started with Karpenter IBM Cloud Provider
 
-Get up and running with Karpenter IBM Cloud Provider!
+This guide walks you through setting up Karpenter IBM Cloud Provider from installation to your first auto-scaled workload.
 
 ## Prerequisites
 
-- IBM Cloud account with VPC access
-- Kubernetes cluster (IKS or self-managed)
-- `kubectl` configured for your cluster
-- IBM Cloud CLI installed
+Before starting, ensure you have:
 
-## Required IBM Cloud Resources
+### Required Access
+- **IBM Cloud Account** with VPC Infrastructure Services access
+- **Kubernetes Cluster** (IKS or self-managed on IBM Cloud VPC)
+- **kubectl** configured for your cluster
+- **Helm 3** for installation
 
-Before installing Karpenter, ensure you have:
-
-### VPC Infrastructure
+### Required Tools
 ```bash
-# List your VPCs
-ibmcloud is vpcs
+# Verify tools are available
+kubectl version --client
+helm version
+ibmcloud version
 
-# List subnets in your VPC
-ibmcloud is subnets --vpc your-vpc-id
-
-# List security groups
-ibmcloud is security-groups --vpc your-vpc-id
+# Install IBM Cloud CLI if needed
+curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+ibmcloud plugin install vpc-infrastructure
 ```
 
-### API Keys
-```bash
-# Create IBM Cloud API key
-ibmcloud iam api-key-create karpenter-key --description "Karpenter IBM Cloud Provider"
+## IBM Cloud Setup
 
-# Create VPC-specific API key  
-ibmcloud iam api-key-create karpenter-vpc-key --description "Karpenter VPC Access"
+### Step 1: Create Service ID and API Keys
+For production environments, use Service IDs for better security:
+
+```bash
+# Login to IBM Cloud
+ibmcloud login
+
+# Create Service ID for Karpenter
+ibmcloud iam service-id-create karpenter-provider \
+  --description "Service ID for Karpenter IBM Cloud Provider"
+
+# Get Service ID
+SERVICE_ID=$(ibmcloud iam service-ids --output json | jq -r '.[] | select(.name=="karpenter-provider") | .id')
+
+# Assign VPC Infrastructure Services role
+ibmcloud iam service-policy-create $SERVICE_ID \
+  --roles "VPC Infrastructure Services" \
+  --service-name is
+
+# Create API keys
+ibmcloud iam service-api-key-create karpenter-general $SERVICE_ID \
+  --description "General IBM Cloud API access for Karpenter"
+
+ibmcloud iam service-api-key-create karpenter-vpc $SERVICE_ID \
+  --description "VPC-specific API access for Karpenter"
 ```
 
-### Resource IDs
-Collect the following information:
-- **VPC ID**: `r006-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- **Subnet ID(s)**: `0717-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- **Security Group ID(s)**: `r006-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- **Image ID**: Use `ubuntu-20-04` or specific image ID
-- **Region**: e.g., `us-south`
+**Save the API keys securely - they won't be shown again!**
 
-## Quick Installation
+### Step 2: Gather Required Resource Information
 
-### Step 1: Install Karpenter
+```bash
+# Set your target region
+export REGION=us-south
+ibmcloud target -r $REGION
+
+# List available VPCs
+ibmcloud is vpcs --output json
+
+# Choose your VPC and list subnets
+export VPC_ID="your-vpc-id"
+ibmcloud is subnets --vpc $VPC_ID --output json
+
+# List security groups in your VPC
+ibmcloud is security-groups --vpc $VPC_ID --output json
+
+# List available images
+ibmcloud is images --visibility public --status available | grep ubuntu
+```
+
+**Collect the following information:**
+- **VPC ID**: `vpc-12345678` (from VPC list)
+- **Subnet ID**: `subnet-12345678` (choose one per zone you want to use)
+- **Security Group ID**: `sg-12345678` (existing or create new)
+- **Image ID**: `r006-12345678` (Ubuntu 20.04 recommended)
+- **Region**: `us-south` (or your preferred region)
+- **Zone**: `us-south-1` (subnet's availability zone)
+
+## Installation
+
+### Step 1: Install Helm Chart
+
+Install directly with API keys as helm values:
+
 ```bash
 # Add Helm repository
 helm repo add karpenter-ibm https://pfeifferj.github.io/karpenter-provider-ibm-cloud
 helm repo update
 
-# Install Karpenter with IBM Cloud Provider
+# Install with your API keys
 helm install karpenter karpenter-ibm/karpenter \
   --namespace karpenter \
   --create-namespace \
-  --set controller.env.IBM_API_KEY="your-ibm-api-key" \
-  --set controller.env.VPC_API_KEY="your-vpc-api-key" \
-  --set controller.env.IBM_REGION="us-south"
+  --set credentials.region="us-south" \
+  --set credentials.ibm_api_key="your-general-api-key" \
+  --set credentials.vpc_api_key="your-vpc-api-key"
 ```
 
-### Step 2: Create NodeClass
+### Step 2: Verify Installation
 ```bash
-cat <<EOF | kubectl apply -f -
-apiVersion: karpenter.ibm.sh/v1alpha1
-kind: IBMNodeClass
-metadata:
-  name: default-nodeclass
-spec:
-  region: us-south
-  vpc: r006-your-vpc-id
-  image: ubuntu-20-04
-  securityGroups:
-    - r006-your-security-group-id
-  subnet: 0717-your-subnet-id
-  bootstrapMode: auto
-EOF
+# Check if pods are running
+kubectl get pods -n karpenter
+
+# Check controller logs for startup
+kubectl logs -n karpenter deployment/karpenter -f
+
+# Look for successful controller startup messages
+# Expected: "Starting Controller" for nodepool, nodeclaim, nodeclass controllers
 ```
 
-### Step 3: Create NodePool
-```bash
-cat <<EOF | kubectl apply -f -
-apiVersion: karpenter.sh/v1
-kind: NodePool
-metadata:
-  name: default-nodepool
-spec:
-  template:
-    metadata:
-      labels:
-        node-type: karpenter-provisioned
-    spec:
-      nodeClassRef:
-        apiVersion: karpenter.ibm.sh/v1alpha1
-        kind: IBMNodeClass
-        name: default-nodeclass
-      requirements:
-        - key: node.kubernetes.io/instance-type
-          operator: In
-          values: ["bx2-2x8", "bx2-4x16", "mx2-2x16"]
-        - key: kubernetes.io/arch
-          operator: In
-          values: ["amd64"]
-  limits:
-    cpu: 1000
-  disruption:
-    consolidationPolicy: WhenEmpty
-    consolidateAfter: 30s
-EOF
+**Expected Output:**
+```
+Starting Controller {"controller": "nodepool", "controllerGroup": "karpenter.sh"}
+Starting Controller {"controller": "nodeclaim", "controllerGroup": "karpenter.sh"}
+Starting Controller {"controller": "nodeclass.hash", "controllerGroup": "karpenter.ibm.sh"}
+Starting Controller {"controller": "pricing", "controllerGroup": "karpenter.ibm.sh"}
 ```
 
-### Step 4: Test Auto-Scaling
-```bash
-# Deploy a test workload
-cat <<EOF | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: test-workload
-spec:
-  replicas: 5
-  selector:
-    matchLabels:
-      app: test-workload
-  template:
-    metadata:
-      labels:
-        app: test-workload
-    spec:
-      containers:
-      - name: test
-        image: busybox
-        command: ["sleep", "3600"]
-        resources:
-          requests:
-            cpu: 4
-            memory: 12Gi
-EOF
-```
+### Step 3: Create Your First NodeClass
 
-## Common Configurations
+Choose the configuration that matches your environment:
 
-### For IKS Clusters
-```yaml
-apiVersion: karpenter.ibm.sh/v1alpha1
-kind: IBMNodeClass
-metadata:
-  name: iks-nodeclass
-spec:
-  region: us-south
-  vpc: r006-your-vpc-id
-  image: ubuntu-20-04
-  bootstrapMode: iks-api
-  iksClusterID: your-iks-cluster-id
-```
-
-### For Custom Container Runtime
-```yaml
-spec:
-  userData: |
-    #!/bin/bash
-    export CONTAINER_RUNTIME=crio
-```
-
-### For Specific CNI
-```yaml
-spec:
-  userData: |
-    #!/bin/bash
-    export CNI_PLUGIN=cilium
-```
-
-## Troubleshooting Quick Fixes
-
-### NodeClass Not Ready
-```bash
-# Check validation errors
-kubectl describe ibmnodeclass default-nodeclass
-
-# Common issues:
-# - Invalid VPC/subnet IDs
-# - Incorrect region
-# - Missing API key permissions
-```
-
-### Nodes Not Provisioning
-```bash
-# Check NodeClaim status
-kubectl get nodeclaims -o wide
-
-# Check controller logs for errors
-kubectl logs -n karpenter deployment/karpenter-controller --tail=50
-```
-
-### Pod Still Pending
-```bash
-# Verify pod resource requirements match instance types
-kubectl describe pod your-pending-pod
-
-# Check NodePool limits
-kubectl describe nodepool default-nodepool
-```
+- **[IKS Integration](iks-integration.md)** - For IBM Kubernetes Service clusters
+- **[VPC Integration](vpc-integration.md)** - For self-managed clusters on IBM Cloud VPC

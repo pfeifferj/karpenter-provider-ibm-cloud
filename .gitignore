@@ -14,6 +14,7 @@ go.work.sum
 
 # Project Specific
 *.csv
+site/
 
 # Binaries for programs and plugins
 *.exe
