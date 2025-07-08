@@ -23,6 +23,8 @@ import (
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,12 +36,15 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/image"
 	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/bootstrap"
 )
 
 // VPCInstanceProvider implements VPC-specific instance provisioning
 type VPCInstanceProvider struct {
-	client     *ibm.Client
-	kubeClient client.Client
+	client            *ibm.Client
+	kubeClient        client.Client
+	k8sClient         kubernetes.Interface
+	bootstrapProvider *bootstrap.VPCBootstrapProvider
 }
 
 // NewVPCInstanceProvider creates a new VPC instance provider
@@ -48,11 +53,28 @@ func NewVPCInstanceProvider(client *ibm.Client, kubeClient client.Client) (commo
 		return nil, fmt.Errorf("IBM client cannot be nil")
 	}
 	
-	// Bootstrap provider will be initialized when needed
+	return &VPCInstanceProvider{
+		client:            client,
+		kubeClient:        kubeClient,
+		k8sClient:         nil, // Will be set via dependency injection
+		bootstrapProvider: nil, // Will be lazily initialized when needed
+	}, nil
+}
+
+// NewVPCInstanceProviderWithKubernetesClient creates a new VPC instance provider with proper kubernetes client injection
+func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient client.Client, kubernetesClient kubernetes.Interface) (commonTypes.VPCInstanceProvider, error) {
+	if client == nil {
+		return nil, fmt.Errorf("IBM client cannot be nil")
+	}
+	
+	// Create bootstrap provider immediately with proper dependency injection
+	bootstrapProvider := bootstrap.NewVPCBootstrapProvider(client, kubernetesClient)
 	
 	return &VPCInstanceProvider{
-		client:     client,
-		kubeClient: kubeClient,
+		client:            client,
+		kubeClient:        kubeClient,
+		k8sClient:         kubernetesClient,
+		bootstrapProvider: bootstrapProvider,
 	}, nil
 }
 
@@ -176,15 +198,13 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		instancePrototype.Keys = sshKeys
 	}
 
-	// Generate bootstrap user data
-	// For VPC mode, we use cloud-init with kubeadm
-	userData := nodeClass.Spec.UserData
-	if userData == "" {
-		// Provide basic cloud-init script
-		userData = `#!/bin/bash
-echo "Node provisioned by Karpenter IBM Cloud Provider (VPC mode)"
-# Additional bootstrap logic would go here
-`
+	// Generate bootstrap user data using the bootstrap provider
+	userData, err := p.generateBootstrapUserData(ctx, nodeClass, types.NamespacedName{
+		Name:      nodeClaim.Name,
+		Namespace: nodeClaim.Namespace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generating bootstrap user data: %w", err)
 	}
 	
 	// Set user data
@@ -380,4 +400,77 @@ func (p *VPCInstanceProvider) getDefaultSecurityGroup(ctx context.Context, vpcCl
 // isIBMInstanceNotFoundError checks if the error indicates an instance was not found in IBM Cloud VPC
 func isIBMInstanceNotFoundError(err error) bool {
 	return ibm.IsNotFound(err)
+}
+
+// generateBootstrapUserData generates bootstrap user data using the VPC bootstrap provider
+func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error) {
+	logger := log.FromContext(ctx)
+	
+	// If manual userData is provided, use it as-is (fallback behavior)
+	if nodeClass.Spec.UserData != "" {
+		logger.Info("Using manual userData from IBMNodeClass")
+		return nodeClass.Spec.UserData, nil
+	}
+	
+	// Initialize bootstrap provider if not already done
+	if p.bootstrapProvider == nil {
+		if p.k8sClient != nil {
+			// Use properly injected kubernetes client
+			p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, p.k8sClient)
+		} else {
+			// Fallback to creating kubernetes client (for backward compatibility)
+			k8sClient, err := p.createKubernetesClient(ctx)
+			if err != nil {
+				logger.Error(err, "Failed to create kubernetes client, falling back to basic bootstrap")
+				return p.getBasicBootstrapScript(nodeClass), nil
+			}
+			
+			p.k8sClient = k8sClient
+			p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, k8sClient)
+		}
+	}
+	
+	// Generate dynamic bootstrap script
+	logger.Info("Generating dynamic bootstrap script with automatic cluster discovery")
+	userData, err := p.bootstrapProvider.GetUserData(ctx, nodeClass, nodeClaim)
+	if err != nil {
+		logger.Error(err, "Failed to generate bootstrap user data, falling back to basic bootstrap")
+		return p.getBasicBootstrapScript(nodeClass), nil
+	}
+	
+	logger.Info("Successfully generated dynamic bootstrap script")
+	return userData, nil
+}
+
+// createKubernetesClient creates a kubernetes.Interface from the in-cluster config
+func (p *VPCInstanceProvider) createKubernetesClient(ctx context.Context) (kubernetes.Interface, error) {
+	// Since we're running inside the cluster, we can use the in-cluster config
+	// This is the same config that the controller-runtime client uses
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("creating in-cluster config: %w", err)
+	}
+	
+	// Create kubernetes clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("creating kubernetes clientset: %w", err)
+	}
+	
+	return clientset, nil
+}
+
+// getBasicBootstrapScript returns a basic bootstrap script when automatic generation fails
+func (p *VPCInstanceProvider) getBasicBootstrapScript(nodeClass *v1alpha1.IBMNodeClass) string {
+	return fmt.Sprintf(`#!/bin/bash
+# Karpenter IBM Cloud Provider - Basic Bootstrap
+# This is a fallback script when automatic bootstrap generation fails
+echo "$(date): Basic bootstrap for region %s"
+echo "$(date): Manual configuration required for cluster joining"
+echo "$(date): Set nodeClass.spec.userData with proper bootstrap script"
+# To make nodes join the cluster, you need to provide:
+# 1. Bootstrap token: kubectl create token --print-join-command
+# 2. Internal API endpoint (not external)
+# 3. Proper hostname configuration for IBM Cloud
+`, nodeClass.Spec.Region)
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,34 +47,33 @@ func NewVPCBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface)
 // GetUserData generates VPC-specific user data for node bootstrapping using cloud-init
 func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Generating VPC cloud-init user data")
+	logger.Info("Generating VPC cloud-init user data for dynamic bootstrap")
 
-	// Discover cluster configuration
-	clusterConfig, err := commonTypes.DiscoverClusterConfig(ctx, p.k8sClient)
+	// Get internal API server endpoint (use internal cluster IP)
+	clusterEndpoint, err := commonTypes.GetInternalAPIServerEndpoint(ctx, p.k8sClient)
 	if err != nil {
-		return "", fmt.Errorf("discovering cluster config: %w", err)
+		return "", fmt.Errorf("getting internal API server endpoint: %w", err)
 	}
 
-	// Get cluster information
-	clusterInfo, err := p.getClusterInfo(ctx)
+	// Generate or find bootstrap token (valid for 24 hours)
+	bootstrapToken, err := commonTypes.FindOrCreateBootstrapToken(ctx, p.k8sClient, 24*time.Hour)
 	if err != nil {
-		return "", fmt.Errorf("getting cluster info: %w", err)
+		return "", fmt.Errorf("generating bootstrap token: %w", err)
 	}
 
 	// Build bootstrap options for VPC mode
 	options := commonTypes.Options{
-		ClusterName:      clusterInfo.ClusterName,
-		ClusterEndpoint:  clusterInfo.Endpoint,
-		CABundle:         string(clusterInfo.CAData),
-		ContainerRuntime: p.detectContainerRuntime(ctx),
-		CNIPlugin:        clusterConfig.CNIPlugin,
-		DNSClusterIP:     clusterConfig.DNSClusterIP,
-		ClusterCIDR:      clusterConfig.ClusterCIDR,
+		ClusterEndpoint:  clusterEndpoint,
+		BootstrapToken:   bootstrapToken,
 		CustomUserData:   nodeClass.Spec.UserData,
 		Region:           nodeClass.Spec.Region,
 		Zone:             nodeClass.Spec.Zone,
-		KubeletConfig:    p.buildKubeletConfig(clusterConfig),
 	}
+
+	logger.Info("Generated bootstrap configuration", 
+		"endpoint", clusterEndpoint,
+		"token", fmt.Sprintf("%s...", bootstrapToken[:10]),
+		"region", nodeClass.Spec.Region)
 
 	// Generate cloud-init script for VPC
 	return p.generateCloudInitScript(ctx, options)

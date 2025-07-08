@@ -41,16 +41,25 @@ import (
 )
 
 type Controller struct {
-	kubeClient      client.Client
-	cloudProvider   cloudprovider.CloudProvider
-	successfulCount uint64 // keeps track of successful reconciles for more aggressive requeueing near the start of the controller
+	kubeClient         client.Client
+	cloudProvider      cloudprovider.CloudProvider
+	successfulCount    uint64 // keeps track of successful reconciles for more aggressive requeueing near the start of the controller
+	terminationTimeout time.Duration
 }
+
+const (
+	// DefaultTerminationTimeout is the maximum time to wait for graceful termination
+	DefaultTerminationTimeout = 10 * time.Minute
+	// StuckResourceCheckInterval is how often to check for stuck terminating resources
+	StuckResourceCheckInterval = 5 * time.Minute
+)
 
 func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) *Controller {
 	return &Controller{
-		kubeClient:      kubeClient,
-		cloudProvider:   cloudProvider,
-		successfulCount: 0,
+		kubeClient:         kubeClient,
+		cloudProvider:      cloudProvider,
+		successfulCount:    0,
+		terminationTimeout: DefaultTerminationTimeout,
 	}
 }
 
@@ -79,6 +88,11 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	if err = c.kubeClient.List(ctx, nodeList); err != nil {
 		return reconcile.Result{}, err
 	}
+	// Check for stuck terminating NodeClaims and force cleanup if needed
+	if stuckErr := c.handleStuckTerminatingNodeClaims(ctx, clusterNodeClaims); stuckErr != nil {
+		log.FromContext(ctx).Error(stuckErr, "failed to handle stuck terminating nodeclaims")
+	}
+
 	errs := make([]error, len(cloudNodeClaims))
 	workqueue.ParallelizeUntil(ctx, 100, len(cloudNodeClaims), func(i int) {
 		if nc := cloudNodeClaims[i]; !clusterProviderIDs.Has(nc.Status.ProviderID) && time.Since(nc.CreationTimestamp.Time) > time.Second*30 {
@@ -90,6 +104,106 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	}
 	c.successfulCount++
 	return reconcile.Result{RequeueAfter: lo.Ternary(c.successfulCount <= 20, time.Second*10, time.Minute*2)}, nil
+}
+
+// handleStuckTerminatingNodeClaims identifies and force-cleans stuck terminating NodeClaims
+func (c *Controller) handleStuckTerminatingNodeClaims(ctx context.Context, clusterNodeClaims []*karpv1.NodeClaim) error {
+	now := time.Now()
+	var errs []error
+
+	for _, nc := range clusterNodeClaims {
+		// Only process NodeClaims that are terminating
+		if nc.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		// Check if termination has been stuck for too long
+		terminationDuration := now.Sub(nc.DeletionTimestamp.Time)
+		if terminationDuration < c.terminationTimeout {
+			continue
+		}
+
+		// Log stuck termination
+		ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+			"nodeclaim", nc.Name,
+			"provider-id", nc.Status.ProviderID,
+			"termination-duration", terminationDuration,
+		))
+		log.FromContext(ctx).Info("detected stuck terminating nodeclaim, attempting force cleanup")
+
+		// Attempt to force cleanup
+		if err := c.forceCleanupStuckNodeClaim(ctx, nc); err != nil {
+			errs = append(errs, fmt.Errorf("failed to force cleanup stuck nodeclaim %s: %w", nc.Name, err))
+			continue
+		}
+
+		log.FromContext(ctx).Info("successfully force cleaned stuck terminating nodeclaim")
+	}
+
+	return multierr.Combine(errs...)
+}
+
+// forceCleanupStuckNodeClaim performs force cleanup of a stuck NodeClaim
+func (c *Controller) forceCleanupStuckNodeClaim(ctx context.Context, nc *karpv1.NodeClaim) error {
+	// Step 1: Force delete any stuck pods on the node
+	if nc.Status.NodeName != "" {
+		if err := c.forceDeletePodsOnNode(ctx, nc.Status.NodeName); err != nil {
+			log.FromContext(ctx).Error(err, "failed to force delete pods on node", "node", nc.Status.NodeName)
+		}
+	}
+
+	// Step 2: Force delete the node
+	if nc.Status.NodeName != "" {
+		node := &corev1.Node{}
+		if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nc.Status.NodeName}, node); err == nil {
+			if err := c.kubeClient.Delete(ctx, node, &client.DeleteOptions{
+				GracePeriodSeconds: lo.ToPtr(int64(0)),
+			}); err != nil {
+				log.FromContext(ctx).Error(err, "failed to force delete node", "node", nc.Status.NodeName)
+			}
+		}
+	}
+
+	// Step 3: Force delete the cloud provider instance
+	if err := c.cloudProvider.Delete(ctx, nc); err != nil {
+		// Log but don't fail - instance might already be gone
+		log.FromContext(ctx).Error(err, "failed to delete cloud provider instance")
+	}
+
+	// Step 4: Remove finalizers to allow NodeClaim deletion
+	if len(nc.Finalizers) > 0 {
+		patch := client.MergeFrom(nc.DeepCopy())
+		nc.Finalizers = nil
+		if err := c.kubeClient.Patch(ctx, nc, patch); err != nil {
+			return fmt.Errorf("removing finalizers from stuck nodeclaim: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// forceDeletePodsOnNode force deletes all pods on a given node
+func (c *Controller) forceDeletePodsOnNode(ctx context.Context, nodeName string) error {
+	podList := &corev1.PodList{}
+	if err := c.kubeClient.List(ctx, podList, client.MatchingFields{"spec.nodeName": nodeName}); err != nil {
+		return fmt.Errorf("listing pods on node %s: %w", nodeName, err)
+	}
+
+	for _, pod := range podList.Items {
+		// Skip pods that are already terminating
+		if !pod.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		// Force delete the pod
+		if err := c.kubeClient.Delete(ctx, &pod, &client.DeleteOptions{
+			GracePeriodSeconds: lo.ToPtr(int64(0)),
+		}); err != nil {
+			log.FromContext(ctx).Error(err, "failed to force delete pod", "pod", pod.Name, "namespace", pod.Namespace)
+		}
+	}
+
+	return nil
 }
 
 func (c *Controller) garbageCollect(ctx context.Context, nodeClaim *karpv1.NodeClaim, nodeList *corev1.NodeList) error {
