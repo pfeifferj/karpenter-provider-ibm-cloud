@@ -293,10 +293,6 @@ spec:
                 items:
                   type: string
                 type: array
-              specHash:
-                description: SpecHash is a hash of the IBMNodeClass spec
-                format: int64
-                type: integer
               validationError:
                 description: ValidationError contains the error message from the last
                   validation

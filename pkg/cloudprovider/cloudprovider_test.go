@@ -185,6 +185,10 @@ func getTestNodeClass() *v1alpha1.IBMNodeClass {
 	return &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-nodeclass",
+			Annotations: map[string]string{
+				v1alpha1.AnnotationIBMNodeClassHash:        "12345",
+				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
+			},
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
 			Region:          "us-south",
@@ -195,7 +199,6 @@ func getTestNodeClass() *v1alpha1.IBMNodeClass {
 			Subnet:          "test-subnet",
 		},
 		Status: v1alpha1.IBMNodeClassStatus{
-			SpecHash: 12345,
 			Conditions: []metav1.Condition{
 				{
 					Type:               "Ready",

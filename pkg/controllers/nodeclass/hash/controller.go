@@ -64,11 +64,21 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, fmt.Errorf("failed to compute hash: %w", err)
 	}
 
-	// Update status if hash changed
-	if nc.Status.SpecHash != hash {
-		nc.Status.SpecHash = hash
-		if err := c.kubeClient.Status().Update(ctx, nc); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to update status: %w", err)
+	// Convert hash to string
+	hashString := fmt.Sprint(hash)
+
+	// Store hash in annotations (following AWS pattern)
+	stored := nc.DeepCopy()
+	if nc.Annotations == nil {
+		nc.Annotations = make(map[string]string)
+	}
+
+	// Check if hash has changed
+	currentHash, exists := nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
+	if !exists || currentHash != hashString {
+		nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash] = hashString
+		if err := c.kubeClient.Patch(ctx, nc, client.MergeFrom(stored)); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to patch annotations: %w", err)
 		}
 	}
 

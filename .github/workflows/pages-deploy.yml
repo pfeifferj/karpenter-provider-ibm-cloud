@@ -51,11 +51,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          # Temporarily modify site_url to build without /docs/ suffix
-          sed -i 's|site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/|site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/|' mkdocs.yml
           mkdocs build
-          # Restore original site_url
-          sed -i 's|site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/|site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/|' mkdocs.yml
 
       - name: Package Helm charts
         run: |
@@ -74,12 +70,11 @@ jobs:
 
       - name: Combine site content
         run: |
+          # Put docs at root (since we build with root URL)
+          cp -r site/* .
+          
           # Keep charts at root (existing customer configs)
           cp -r _helm-repo/* .
-          
-          # Put docs under /docs path
-          mkdir -p docs
-          cp -r site/* docs/
           
           # Clean up build directories
           rm -rf site _helm-repo

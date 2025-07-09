@@ -196,12 +196,6 @@ type IBMNodeClassSpec struct {
 
 // IBMNodeClassStatus defines the observed state of IBMNodeClass
 type IBMNodeClassStatus struct {
-	// SpecHash is a hash of the IBMNodeClass spec
-	// +optional
-	// +kubebuilder:validation:Type=integer
-	// +kubebuilder:validation:Format=int64
-	SpecHash uint64 `json:"specHash,omitempty"`
-
 	// LastValidationTime is the last time the nodeclass was validated
 	// +optional
 	LastValidationTime metav1.Time `json:"lastValidationTime,omitempty"`
