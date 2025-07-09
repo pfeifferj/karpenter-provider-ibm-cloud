@@ -149,7 +149,7 @@ CLUSTER_ENDPOINT_NO_HTTPS=$(echo $CLUSTER_ENDPOINT | sed 's|https://||')
 echo "$(date): Attempting to join cluster using API server: $CLUSTER_ENDPOINT_NO_HTTPS"
 echo "$(date): Hostname: $HOSTNAME"
 echo "$(date): Bootstrap Token: ${BOOTSTRAP_TOKEN:0:10}..."
-if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-token-unsafe-skip-ca-verification; then
+if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-token-unsafe-skip-ca-verification --skip-phases=preflight; then
     echo "$(date): ✅ Successfully joined cluster!"
 else
     echo "$(date): ❌ Failed to join cluster"
