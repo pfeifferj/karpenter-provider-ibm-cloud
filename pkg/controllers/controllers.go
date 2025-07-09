@@ -111,7 +111,10 @@ func NewControllers(
 	controllers := []controller.Controller{}
 
 	// Add IBM-specific controllers
-	if hashCtrl, err := nodeclasshash.NewController(kubeClient); err == nil {
+	hashCtrl, err := nodeclasshash.NewController(kubeClient)
+	if err != nil {
+		fmt.Printf("ERROR: Failed to create hash controller: %v\n", err)
+	} else {
 		controllers = append(controllers, hashCtrl)
 	}
 
