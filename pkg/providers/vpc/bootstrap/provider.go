@@ -61,11 +61,15 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 		return "", fmt.Errorf("generating bootstrap token: %w", err)
 	}
 
+	// Detect container runtime from existing nodes
+	containerRuntime := p.detectContainerRuntime(ctx)
+	
 	// Build bootstrap options for VPC mode
 	options := commonTypes.Options{
 		ClusterEndpoint:  clusterEndpoint,
 		BootstrapToken:   bootstrapToken,
 		CustomUserData:   nodeClass.Spec.UserData,
+		ContainerRuntime: containerRuntime,
 		Region:           nodeClass.Spec.Region,
 		Zone:             nodeClass.Spec.Zone,
 	}
