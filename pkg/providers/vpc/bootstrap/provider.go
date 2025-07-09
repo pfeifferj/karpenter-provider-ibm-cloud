@@ -49,10 +49,20 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 	logger := log.FromContext(ctx)
 	logger.Info("Generating VPC cloud-init user data for dynamic bootstrap")
 
-	// Get internal API server endpoint (use internal cluster IP)
-	clusterEndpoint, err := commonTypes.GetInternalAPIServerEndpoint(ctx, p.k8sClient)
-	if err != nil {
-		return "", fmt.Errorf("getting internal API server endpoint: %w", err)
+	// Get API server endpoint - use NodeClass override if specified
+	var clusterEndpoint string
+	var err error
+	
+	if nodeClass.Spec.APIServerEndpoint != "" {
+		clusterEndpoint = nodeClass.Spec.APIServerEndpoint
+		logger.Info("Using API server endpoint from NodeClass", "endpoint", clusterEndpoint)
+	} else {
+		// Fallback to automatic discovery
+		clusterEndpoint, err = commonTypes.GetInternalAPIServerEndpoint(ctx, p.k8sClient)
+		if err != nil {
+			return "", fmt.Errorf("getting internal API server endpoint: %w", err)
+		}
+		logger.Info("Discovered API server endpoint", "endpoint", clusterEndpoint)
 	}
 
 	// Generate or find bootstrap token (valid for 24 hours)
