@@ -77,40 +77,29 @@ apt-get update
 apt-get install -y curl apt-transport-https ca-certificates gnupg lsb-release
 echo "$(date): ✅ Prerequisites installed"
 
-# Install container runtime
-install_container_runtime() {
-    case "$CONTAINER_RUNTIME" in
-        "containerd")
-            install_containerd
-            ;;
-        "cri-o")
-            install_crio
-            ;;
-        *)
-            echo "Unsupported container runtime: $CONTAINER_RUNTIME"
-            exit 1
-            ;;
-    esac
+# Install container runtime based on configuration
+CONTAINER_RUNTIME="{{ .ContainerRuntime }}"
+echo "$(date): Installing container runtime: $CONTAINER_RUNTIME"
+
+install_containerd() {
+    echo "$(date): Installing containerd..."
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+    add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+    apt-get update
+    apt-get install -y containerd.io
+    echo "$(date): ✅ Containerd installed"
+
+    # Configure containerd
+    echo "$(date): Configuring containerd..."
+    mkdir -p /etc/containerd
+    containerd config default | sed 's/SystemdCgroup = false/SystemdCgroup = true/' > /etc/containerd/config.toml
+    systemctl restart containerd
+    systemctl enable containerd
+    echo "$(date): ✅ Containerd configured and started"
 }
 
-# Install containerd
-echo "$(date): Installing containerd..."
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
-add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-apt-get update
-apt-get install -y containerd.io
-echo "$(date): ✅ Containerd installed"
-
-# Configure containerd
-echo "$(date): Configuring containerd..."
-mkdir -p /etc/containerd
-containerd config default | sed 's/SystemdCgroup = false/SystemdCgroup = true/' > /etc/containerd/config.toml
-systemctl restart containerd
-systemctl enable containerd
-echo "$(date): ✅ Containerd configured and started"
-
 install_crio() {
-    echo "Installing CRI-O..."
+    echo "$(date): Installing CRI-O..."
     
     # Add CRI-O repository
     curl -fsSL https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_20.04/Release.key | apt-key add -
@@ -125,7 +114,23 @@ install_crio() {
     # Start CRI-O
     systemctl enable crio
     systemctl start crio
+    echo "$(date): ✅ CRI-O configured and started"
 }
+
+# Install the configured container runtime
+case "$CONTAINER_RUNTIME" in
+    "containerd"|"")
+        install_containerd
+        ;;
+    "cri-o")
+        install_crio
+        ;;
+    *)
+        echo "$(date): ❌ Unsupported container runtime: $CONTAINER_RUNTIME"
+        echo "$(date): Supported runtimes: containerd, cri-o"
+        exit 1
+        ;;
+esac
 
 # Install Kubernetes components
 echo "$(date): Installing Kubernetes components..."
