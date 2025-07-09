@@ -336,9 +336,10 @@ func TestControllerLifecycle(t *testing.T) {
 		},
 	}
 
-	// Reconcile should handle deletion gracefully
+	// Reconcile should return error when NodeClass is being deleted
 	result, err := hashController.Reconcile(ctx, req)
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot reconcile IBMNodeClass being deleted")
 	assert.Equal(t, reconcile.Result{}, result)
 }
 

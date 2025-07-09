@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -148,7 +149,7 @@ func TestController_Reconcile(t *testing.T) {
 			nodeClass: &v1alpha1.IBMNodeClass{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "test-nodeclass",
-					DeletionTimestamp: &metav1.Time{},
+					DeletionTimestamp: &metav1.Time{Time: time.Now()},
 					Finalizers:        []string{"test-finalizer"},
 				},
 				Spec: v1alpha1.IBMNodeClassSpec{
