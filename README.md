@@ -50,11 +50,6 @@ After changes pass tests and are merged to main:
 
 These CI workflows ensure chart quality through pre-merge validation and maintain the Helm repository for easy installation.
 
-## Documentation
-
-### Quick Start
-- **[Getting Started Guide](https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/getting-started/)** 
-
 ## Getting Help
 
 ### Community Support

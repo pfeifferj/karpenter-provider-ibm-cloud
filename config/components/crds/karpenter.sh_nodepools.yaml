@@ -162,10 +162,13 @@ spec:
                   additionalProperties:
                     anyOf:
                       - type: integer
+                        minimum: 1
                       - type: string
-                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        pattern: ^(\+)?([1-9][0-9]*(\.[0-9]*)?|\.[0-9]*[1-9][0-9]*)(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
-                  description: Limits define a set of bounds for provisioning capacity.
+                  description: |-
+                    Limits define a set of bounds for provisioning capacity.
+                    Values must be positive (greater than 0) to enable provisioning.
                   type: object
                 template:
                   description: |-
