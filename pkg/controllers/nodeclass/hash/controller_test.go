@@ -105,6 +105,9 @@ func TestController_Reconcile(t *testing.T) {
 			nodeClass: &v1alpha1.IBMNodeClass{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-nodeclass",
+					Annotations: map[string]string{
+						v1alpha1.AnnotationIBMNodeClassHash: "12345",
+					},
 				},
 				Spec: v1alpha1.IBMNodeClassSpec{
 					Region:          "us-south",
@@ -113,9 +116,6 @@ func TestController_Reconcile(t *testing.T) {
 					Image:           "test-image",
 					VPC:             "test-vpc",
 					Subnet:          "test-subnet",
-				},
-				Status: v1alpha1.IBMNodeClassStatus{
-					SpecHash: 12345,
 				},
 			},
 			existingHash:       12345,
@@ -135,9 +135,6 @@ func TestController_Reconcile(t *testing.T) {
 					Image:           "test-image",
 					VPC:             "test-vpc",
 					Subnet:          "test-subnet",
-				},
-				Status: v1alpha1.IBMNodeClassStatus{
-					SpecHash: 12345,
 				},
 			},
 			existingHash:       12345,
@@ -249,9 +246,11 @@ func TestController_Reconcile(t *testing.T) {
 					err = fakeClient.Get(context.Background(), req.NamespacedName, &updatedNodeClass)
 					require.NoError(t, err)
 					
-					assert.NotZero(t, updatedNodeClass.Status.SpecHash, "Hash should be set")
+					assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash], "Hash should be set in annotations")
 					if tt.existingHash != 0 {
-						assert.NotEqual(t, tt.existingHash, updatedNodeClass.Status.SpecHash, "Hash should have changed")
+						// Convert existing hash to string for comparison
+						existingHashStr := fmt.Sprint(tt.existingHash)
+						assert.NotEqual(t, existingHashStr, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash], "Hash should have changed")
 					}
 				}
 			}
@@ -342,7 +341,7 @@ func TestController_HashCalculation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Hashes should be the same for identical specs
-	assert.Equal(t, updated1.Status.SpecHash, updated2.Status.SpecHash)
+	assert.Equal(t, updated1.Annotations[v1alpha1.AnnotationIBMNodeClassHash], updated2.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
 }
 
 func TestController_Register(t *testing.T) {
@@ -419,6 +418,6 @@ func TestController_ConcurrentReconciliation(t *testing.T) {
 			Name: fmt.Sprintf("nodeclass-%d", i),
 		}, &nc)
 		require.NoError(t, err)
-		assert.NotZero(t, nc.Status.SpecHash)
+		assert.NotEmpty(t, nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
 	}
 }

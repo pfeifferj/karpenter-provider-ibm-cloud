@@ -179,7 +179,6 @@ func TestReconcile(t *testing.T) {
 			Subnet:          "test-subnet",
 		},
 		Status: v1alpha1.IBMNodeClassStatus{
-			SpecHash: 12345,
 			Conditions: []metav1.Condition{
 				{
 					Type:               "Ready",
