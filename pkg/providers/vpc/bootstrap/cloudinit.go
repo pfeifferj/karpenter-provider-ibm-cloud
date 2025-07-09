@@ -200,7 +200,7 @@ func (p *VPCBootstrapProvider) generateCloudInitScript(ctx context.Context, opti
 		return "", fmt.Errorf("executing cloud-init template: %w", err)
 	}
 
-	// Return the script as plain text (cloud-init expects plain text, not base64)
+	// Return the script as plain text 
 	script := buf.String()
 	return script, nil
 }

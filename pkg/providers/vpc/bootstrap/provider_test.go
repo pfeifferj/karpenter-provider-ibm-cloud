@@ -16,7 +16,6 @@ package bootstrap
 
 import (
 	"context"
-	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -193,14 +192,10 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
 				
-				// Decode base64 user data
-				decoded, err := base64.StdEncoding.DecodeString(userData)
-				assert.NoError(t, err)
-				decodedStr := string(decoded)
-				
-				assert.Contains(t, decodedStr, "#!/bin/bash")
+				// User data is now plain text (no base64 encoding)
+				assert.Contains(t, userData, "#!/bin/bash")
 				// Should contain custom user data from NodeClass
-				assert.Contains(t, decodedStr, "custom user data")
+				assert.Contains(t, userData, "custom user data")
 			},
 		},
 		{
@@ -224,12 +219,8 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
 				
-				// Decode base64 user data
-				decoded, err := base64.StdEncoding.DecodeString(userData)
-				assert.NoError(t, err)
-				decodedStr := string(decoded)
-				
-				assert.Contains(t, decodedStr, "#!/bin/bash")
+				// User data is now plain text (no base64 encoding)
+				assert.Contains(t, userData, "#!/bin/bash")
 			},
 		},
 		{
@@ -259,14 +250,10 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
 				
-				// Decode base64 user data
-				decoded, err := base64.StdEncoding.DecodeString(userData)
-				assert.NoError(t, err)
-				decodedStr := string(decoded)
-				
-				assert.Contains(t, decodedStr, "#!/bin/bash")
+				// User data is now plain text (no base64 encoding)
+				assert.Contains(t, userData, "#!/bin/bash")
 				// Should not contain the actual custom user data content (echo 'custom user data')
-				assert.NotContains(t, decodedStr, "echo 'custom user data'")
+				assert.NotContains(t, userData, "echo 'custom user data'")
 			},
 		},
 		{
