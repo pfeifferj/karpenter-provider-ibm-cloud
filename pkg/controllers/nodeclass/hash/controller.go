@@ -30,7 +30,7 @@ import (
 )
 
 // Controller computes a hash of the IBMNodeClass spec and stores it in the status
-//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch
+//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch;patch;update
 //+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses/status,verbs=get;update;patch
 type Controller struct {
 	kubeClient client.Client
