@@ -182,6 +182,14 @@ type IBMNodeClassSpec struct {
 	// +kubebuilder:default=auto
 	BootstrapMode *string `json:"bootstrapMode,omitempty"`
 
+	// APIServerEndpoint is the Kubernetes API server endpoint for node registration
+	// If specified, this endpoint will be used instead of automatic discovery
+	// This is useful when the control plane is not accessible via standard discovery methods
+	// Example: "https://10.243.65.4:6443"
+	// +optional
+	// +kubebuilder:validation:Pattern="^https://[a-zA-Z0-9.-]+:[0-9]+$"
+	APIServerEndpoint string `json:"apiServerEndpoint,omitempty"`
+
 	// IKSClusterID is the IKS cluster ID for API-based bootstrapping
 	// Required when BootstrapMode is "iks-api"
 	// +optional
