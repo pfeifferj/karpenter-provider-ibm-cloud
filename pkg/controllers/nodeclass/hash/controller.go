@@ -53,6 +53,11 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Skip reconciliation if the NodeClass is being deleted
+	if nc.DeletionTimestamp != nil && !nc.DeletionTimestamp.IsZero() {
+		return reconcile.Result{}, fmt.Errorf("cannot reconcile IBMNodeClass being deleted")
+	}
+
 	// Compute hash of the spec
 	hash, err := hashstructure.Hash(nc.Spec, hashstructure.FormatV2, nil)
 	if err != nil {
@@ -61,10 +66,9 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 	// Update status if hash changed
 	if nc.Status.SpecHash != hash {
-		patch := client.MergeFrom(nc.DeepCopy())
 		nc.Status.SpecHash = hash
-		if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to patch status: %w", err)
+		if err := c.kubeClient.Status().Update(ctx, nc); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to update status: %w", err)
 		}
 	}
 
