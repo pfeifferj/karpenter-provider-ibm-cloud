@@ -337,7 +337,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 
 	nc.Annotations = lo.Assign(nc.Annotations, map[string]string{
-		v1alpha1.AnnotationIBMNodeClassHash:        fmt.Sprintf("%d", nodeClass.Status.SpecHash),
+		v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
 		v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
 	})
 
@@ -447,8 +447,9 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCla
 	}
 
 	// Check if the hash matches
-	if fmt.Sprintf("%d", nodeClass.Status.SpecHash) != currentHash {
-		log.Info("NodeClass hash mismatch", "current", currentHash, "expected", nodeClass.Status.SpecHash)
+	expectedHash := nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
+	if expectedHash != currentHash {
+		log.Info("NodeClass hash mismatch", "current", currentHash, "expected", expectedHash)
 		return "NodeClassHashChanged", nil
 	}
 

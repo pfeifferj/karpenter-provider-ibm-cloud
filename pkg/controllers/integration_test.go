@@ -81,10 +81,10 @@ func TestHashControllerIntegration(t *testing.T) {
 	var updatedNodeClass v1alpha1.IBMNodeClass
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass)
 	require.NoError(t, err)
-	assert.NotZero(t, updatedNodeClass.Status.SpecHash)
+	assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
 
 	// Store original hash
-	originalHash := updatedNodeClass.Status.SpecHash
+	originalHash := updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
 
 	// Update the spec and reconcile again
 	updatedNodeClass.Spec.InstanceProfile = "bx2-8x32"
@@ -97,7 +97,7 @@ func TestHashControllerIntegration(t *testing.T) {
 	// Verify hash changed
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass)
 	require.NoError(t, err)
-	assert.NotEqual(t, originalHash, updatedNodeClass.Status.SpecHash)
+	assert.NotEqual(t, originalHash, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
 }
 
 func TestStatusControllerIntegration(t *testing.T) {
@@ -295,7 +295,7 @@ func TestControllerConcurrency(t *testing.T) {
 		var updatedNodeClass v1alpha1.IBMNodeClass
 		err = fakeClient.Get(ctx, types.NamespacedName{Name: nc.Name}, &updatedNodeClass)
 		require.NoError(t, err)
-		assert.NotZero(t, updatedNodeClass.Status.SpecHash, "Hash should be set for %s", nc.Name)
+		assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash], "Hash should be set for %s", nc.Name)
 	}
 }
 
@@ -396,7 +396,7 @@ func TestMultiControllerIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Hash should be set
-	assert.NotZero(t, updatedNodeClass.Status.SpecHash)
+	assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
 	
 	// Status condition should be set
 	assert.NotEmpty(t, updatedNodeClass.Status.Conditions)
