@@ -144,11 +144,12 @@ KUBELET_KUBEADM_ARGS="--cloud-provider=external --hostname-override=$HOSTNAME"
 EOF
 echo "$(date): ✅ Kubelet configured"
 
-# Join the cluster using API server endpoint
-echo "$(date): Attempting to join cluster using API server: $CLUSTER_ENDPOINT"
+# Join the cluster using API server endpoint (remove https:// prefix for kubeadm)
+CLUSTER_ENDPOINT_NO_HTTPS=$(echo $CLUSTER_ENDPOINT | sed 's|https://||')
+echo "$(date): Attempting to join cluster using API server: $CLUSTER_ENDPOINT_NO_HTTPS"
 echo "$(date): Hostname: $HOSTNAME"
 echo "$(date): Bootstrap Token: ${BOOTSTRAP_TOKEN:0:10}..."
-if kubeadm join $CLUSTER_ENDPOINT --token $BOOTSTRAP_TOKEN --discovery-token-unsafe-skip-ca-verification; then
+if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-token-unsafe-skip-ca-verification; then
     echo "$(date): ✅ Successfully joined cluster!"
 else
     echo "$(date): ❌ Failed to join cluster"
@@ -199,9 +200,9 @@ func (p *VPCBootstrapProvider) generateCloudInitScript(ctx context.Context, opti
 		return "", fmt.Errorf("executing cloud-init template: %w", err)
 	}
 
-	// Base64 encode the script
+	// Return the script as plain text 
 	script := buf.String()
-	return base64.StdEncoding.EncodeToString([]byte(script)), nil
+	return script, nil
 }
 
 // buildKubeletExtraArgs builds kubelet extra arguments string
