@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -107,21 +108,35 @@ func FindOrCreateBootstrapToken(ctx context.Context, client kubernetes.Interface
 	return GenerateBootstrapToken(ctx, client, ttl)
 }
 
-// GetInternalAPIServerEndpoint discovers the internal API server endpoint
+// GetInternalAPIServerEndpoint discovers the API server endpoint for node bootstrapping
 func GetInternalAPIServerEndpoint(ctx context.Context, client kubernetes.Interface) (string, error) {
-	// Try to get the kubernetes service in default namespace
-	kubeService, err := client.CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{})
+	// Get the kubeadm-config ConfigMap which contains the actual API endpoint
+	kubeadmConfig, err := client.CoreV1().ConfigMaps("kube-system").Get(ctx, "kubeadm-config", metav1.GetOptions{})
 	if err != nil {
-		return "", fmt.Errorf("getting kubernetes service: %w", err)
+		return "", fmt.Errorf("getting kubeadm-config configmap: %w", err)
 	}
 
-	// Use the internal cluster IP and port
-	endpoint := fmt.Sprintf("https://%s", kubeService.Spec.ClusterIP)
-	if len(kubeService.Spec.Ports) > 0 {
-		endpoint = fmt.Sprintf("https://%s:%d", kubeService.Spec.ClusterIP, kubeService.Spec.Ports[0].Port)
+	// Parse ClusterConfiguration to find the controlPlaneEndpoint
+	clusterConfig, exists := kubeadmConfig.Data["ClusterConfiguration"]
+	if !exists {
+		return "", fmt.Errorf("ClusterConfiguration not found in kubeadm-config")
 	}
 
-	return endpoint, nil
+	// Look for controlPlaneEndpoint in the YAML
+	lines := strings.Split(clusterConfig, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "controlPlaneEndpoint:") {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 3 {
+				// Extract host:port (parts[1] has the host, parts[2] has the port)
+				host := strings.TrimSpace(parts[1])
+				port := strings.TrimSpace(parts[2])
+				return fmt.Sprintf("https://%s:%s", host, port), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("controlPlaneEndpoint not found in kubeadm-config")
 }
 
 // generateRandomString generates a random string of specified length

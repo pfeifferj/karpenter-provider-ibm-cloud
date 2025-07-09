@@ -157,6 +157,27 @@ func getTestNode() *corev1.Node {
 	}
 }
 
+func getTestKubeadmConfigMap() *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubeadm-config",
+			Namespace: "kube-system",
+		},
+		Data: map[string]string{
+			"ClusterConfiguration": `apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: v1.28.0
+controlPlaneEndpoint: 10.243.65.4:6443
+networking:
+  serviceSubnet: 10.96.0.0/12
+  podSubnet: 172.16.0.0/12
+dns:
+  type: CoreDNS
+`,
+		},
+	}
+}
+
 func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -172,6 +193,10 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			nodeClass: getTestNodeClass(),
 			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			setupMocks: func(fakeClient *fake.Clientset) {
+				// Add kubeadm-config configmap for API endpoint discovery
+				kubeadmConfig := getTestKubeadmConfigMap()
+				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), kubeadmConfig, metav1.CreateOptions{})
+				
 				// Add cluster-info configmap
 				clusterInfo := getTestClusterInfoConfigMap()
 				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), clusterInfo, metav1.CreateOptions{})
@@ -199,10 +224,14 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			},
 		},
 		{
-			name:      "fallback to kubernetes service when configmap not found",
+			name:      "with kubeadm-config but no cluster-info configmap",
 			nodeClass: getTestNodeClass(),
 			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			setupMocks: func(fakeClient *fake.Clientset) {
+				// Add kubeadm-config configmap for API endpoint discovery
+				kubeadmConfig := getTestKubeadmConfigMap()
+				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), kubeadmConfig, metav1.CreateOptions{})
+				
 				// Add kubernetes service for fallback
 				kubeService := getTestKubernetesService()
 				_, _ = fakeClient.CoreV1().Services("default").Create(context.Background(), kubeService, metav1.CreateOptions{})
@@ -232,6 +261,10 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			}(),
 			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			setupMocks: func(fakeClient *fake.Clientset) {
+				// Add kubeadm-config configmap for API endpoint discovery
+				kubeadmConfig := getTestKubeadmConfigMap()
+				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), kubeadmConfig, metav1.CreateOptions{})
+				
 				clusterInfo := getTestClusterInfoConfigMap()
 				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), clusterInfo, metav1.CreateOptions{})
 				
