@@ -52,6 +52,21 @@ func TestVPCBootstrapProvider_APIServerEndpoint_Override(t *testing.T) {
 	_, err := k8sClient.CoreV1().Secrets("kube-system").Create(ctx, bootstrapSecret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
+	// Create a CA certificate secret for testing
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "default-token",
+			Namespace: "kube-system",
+		},
+		Type: corev1.SecretTypeServiceAccountToken,
+		Data: map[string][]byte{
+			"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----"),
+			"token":  []byte("test-token"),
+		},
+	}
+	_, err = k8sClient.CoreV1().Secrets("kube-system").Create(ctx, caSecret, metav1.CreateOptions{})
+	require.NoError(t, err)
+
 	// Create provider
 	provider := NewVPCBootstrapProvider(nil, k8sClient)
 
@@ -163,6 +178,21 @@ func TestVPCBootstrapProvider_APIServerEndpoint_Issue18_Fix(t *testing.T) {
 		},
 	}
 	_, err := k8sClient.CoreV1().Secrets("kube-system").Create(ctx, bootstrapSecret, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// Create a CA certificate secret for testing
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "default-token",
+			Namespace: "kube-system",
+		},
+		Type: corev1.SecretTypeServiceAccountToken,
+		Data: map[string][]byte{
+			"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----"),
+			"token":  []byte("test-token"),
+		},
+	}
+	_, err = k8sClient.CoreV1().Secrets("kube-system").Create(ctx, caSecret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
 	provider := NewVPCBootstrapProvider(nil, k8sClient)
