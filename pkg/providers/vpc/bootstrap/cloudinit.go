@@ -16,7 +16,6 @@ package bootstrap
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"strings"
 	"text/template"
@@ -149,21 +148,40 @@ KUBELET_KUBEADM_ARGS="--cloud-provider=external --hostname-override=$HOSTNAME"
 EOF
 echo "$(date): ✅ Kubelet configured"
 
-# Join the cluster using API server endpoint (remove https:// prefix for kubeadm)
+# Create CA certificate file for static discovery
+echo "$(date): Creating cluster CA certificate..."
+mkdir -p /etc/kubernetes/pki
+cat > /etc/kubernetes/pki/ca.crt << 'EOF'
+{{ .CABundle }}
+EOF
+echo "$(date): ✅ CA certificate created"
+
+# Join the cluster using static CA certificate (remove https:// prefix for kubeadm)
 CLUSTER_ENDPOINT_NO_HTTPS=$(echo $CLUSTER_ENDPOINT | sed 's|https://||')
 echo "$(date): Attempting to join cluster using API server: $CLUSTER_ENDPOINT_NO_HTTPS"
 echo "$(date): Hostname: $HOSTNAME"
 echo "$(date): Bootstrap Token: ${BOOTSTRAP_TOKEN:0:10}..."
-if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-token-unsafe-skip-ca-verification --skip-phases=preflight; then
+echo "$(date): Using static CA certificate for discovery"
+
+if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-file /etc/kubernetes/pki/ca.crt --skip-phases=preflight; then
     echo "$(date): ✅ Successfully joined cluster!"
 else
-    echo "$(date): ❌ Failed to join cluster"
-    # Show detailed error info
-    echo "$(date): Checking kubelet status..."
-    systemctl status kubelet --no-pager
-    echo "$(date): Checking kubelet logs..."
-    journalctl -u kubelet --no-pager -n 20
-    exit 1
+    echo "$(date): ❌ Failed to join cluster with static CA"
+    echo "$(date): Attempting fallback with certificate-authority..."
+    if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --certificate-authority /etc/kubernetes/pki/ca.crt --skip-phases=preflight; then
+        echo "$(date): ✅ Successfully joined cluster with fallback method!"
+    else
+        echo "$(date): ❌ Failed to join cluster with both methods"
+        # Show detailed error info
+        echo "$(date): Checking kubelet status..."
+        systemctl status kubelet --no-pager
+        echo "$(date): Checking kubelet logs..."
+        journalctl -u kubelet --no-pager -n 20
+        echo "$(date): Checking CA certificate..."
+        ls -la /etc/kubernetes/pki/ca.crt
+        openssl x509 -in /etc/kubernetes/pki/ca.crt -text -noout | head -20
+        exit 1
+    fi
 fi
 
 echo "$(date): ===== Bootstrap process completed ====="
@@ -196,7 +214,7 @@ func (p *VPCBootstrapProvider) generateCloudInitScript(ctx context.Context, opti
 	}{
 		Options:          options,
 		KubeletExtraArgs: p.buildKubeletExtraArgs(options.KubeletConfig),
-		CABundle:         base64.StdEncoding.EncodeToString([]byte(options.CABundle)),
+		CABundle:         options.CABundle, // Use raw CA certificate, not base64 encoded
 	}
 
 	// Execute template
