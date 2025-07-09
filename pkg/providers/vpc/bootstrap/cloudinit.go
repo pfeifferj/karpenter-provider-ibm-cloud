@@ -156,20 +156,26 @@ cat > /etc/kubernetes/pki/ca.crt << 'EOF'
 EOF
 echo "$(date): ✅ CA certificate created"
 
-# Join the cluster using static CA certificate (remove https:// prefix for kubeadm)
+# Calculate CA certificate hash for secure discovery
+echo "$(date): Calculating CA certificate hash..."
+CA_CERT_HASH=$(openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //')
+echo "$(date): CA certificate hash: sha256:$CA_CERT_HASH"
+
+# Join the cluster using token-based discovery with CA certificate hash (remove https:// prefix for kubeadm)
 CLUSTER_ENDPOINT_NO_HTTPS=$(echo $CLUSTER_ENDPOINT | sed 's|https://||')
 echo "$(date): Attempting to join cluster using API server: $CLUSTER_ENDPOINT_NO_HTTPS"
 echo "$(date): Hostname: $HOSTNAME"
 echo "$(date): Bootstrap Token: ${BOOTSTRAP_TOKEN:0:10}..."
-echo "$(date): Using static CA certificate for discovery"
+echo "$(date): Using token-based discovery with static CA certificate verification"
 
-if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-file /etc/kubernetes/pki/ca.crt --skip-phases=preflight; then
+if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-token-ca-cert-hash sha256:$CA_CERT_HASH --skip-phases=preflight; then
     echo "$(date): ✅ Successfully joined cluster!"
 else
-    echo "$(date): ❌ Failed to join cluster with static CA"
-    echo "$(date): Attempting fallback with certificate-authority..."
-    if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --certificate-authority /etc/kubernetes/pki/ca.crt --skip-phases=preflight; then
+    echo "$(date): ❌ Failed to join cluster with CA certificate hash"
+    echo "$(date): Attempting fallback with unsafe skip CA verification..."
+    if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-token-unsafe-skip-ca-verification --skip-phases=preflight; then
         echo "$(date): ✅ Successfully joined cluster with fallback method!"
+        echo "$(date): ⚠️  Warning: Used unsafe CA verification skip"
     else
         echo "$(date): ❌ Failed to join cluster with both methods"
         # Show detailed error info
@@ -180,6 +186,7 @@ else
         echo "$(date): Checking CA certificate..."
         ls -la /etc/kubernetes/pki/ca.crt
         openssl x509 -in /etc/kubernetes/pki/ca.crt -text -noout | head -20
+        echo "$(date): CA certificate hash: sha256:$CA_CERT_HASH"
         exit 1
     fi
 fi
