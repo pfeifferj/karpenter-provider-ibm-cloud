@@ -50,7 +50,12 @@ jobs:
         run: pip install -r docs/requirements.txt
 
       - name: Build documentation
-        run: mkdocs build
+        run: |
+          # Temporarily modify site_url to build without /docs/ suffix
+          sed -i 's|site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/|site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/|' mkdocs.yml
+          mkdocs build
+          # Restore original site_url
+          sed -i 's|site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/|site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/|' mkdocs.yml
 
       - name: Package Helm charts
         run: |

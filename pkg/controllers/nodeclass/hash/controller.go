@@ -59,19 +59,13 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, fmt.Errorf("failed to compute hash: %w", err)
 	}
 
-	// Debug logging
-	fmt.Printf("DEBUG: Computed hash: %d (type: %T)\n", hash, hash)
-	fmt.Printf("DEBUG: Current specHash: %d\n", nc.Status.SpecHash)
-
 	// Update status if hash changed
 	if nc.Status.SpecHash != hash {
 		patch := client.MergeFrom(nc.DeepCopy())
 		nc.Status.SpecHash = hash
-		fmt.Printf("DEBUG: Setting specHash to: %d\n", nc.Status.SpecHash)
 		if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to patch status: %w", err)
 		}
-		fmt.Printf("DEBUG: Successfully patched status\n")
 	}
 
 	return reconcile.Result{}, nil
