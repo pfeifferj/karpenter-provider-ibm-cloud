@@ -1,7 +1,7 @@
 site_name: Karpenter IBM Cloud Provider
 site_description: Auto-scaling for Kubernetes on IBM Cloud VPC
 site_author: Karpenter IBM Contributors
-site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/
+site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/
 
 # Repository
 repo_name: pfeifferj/karpenter-provider-ibm-cloud
@@ -146,6 +146,9 @@ extra:
       link: https://github.com/pfeifferj/karpenter-provider-ibm-cloud
     - icon: fontawesome/brands/docker
       link: https://github.com/pfeifferj/karpenter-provider-ibm-cloud/pkgs/container/karpenter-provider-ibm-cloud
+    - icon: fontawesome/brands/slack
+      link: https://cloud-native.slack.com/archives/C094SDPCVLNl
+      name: CNCF Slack #karpenter
   version:
     provider: mike
     default: latest
