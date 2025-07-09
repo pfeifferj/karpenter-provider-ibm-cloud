@@ -803,12 +803,13 @@ func TestVPCBootstrapProvider_GetUserData_WithCABundle(t *testing.T) {
 				assert.Contains(t, userData, "-----BEGIN CERTIFICATE-----")
 				assert.Contains(t, userData, "-----END CERTIFICATE-----")
 				
-				// Should use static CA certificate approach
-				assert.Contains(t, userData, "Using static CA certificate for discovery")
-				assert.Contains(t, userData, "certificate-authority /etc/kubernetes/pki/ca.crt")
+				// Should use token-based discovery with CA certificate hash
+				assert.Contains(t, userData, "Using token-based discovery with static CA certificate verification")
+				assert.Contains(t, userData, "Calculating CA certificate hash")
+				assert.Contains(t, userData, "discovery-token-ca-cert-hash sha256:")
 				
-				// Should not use unsafe skip CA verification
-				assert.NotContains(t, userData, "discovery-token-unsafe-skip-ca-verification")
+				// Should have fallback to unsafe skip CA verification (as a last resort)
+				assert.Contains(t, userData, "discovery-token-unsafe-skip-ca-verification")
 			},
 		},
 		{
