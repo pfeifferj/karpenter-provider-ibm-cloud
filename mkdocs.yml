@@ -147,7 +147,7 @@ extra:
     - icon: fontawesome/brands/docker
       link: https://github.com/pfeifferj/karpenter-provider-ibm-cloud/pkgs/container/karpenter-provider-ibm-cloud
     - icon: fontawesome/brands/slack
-      link: https://cloud-native.slack.com/archives/C094SDPCVLNl
+      link: https://cloud-native.slack.com/archives/C094SDPCVLN
       name: CNCF Slack #karpenter
   version:
     provider: mike
