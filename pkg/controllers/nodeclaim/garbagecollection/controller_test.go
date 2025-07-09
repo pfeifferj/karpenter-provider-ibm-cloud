@@ -201,9 +201,11 @@ func TestReconcile_NoOrphanedInstances(t *testing.T) {
 	cloudProvider.nodeClaims["provider-1"] = testNodeClaim("cloud-1", "provider-1", time.Now().Add(-time.Hour))
 	cloudProvider.nodeClaims["provider-2"] = testNodeClaim("cloud-2", "provider-2", time.Now().Add(-time.Hour))
 	
-	// Create matching cluster NodeClaims
+	// Create matching cluster NodeClaims that have successfully registered (have NodeName)
 	clusterNC1 := testNodeClaim("cluster-1", "provider-1", time.Now().Add(-time.Hour))
+	clusterNC1.Status.NodeName = "node-1" // Indicates successful registration
 	clusterNC2 := testNodeClaim("cluster-2", "provider-2", time.Now().Add(-time.Hour))
+	clusterNC2.Status.NodeName = "node-2" // Indicates successful registration
 	
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
@@ -421,9 +423,11 @@ func TestReconcile_MultipleOrphanedInstances(t *testing.T) {
 		cloudProvider.nodeClaims[providerID] = testNodeClaim(fmt.Sprintf("orphaned-%d", i), providerID, time.Now().Add(-time.Hour))
 	}
 	
-	// Create some matching NodeClaims (not orphaned)
+	// Create some matching NodeClaims (not orphaned) that have successfully registered
 	clusterNC1 := testNodeClaim("cluster-1", "cluster-provider-1", time.Now().Add(-time.Hour))
+	clusterNC1.Status.NodeName = "node-1" // Indicates successful registration
 	clusterNC2 := testNodeClaim("cluster-2", "cluster-provider-2", time.Now().Add(-time.Hour))
+	clusterNC2.Status.NodeName = "node-2" // Indicates successful registration
 	
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).

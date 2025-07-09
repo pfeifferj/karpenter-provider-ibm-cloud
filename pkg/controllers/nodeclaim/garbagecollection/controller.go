@@ -19,12 +19,15 @@ package garbagecollection
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/awslabs/operatorpkg/singleton"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -41,10 +44,11 @@ import (
 )
 
 type Controller struct {
-	kubeClient         client.Client
-	cloudProvider      cloudprovider.CloudProvider
-	successfulCount    uint64 // keeps track of successful reconciles for more aggressive requeueing near the start of the controller
-	terminationTimeout time.Duration
+	kubeClient            client.Client
+	cloudProvider         cloudprovider.CloudProvider
+	successfulCount       uint64 // keeps track of successful reconciles for more aggressive requeueing near the start of the controller
+	terminationTimeout    time.Duration
+	registrationTimeout   time.Duration
 }
 
 const (
@@ -52,15 +56,28 @@ const (
 	DefaultTerminationTimeout = 10 * time.Minute
 	// StuckResourceCheckInterval is how often to check for stuck terminating resources
 	StuckResourceCheckInterval = 5 * time.Minute
+	// DefaultRegistrationTimeout is the maximum time to wait for node registration before cleanup
+	DefaultRegistrationTimeout = 30 * time.Minute
 )
 
 func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) *Controller {
 	return &Controller{
-		kubeClient:         kubeClient,
-		cloudProvider:      cloudProvider,
-		successfulCount:    0,
-		terminationTimeout: DefaultTerminationTimeout,
+		kubeClient:            kubeClient,
+		cloudProvider:         cloudProvider,
+		successfulCount:       0,
+		terminationTimeout:    DefaultTerminationTimeout,
+		registrationTimeout:   getRegistrationTimeoutFromEnv(),
 	}
+}
+
+// getRegistrationTimeoutFromEnv gets the registration timeout from environment variable
+func getRegistrationTimeoutFromEnv() time.Duration {
+	if envValue := os.Getenv("KARPENTER_REGISTRATION_TIMEOUT_MINUTES"); envValue != "" {
+		if minutes, err := strconv.Atoi(envValue); err == nil && minutes > 0 {
+			return time.Duration(minutes) * time.Minute
+		}
+	}
+	return DefaultRegistrationTimeout
 }
 
 func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
@@ -91,6 +108,11 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	// Check for stuck terminating NodeClaims and force cleanup if needed
 	if stuckErr := c.handleStuckTerminatingNodeClaims(ctx, clusterNodeClaims); stuckErr != nil {
 		log.FromContext(ctx).Error(stuckErr, "failed to handle stuck terminating nodeclaims")
+	}
+
+	// Check for NodeClaims that failed to register and clean them up after timeout
+	if registrationErr := c.handleFailedRegistrationNodeClaims(ctx, clusterNodeClaims); registrationErr != nil {
+		log.FromContext(ctx).Error(registrationErr, "failed to handle failed registration nodeclaims")
 	}
 
 	errs := make([]error, len(cloudNodeClaims))
@@ -141,6 +163,90 @@ func (c *Controller) handleStuckTerminatingNodeClaims(ctx context.Context, clust
 	}
 
 	return multierr.Combine(errs...)
+}
+
+// handleFailedRegistrationNodeClaims identifies and cleans up NodeClaims that failed to register after timeout
+func (c *Controller) handleFailedRegistrationNodeClaims(ctx context.Context, clusterNodeClaims []*karpv1.NodeClaim) error {
+	now := time.Now()
+	var errs []error
+
+	for _, nc := range clusterNodeClaims {
+		// Skip NodeClaims that are already terminating
+		if !nc.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		// Skip NodeClaims that have successfully registered (have a node)
+		if nc.Status.NodeName != "" {
+			continue
+		}
+
+		// Check if NodeClaim is stuck in Unknown state or has been pending too long
+		registrationDuration := now.Sub(nc.CreationTimestamp.Time)
+		if registrationDuration < c.registrationTimeout {
+			continue
+		}
+
+		// Determine if this NodeClaim failed to register
+		failedRegistration := false
+		
+		// Check for Unknown ready condition
+		for _, condition := range nc.Status.Conditions {
+			if condition.Type == "Ready" {
+				if condition.Status == metav1.ConditionUnknown {
+					failedRegistration = true
+					break
+				}
+			}
+		}
+
+		// Also handle NodeClaims that have no ready condition but are old enough
+		if len(nc.Status.Conditions) == 0 && registrationDuration > c.registrationTimeout {
+			failedRegistration = true
+		}
+
+		if !failedRegistration {
+			continue
+		}
+
+		// Log failed registration cleanup
+		ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+			"nodeclaim", nc.Name,
+			"provider-id", nc.Status.ProviderID,
+			"registration-duration", registrationDuration,
+		))
+		log.FromContext(ctx).Info("detected failed registration nodeclaim, cleaning up after timeout")
+
+		// Clean up the failed NodeClaim
+		if err := c.cleanupFailedRegistrationNodeClaim(ctx, nc); err != nil {
+			errs = append(errs, fmt.Errorf("failed to cleanup failed registration nodeclaim %s: %w", nc.Name, err))
+			continue
+		}
+
+		log.FromContext(ctx).Info("successfully cleaned up failed registration nodeclaim")
+	}
+
+	return multierr.Combine(errs...)
+}
+
+// cleanupFailedRegistrationNodeClaim performs cleanup of a NodeClaim that failed to register
+func (c *Controller) cleanupFailedRegistrationNodeClaim(ctx context.Context, nc *karpv1.NodeClaim) error {
+	// Step 1: Delete the cloud provider instance
+	if err := c.cloudProvider.Delete(ctx, nc); err != nil {
+		// Log but don't fail - instance might already be gone
+		log.FromContext(ctx).Error(err, "failed to delete cloud provider instance for failed registration")
+	}
+
+	// Step 2: Remove finalizers to allow NodeClaim deletion
+	if len(nc.Finalizers) > 0 {
+		patch := client.MergeFrom(nc.DeepCopy())
+		nc.Finalizers = nil
+		if err := c.kubeClient.Patch(ctx, nc, patch); err != nil {
+			return fmt.Errorf("removing finalizers from failed registration nodeclaim: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // forceCleanupStuckNodeClaim performs force cleanup of a stuck NodeClaim
