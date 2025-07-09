@@ -110,16 +110,39 @@ func FindOrCreateBootstrapToken(ctx context.Context, client kubernetes.Interface
 
 // GetInternalAPIServerEndpoint discovers the API server endpoint for node bootstrapping
 func GetInternalAPIServerEndpoint(ctx context.Context, client kubernetes.Interface) (string, error) {
-	// Get the kubeadm-config ConfigMap which contains the actual API endpoint
+	// First try to get from kubeadm-config ConfigMap 
 	kubeadmConfig, err := client.CoreV1().ConfigMaps("kube-system").Get(ctx, "kubeadm-config", metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("getting kubeadm-config configmap: %w", err)
+	if err == nil {
+		if endpoint, parseErr := parseKubeadmConfigEndpoint(kubeadmConfig.Data["ClusterConfiguration"]); parseErr == nil {
+			return endpoint, nil
+		}
 	}
 
-	// Parse ClusterConfiguration to find the controlPlaneEndpoint
-	clusterConfig, exists := kubeadmConfig.Data["ClusterConfiguration"]
-	if !exists {
-		return "", fmt.Errorf("ClusterConfiguration not found in kubeadm-config")
+	// Fallback: Get from cluster-info ConfigMap 
+	clusterInfo, err := client.CoreV1().ConfigMaps("kube-public").Get(ctx, "cluster-info", metav1.GetOptions{})
+	if err == nil {
+		if endpoint, parseErr := parseClusterInfoEndpoint(clusterInfo.Data["kubeconfig"]); parseErr == nil {
+			return endpoint, nil
+		}
+	}
+
+	// Final fallback: Use the Discovery client's REST client to get server endpoint
+	discoveryClient := client.Discovery()
+	if discoveryClient != nil {
+		if restClient := discoveryClient.RESTClient(); restClient != nil {
+			if baseURL := restClient.Get().URL(); baseURL != nil {
+				return baseURL.String(), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("unable to determine API server endpoint from kubeadm-config, cluster-info, or client configuration")
+}
+
+// parseKubeadmConfigEndpoint extracts the endpoint from kubeadm ClusterConfiguration
+func parseKubeadmConfigEndpoint(clusterConfig string) (string, error) {
+	if clusterConfig == "" {
+		return "", fmt.Errorf("empty ClusterConfiguration")
 	}
 
 	// Look for controlPlaneEndpoint in the YAML
@@ -137,6 +160,27 @@ func GetInternalAPIServerEndpoint(ctx context.Context, client kubernetes.Interfa
 	}
 
 	return "", fmt.Errorf("controlPlaneEndpoint not found in kubeadm-config")
+}
+
+// parseClusterInfoEndpoint extracts the endpoint from cluster-info kubeconfig
+func parseClusterInfoEndpoint(kubeconfig string) (string, error) {
+	if kubeconfig == "" {
+		return "", fmt.Errorf("empty kubeconfig")
+	}
+
+	// Look for server URL in the kubeconfig YAML
+	lines := strings.Split(kubeconfig, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "server:") {
+			endpoint := strings.TrimSpace(strings.TrimPrefix(line, "server:"))
+			if endpoint != "" {
+				return endpoint, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("server endpoint not found in cluster-info kubeconfig")
 }
 
 // generateRandomString generates a random string of specified length
