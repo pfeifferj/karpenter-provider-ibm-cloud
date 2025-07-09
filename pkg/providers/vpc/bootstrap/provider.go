@@ -71,6 +71,12 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 		return "", fmt.Errorf("generating bootstrap token: %w", err)
 	}
 
+	// Extract CA certificate from current kubeconfig for static configuration
+	caCert, err := p.getClusterCA(ctx)
+	if err != nil {
+		return "", fmt.Errorf("getting cluster CA certificate: %w", err)
+	}
+
 	// Detect container runtime from existing nodes
 	containerRuntime := p.detectContainerRuntime(ctx)
 	
@@ -82,6 +88,7 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 		ContainerRuntime: containerRuntime,
 		Region:           nodeClass.Spec.Region,
 		Zone:             nodeClass.Spec.Zone,
+		CABundle:         caCert,
 	}
 
 	logger.Info("Generated bootstrap configuration", 
@@ -184,4 +191,35 @@ func (p *VPCBootstrapProvider) getClusterName() string {
 // parseKubeconfig parses kubeconfig to extract endpoint and CA data
 func (p *VPCBootstrapProvider) parseKubeconfig(kubeconfig string) (string, []byte, error) {
 	return commonTypes.ParseKubeconfig(kubeconfig)
+}
+
+// getClusterCA extracts the cluster CA certificate from the current kubeconfig
+func (p *VPCBootstrapProvider) getClusterCA(ctx context.Context) (string, error) {
+	logger := log.FromContext(ctx)
+	
+	// Get cluster CA from kube-system namespace's default service account token
+	// This is the most reliable way to get the CA in any Kubernetes cluster
+	secret, err := p.k8sClient.CoreV1().Secrets("kube-system").Get(ctx, "default-token", metav1.GetOptions{})
+	if err != nil {
+		// Try to get CA from any service account token in kube-system
+		secrets, err := p.k8sClient.CoreV1().Secrets("kube-system").List(ctx, metav1.ListOptions{
+			FieldSelector: "type=kubernetes.io/service-account-token",
+		})
+		if err != nil || len(secrets.Items) == 0 {
+			return "", fmt.Errorf("unable to find service account tokens to extract CA certificate: %w", err)
+		}
+		secret = &secrets.Items[0]
+	}
+	
+	// Extract CA certificate from secret
+	caCert, exists := secret.Data["ca.crt"]
+	if !exists {
+		return "", fmt.Errorf("ca.crt not found in service account token secret")
+	}
+	
+	logger.Info("Successfully extracted cluster CA certificate", 
+		"secretName", secret.Name, 
+		"caSize", len(caCert))
+	
+	return string(caCert), nil
 }

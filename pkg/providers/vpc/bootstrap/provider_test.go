@@ -193,6 +193,20 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			nodeClass: getTestNodeClass(),
 			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			setupMocks: func(fakeClient *fake.Clientset) {
+				// Add CA certificate secret (required for new implementation)
+				caSecret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "default-token",
+						Namespace: "kube-system",
+					},
+					Type: corev1.SecretTypeServiceAccountToken,
+					Data: map[string][]byte{
+						"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----"),
+						"token":  []byte("test-token"),
+					},
+				}
+				_, _ = fakeClient.CoreV1().Secrets("kube-system").Create(context.Background(), caSecret, metav1.CreateOptions{})
+				
 				// Add kubeadm-config configmap for API endpoint discovery
 				kubeadmConfig := getTestKubeadmConfigMap()
 				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), kubeadmConfig, metav1.CreateOptions{})
@@ -228,6 +242,20 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			nodeClass: getTestNodeClass(),
 			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			setupMocks: func(fakeClient *fake.Clientset) {
+				// Add CA certificate secret (required for new implementation)
+				caSecret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "default-token",
+						Namespace: "kube-system",
+					},
+					Type: corev1.SecretTypeServiceAccountToken,
+					Data: map[string][]byte{
+						"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----"),
+						"token":  []byte("test-token"),
+					},
+				}
+				_, _ = fakeClient.CoreV1().Secrets("kube-system").Create(context.Background(), caSecret, metav1.CreateOptions{})
+				
 				// Add kubeadm-config configmap for API endpoint discovery
 				kubeadmConfig := getTestKubeadmConfigMap()
 				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), kubeadmConfig, metav1.CreateOptions{})
@@ -261,6 +289,20 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			}(),
 			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			setupMocks: func(fakeClient *fake.Clientset) {
+				// Add CA certificate secret (required for new implementation)
+				caSecret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "default-token",
+						Namespace: "kube-system",
+					},
+					Type: corev1.SecretTypeServiceAccountToken,
+					Data: map[string][]byte{
+						"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----"),
+						"token":  []byte("test-token"),
+					},
+				}
+				_, _ = fakeClient.CoreV1().Secrets("kube-system").Create(context.Background(), caSecret, metav1.CreateOptions{})
+				
 				// Add kubeadm-config configmap for API endpoint discovery
 				kubeadmConfig := getTestKubeadmConfigMap()
 				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), kubeadmConfig, metav1.CreateOptions{})
@@ -586,6 +628,235 @@ func TestVPCBootstrapProvider_buildKubeletConfig(t *testing.T) {
 			assert.NotNil(t, result)
 			if tt.validateConfig != nil {
 				tt.validateConfig(t, result)
+			}
+		})
+	}
+}
+
+func TestVPCBootstrapProvider_getClusterCA(t *testing.T) {
+	tests := []struct {
+		name           string
+		setupMocks     func(*fake.Clientset)
+		expectError    bool
+		errorContains  string
+		validateResult func(*testing.T, string)
+	}{
+		{
+			name: "successful CA extraction from default-token secret",
+			setupMocks: func(fakeClient *fake.Clientset) {
+				secret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "default-token",
+						Namespace: "kube-system",
+					},
+					Type: corev1.SecretTypeServiceAccountToken,
+					Data: map[string][]byte{
+						"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----"),
+						"token":  []byte("test-token"),
+					},
+				}
+				_, _ = fakeClient.CoreV1().Secrets("kube-system").Create(context.Background(), secret, metav1.CreateOptions{})
+			},
+			expectError: false,
+			validateResult: func(t *testing.T, caCert string) {
+				assert.NotEmpty(t, caCert)
+				assert.Contains(t, caCert, "-----BEGIN CERTIFICATE-----")
+				assert.Contains(t, caCert, "-----END CERTIFICATE-----")
+			},
+		},
+		{
+			name: "fallback to any service account token when default-token not found",
+			setupMocks: func(fakeClient *fake.Clientset) {
+				secret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "karpenter-token-abc123",
+						Namespace: "kube-system",
+					},
+					Type: corev1.SecretTypeServiceAccountToken,
+					Data: map[string][]byte{
+						"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----"),
+						"token":  []byte("test-token"),
+					},
+				}
+				_, _ = fakeClient.CoreV1().Secrets("kube-system").Create(context.Background(), secret, metav1.CreateOptions{})
+			},
+			expectError: false,
+			validateResult: func(t *testing.T, caCert string) {
+				assert.NotEmpty(t, caCert)
+				assert.Contains(t, caCert, "-----BEGIN CERTIFICATE-----")
+			},
+		},
+		{
+			name: "no service account tokens available",
+			setupMocks: func(fakeClient *fake.Clientset) {
+				// Don't create any secrets
+			},
+			expectError:   true,
+			errorContains: "unable to find service account tokens to extract CA certificate",
+		},
+		{
+			name: "service account token exists but no ca.crt",
+			setupMocks: func(fakeClient *fake.Clientset) {
+				secret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "default-token",
+						Namespace: "kube-system",
+					},
+					Type: corev1.SecretTypeServiceAccountToken,
+					Data: map[string][]byte{
+						"token": []byte("test-token"),
+						// No ca.crt field
+					},
+				}
+				_, _ = fakeClient.CoreV1().Secrets("kube-system").Create(context.Background(), secret, metav1.CreateOptions{})
+			},
+			expectError:   true,
+			errorContains: "ca.crt not found in service account token secret",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create fake Kubernetes client
+			fakeClient := fake.NewSimpleClientset()
+
+			// Setup mocks
+			tt.setupMocks(fakeClient)
+
+			// Create VPC bootstrap provider
+			provider := NewVPCBootstrapProvider(nil, fakeClient)
+
+			// Test getClusterCA method
+			result, err := provider.getClusterCA(ctx)
+
+			// Validate results
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				assert.Empty(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotEmpty(t, result)
+				if tt.validateResult != nil {
+					tt.validateResult(t, result)
+				}
+			}
+		})
+	}
+}
+
+func TestVPCBootstrapProvider_GetUserData_WithCABundle(t *testing.T) {
+	tests := []struct {
+		name            string
+		nodeClass       *v1alpha1.IBMNodeClass
+		nodeClaim       types.NamespacedName
+		setupMocks      func(*fake.Clientset)
+		expectError     bool
+		errorContains   string
+		validateUserData func(*testing.T, string)
+	}{
+		{
+			name:      "user data generation includes CA certificate",
+			nodeClass: getTestNodeClass(),
+			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
+			setupMocks: func(fakeClient *fake.Clientset) {
+				// Add CA certificate secret
+				secret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "default-token",
+						Namespace: "kube-system",
+					},
+					Type: corev1.SecretTypeServiceAccountToken,
+					Data: map[string][]byte{
+						"ca.crt": []byte("-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----"),
+						"token":  []byte("test-token"),
+					},
+				}
+				_, _ = fakeClient.CoreV1().Secrets("kube-system").Create(context.Background(), secret, metav1.CreateOptions{})
+				
+				// Add kubeadm-config configmap for API endpoint discovery
+				kubeadmConfig := getTestKubeadmConfigMap()
+				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), kubeadmConfig, metav1.CreateOptions{})
+				
+				// Add DNS service for cluster discovery
+				dnsService := getTestDNSService()
+				_, _ = fakeClient.CoreV1().Services("kube-system").Create(context.Background(), dnsService, metav1.CreateOptions{})
+				
+				// Add kubernetes service for cluster CIDR discovery
+				kubeService := getTestKubernetesService()
+				_, _ = fakeClient.CoreV1().Services("default").Create(context.Background(), kubeService, metav1.CreateOptions{})
+				
+				// Add test node for container runtime detection
+				testNode := getTestNode()
+				_, _ = fakeClient.CoreV1().Nodes().Create(context.Background(), testNode, metav1.CreateOptions{})
+			},
+			expectError: false,
+			validateUserData: func(t *testing.T, userData string) {
+				assert.NotEmpty(t, userData)
+				
+				// Should contain CA certificate content
+				assert.Contains(t, userData, "Creating cluster CA certificate")
+				assert.Contains(t, userData, "-----BEGIN CERTIFICATE-----")
+				assert.Contains(t, userData, "-----END CERTIFICATE-----")
+				
+				// Should use static CA certificate approach
+				assert.Contains(t, userData, "Using static CA certificate for discovery")
+				assert.Contains(t, userData, "certificate-authority /etc/kubernetes/pki/ca.crt")
+				
+				// Should not use unsafe skip CA verification
+				assert.NotContains(t, userData, "discovery-token-unsafe-skip-ca-verification")
+			},
+		},
+		{
+			name: "CA bundle extraction failure",
+			nodeClass: getTestNodeClass(),
+			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
+			setupMocks: func(fakeClient *fake.Clientset) {
+				// Don't add any CA certificate secrets - will cause failure
+				// Add other required resources
+				kubeadmConfig := getTestKubeadmConfigMap()
+				_, _ = fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), kubeadmConfig, metav1.CreateOptions{})
+			},
+			expectError:   true,
+			errorContains: "getting cluster CA certificate",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create fake Kubernetes client
+			scheme := runtime.NewScheme()
+			_ = corev1.AddToScheme(scheme)
+			fakeClient := fake.NewSimpleClientset()
+
+			// Setup mocks
+			tt.setupMocks(fakeClient)
+
+			// Create VPC bootstrap provider
+			provider := NewVPCBootstrapProvider(nil, fakeClient)
+
+			// Test GetUserData method
+			result, err := provider.GetUserData(ctx, tt.nodeClass, tt.nodeClaim)
+
+			// Validate results
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				assert.Empty(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotEmpty(t, result)
+				if tt.validateUserData != nil {
+					tt.validateUserData(t, result)
+				}
 			}
 		})
 	}
