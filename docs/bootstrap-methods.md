@@ -44,10 +44,26 @@ spec:
 
 ### Automatic Features
 - **Cluster Discovery**: Automatically detects cluster API endpoint and CA certificate
-- **Token Management**: Generates and refreshes bootstrap tokens automatically  
+- **Token Management**: Generates and refreshes bootstrap tokens automatically with generic RBAC
 - **Network Detection**: Discovers cluster CIDR and DNS configuration
 - **System Configuration**: Enables IP forwarding, disables swap, configures hostname
 - **Runtime Selection**: Auto-detects and configures container runtime (containerd/crio)
+
+### Bootstrap Token RBAC Design
+
+The provider uses a **generic RBAC approach** for bootstrap tokens:
+
+#### **Single Role for All NodePools**
+```yaml
+# All bootstrap tokens use the same generic group
+group: "system:bootstrappers:karpenter:ibm-cloud"
+
+# Single ClusterRoleBinding covers all NodePools
+subjects:
+- kind: Group
+  name: system:bootstrappers:karpenter:ibm-cloud
+  apiGroup: rbac.authorization.k8s.io
+```
 
 ## VPC Bootstrap (Cloud-Init)
 
@@ -245,16 +261,46 @@ ssh ubuntu@<instance-ip> "sudo systemctl status cloud-final"
 ```
 
 #### **Cluster Join Failures**
+
+**VPC Clusters - Wrong API Endpoint (Most Common)**:
+```bash
+# Symptoms: Timeout errors, nodes never register
+# Check if using correct INTERNAL endpoint, not external
+
+# 1. Find correct internal API endpoint
+kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes
+
+# 2. Update NodeClass with internal endpoint
+kubectl patch ibmnodeclass your-nodeclass --type='merge' \
+  -p='{"spec":{"apiServerEndpoint":"https://10.243.65.4:6443"}}'
+
+# 3. Verify connectivity from worker instance
+ssh ubuntu@<instance-ip> "telnet 10.243.65.4 6443"
+```
+
+**Bootstrap Token Issues**:
+```bash
+# Check if bootstrap tokens are being created
+kubectl get secrets -n kube-system | grep bootstrap-token
+
+# Verify RBAC permissions exist
+kubectl get clusterrolebindings | grep karpenter-ibm-bootstrap
+
+# Check token authentication on instance
+ssh ubuntu@<instance-ip> "sudo cat /var/lib/kubelet/bootstrap-kubeconfig"
+```
+
+**General Debugging**:
 ```bash
 # Check kubelet status and logs
 ssh ubuntu@<instance-ip> "sudo systemctl status kubelet"
 ssh ubuntu@<instance-ip> "sudo journalctl -u kubelet --no-pager -n 50"
 
-# Verify cluster connectivity
-ssh ubuntu@<instance-ip> "curl -k https://CLUSTER_ENDPOINT/healthz"
+# Verify cluster connectivity (use INTERNAL endpoint)
+ssh ubuntu@<instance-ip> "curl -k https://10.243.65.4:6443/healthz"
 
-# Check kubeadm join process
-ssh ubuntu@<instance-ip> "sudo journalctl | grep kubeadm"
+# For direct kubelet bootstrap (not kubeadm)
+ssh ubuntu@<instance-ip> "sudo journalctl -u kubelet | grep -E '(bootstrap|token|certificate)'"
 ```
 
 #### **Network Connectivity Issues**

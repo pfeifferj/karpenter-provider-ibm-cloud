@@ -129,11 +129,50 @@ spec:
 
 ## VPC Bootstrap Features
 
+### API Endpoint Discovery (Critical for VPC Clusters)
+
+**Important**: VPC clusters must use the **internal API endpoint**, not the external kubectl endpoint.
+
+#### Finding the Correct Internal API Endpoint
+
+```bash
+# Method 1: Get actual API server endpoint (RECOMMENDED)
+kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes
+
+# Example output:
+# NAME         ADDRESSTYPE   PORTS   ENDPOINTS     AGE  
+# kubernetes   IPv4          6443    10.243.65.4   15d
+
+# Use: https://10.243.65.4:6443
+```
+
+```bash
+# Method 2: Check kubernetes service (alternative)
+kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}'
+# Returns cluster IP (e.g., 10.96.0.1) - use https://10.96.0.1:443
+```
+
+#### Configuring IBMNodeClass with Correct Endpoint
+
+```yaml
+apiVersion: karpenter.ibm.sh/v1alpha1
+kind: IBMNodeClass
+metadata:
+  name: vpc-nodeclass
+spec:
+  # CRITICAL: Use INTERNAL endpoint from discovery above
+  apiServerEndpoint: "https://10.243.65.4:6443"
+  
+  region: us-south
+  vpc: vpc-12345678
+  # ... rest of config
+```
+
 ### Automatic Cluster Discovery
 The VPC integration automatically discovers your cluster configuration:
 
-- **API Endpoint**: Finds internal cluster API server endpoint for secure communication
-- **CA Certificate**: Extracts cluster CA certificate from existing nodes
+- **API Endpoint**: Uses the internal cluster API server endpoint you configure
+- **CA Certificate**: Extracts cluster CA certificate from existing nodes  
 - **DNS Configuration**: Discovers cluster DNS service IP and search domains
 - **Network Settings**: Detects cluster pod and service CIDR ranges
 - **Runtime Detection**: Matches container runtime used by existing nodes
@@ -325,6 +364,40 @@ spec:
 ## VPC-Specific Troubleshooting
 
 ### Bootstrap Issues
+
+#### Wrong API Endpoint Configuration
+
+**Symptoms**: 
+- NodeClaims created but nodes never register with cluster
+- Kubelet logs show: `"Client.Timeout exceeded while awaiting headers"`
+- Node status remains "Unknown" with "Drifted" = True
+
+**Solution**:
+```bash
+# 1. Find correct internal endpoint
+kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes
+
+# 2. Update NodeClass with internal endpoint (NOT external)
+kubectl patch ibmnodeclass your-nodeclass --type='merge' \
+  -p='{"spec":{"apiServerEndpoint":"https://10.243.65.4:6443"}}'
+
+# 3. Delete old NodeClaims to trigger new ones with correct config
+kubectl delete nodeclaims --all
+
+# 4. Monitor node registration
+kubectl get nodes -w
+```
+
+**Verification**:
+```bash
+# Test connectivity from worker instance
+ssh ubuntu@<node-ip> "telnet 10.243.65.4 6443"
+# Should connect successfully, not timeout
+
+# Check kubelet logs
+ssh ubuntu@<node-ip> "sudo journalctl -u kubelet -f"
+# Should see successful API server communication
+```
 
 #### Cluster Discovery Failures
 ```bash
