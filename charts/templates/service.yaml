@@ -14,7 +14,7 @@ spec:
   ports:
     - name: http-metrics
       port: {{ .Values.controller.metrics.port }}
-      targetPort: http-metrics
+      targetPort: metrics
       protocol: TCP
   selector:
     {{- include "karpenter.selectorLabels" . | nindent 4 }}
