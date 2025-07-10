@@ -642,6 +642,27 @@ func TestVPCBootstrapProvider_getClusterCA(t *testing.T) {
 		validateResult func(*testing.T, string)
 	}{
 		{
+			name: "successful CA extraction from kube-root-ca.crt ConfigMap",
+			setupMocks: func(fakeClient *fake.Clientset) {
+				// Create kube-root-ca.crt ConfigMap
+				cm := &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "kube-root-ca.crt",
+						Namespace: "kube-system",
+					},
+					Data: map[string]string{
+						"ca.crt": "-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----",
+					},
+				}
+				_, err := fakeClient.CoreV1().ConfigMaps("kube-system").Create(context.Background(), cm, metav1.CreateOptions{})
+				assert.NoError(t, err)
+			},
+			expectError: false,
+			validateResult: func(t *testing.T, caCert string) {
+				assert.Equal(t, "-----BEGIN CERTIFICATE-----\nMIIBKjCB4wIBATANBgkqhkiG9w0BAQsFADA...\n-----END CERTIFICATE-----", caCert)
+			},
+		},
+		{
 			name: "successful CA extraction from default-token secret",
 			setupMocks: func(fakeClient *fake.Clientset) {
 				secret := &corev1.Secret{
@@ -692,7 +713,7 @@ func TestVPCBootstrapProvider_getClusterCA(t *testing.T) {
 				// Don't create any secrets
 			},
 			expectError:   true,
-			errorContains: "unable to find service account tokens to extract CA certificate",
+			errorContains: "unable to find CA certificate in ConfigMap or service account tokens",
 		},
 		{
 			name: "service account token exists but no ca.crt",
