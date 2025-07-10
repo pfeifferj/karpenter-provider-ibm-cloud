@@ -83,6 +83,12 @@ type Options struct {
 	
 	// Zone is the availability zone
 	Zone string
+	
+	// Taints to apply to the node
+	Taints []corev1.Taint
+	
+	// Labels to apply to the node
+	Labels map[string]string
 }
 
 // KubeletConfig contains kubelet-specific configuration

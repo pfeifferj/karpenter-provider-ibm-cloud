@@ -23,57 +23,43 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 )
 
-// cloudInitTemplate defines the cloud-init script template for IBM Cloud VPC
+// cloudInitTemplate defines the cloud-init script template for IBM Cloud VPC using direct kubelet configuration
 const cloudInitTemplate = `#!/bin/bash
-set -e
+set -euo pipefail
 
-# Enhanced logging for debugging
+# Enhanced logging
 LOG_FILE="/var/log/karpenter-bootstrap.log"
 exec > >(tee -a $LOG_FILE) 2>&1
 
-echo "$(date): ===== Karpenter IBM Cloud node bootstrap started ====="
+echo "$(date): ===== Karpenter IBM Cloud Bootstrap (Direct Kubelet) ====="
 
 # Configuration
 CLUSTER_ENDPOINT="{{ .ClusterEndpoint }}"
 BOOTSTRAP_TOKEN="{{ .BootstrapToken }}"
+CLUSTER_DNS="{{ .DNSClusterIP }}"
 REGION="{{ .Region }}"
 ZONE="{{ .Zone }}"
 
-PRIVATE_IP="$(hostname -I | awk '{print $1}')"
+# Instance metadata
+INSTANCE_ID=$(dmidecode -s system-uuid 2>/dev/null || echo "unknown")
+PRIVATE_IP=$(hostname -I | awk '{print $1}')
+HOSTNAME="ip-$(echo $PRIVATE_IP | tr '.' '-').{{ .Region }}.compute.ibmcloud.local"
 
-echo "$(date): Private IP: $PRIVATE_IP"
-echo "$(date): Region: $REGION"
-echo "$(date): Cluster Endpoint: $CLUSTER_ENDPOINT"
-
-# Set hostname in IBM Cloud format
-HOSTNAME_IP=$(echo $PRIVATE_IP | tr '.' '-')
-HOSTNAME="ip-${HOSTNAME_IP}.${REGION}.compute.ibmcloud.local"
-
-echo "$(date): Setting hostname to: $HOSTNAME"
+# Set hostname
 hostnamectl set-hostname "$HOSTNAME"
 echo "127.0.0.1 $HOSTNAME" >> /etc/hosts
-echo "$(date): ✅ Hostname configured"
+echo "$(date): ✅ Hostname set to: $HOSTNAME"
 
-# Test connectivity to API server
-echo "$(date): Testing connectivity to API server..."
-if curl -k --connect-timeout 10 $CLUSTER_ENDPOINT > /dev/null 2>&1; then
-    echo "$(date): ✅ API server reachable"
-else
-    echo "$(date): ❌ API server NOT reachable - bootstrap may fail!"
-    echo "$(date): Endpoint: $CLUSTER_ENDPOINT"
-fi
-
-# Essential system configuration for kubeadm
-echo "$(date): Configuring system for kubeadm..."
+# System configuration
 echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf && sysctl -p
 swapoff -a && sed -i '/swap/d' /etc/fstab
-echo "$(date): ✅ System configured for kubeadm"
+echo "$(date): ✅ System configured"
 
 # Install prerequisites
 echo "$(date): Installing prerequisites..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y curl apt-transport-https ca-certificates gnupg lsb-release
+apt-get install -y curl apt-transport-https ca-certificates gnupg lsb-release dmidecode
 echo "$(date): ✅ Prerequisites installed"
 
 # Install container runtime based on configuration
@@ -136,73 +122,129 @@ echo "$(date): Installing Kubernetes components..."
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
 apt-get update
-apt-get install -y kubelet kubeadm kubectl
-apt-mark hold kubelet kubeadm kubectl
+apt-get install -y kubelet kubectl
+apt-mark hold kubelet kubectl
 echo "$(date): ✅ Kubernetes components installed"
 
-# Configure kubelet with cloud provider
-echo "$(date): Configuring kubelet..."
-mkdir -p /var/lib/kubelet
-cat > /var/lib/kubelet/kubeadm-flags.env << EOF
-KUBELET_KUBEADM_ARGS="--cloud-provider=external --hostname-override=$HOSTNAME"
-EOF
-echo "$(date): ✅ Kubelet configured"
+# Create directories
+mkdir -p /etc/kubernetes/pki /var/lib/kubelet /etc/systemd/system/kubelet.service.d
 
-# Create CA certificate file for static discovery
-echo "$(date): Creating cluster CA certificate..."
-mkdir -p /etc/kubernetes/pki
+# Write CA certificate
 cat > /etc/kubernetes/pki/ca.crt << 'EOF'
 {{ .CABundle }}
 EOF
 echo "$(date): ✅ CA certificate created"
 
-# Calculate CA certificate hash for secure discovery
-echo "$(date): Calculating CA certificate hash..."
-CA_CERT_HASH=$(openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //')
-echo "$(date): CA certificate hash: sha256:$CA_CERT_HASH"
+# Create bootstrap kubeconfig
+cat > /var/lib/kubelet/bootstrap-kubeconfig << EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority: /etc/kubernetes/pki/ca.crt
+    server: ${CLUSTER_ENDPOINT}
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: kubelet-bootstrap
+  name: default
+current-context: default
+users:
+- name: kubelet-bootstrap
+  user:
+    token: ${BOOTSTRAP_TOKEN}
+EOF
+echo "$(date): ✅ Bootstrap kubeconfig created"
 
-# Join the cluster using token-based discovery with CA certificate hash (remove https:// prefix for kubeadm)
-CLUSTER_ENDPOINT_NO_HTTPS=$(echo $CLUSTER_ENDPOINT | sed 's|https://||')
-echo "$(date): Attempting to join cluster using API server: $CLUSTER_ENDPOINT_NO_HTTPS"
-echo "$(date): Hostname: $HOSTNAME"
-echo "$(date): Bootstrap Token: ${BOOTSTRAP_TOKEN:0:10}..."
-echo "$(date): Using token-based discovery with static CA certificate verification"
+# Create kubelet configuration
+cat > /var/lib/kubelet/config.yaml << EOF
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+  x509:
+    clientCAFile: /etc/kubernetes/pki/ca.crt
+authorization:
+  mode: Webhook
+clusterDomain: cluster.local
+clusterDNS:
+  - ${CLUSTER_DNS}
+rotateCertificates: true
+serverTLSBootstrap: true
+cloudProvider: external
+registerNode: true
+registerWithTaints:
+{{ range .Taints }}
+- key: {{ .Key }}
+  value: {{ .Value }}
+  effect: {{ .Effect }}
+{{ end }}
+nodeLabels:
+{{ range $key, $value := .Labels }}
+  {{ $key }}: "{{ $value }}"
+{{ end }}
+EOF
+echo "$(date): ✅ Kubelet configuration created"
 
-if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-token-ca-cert-hash sha256:$CA_CERT_HASH --skip-phases=preflight; then
-    echo "$(date): ✅ Successfully joined cluster!"
-else
-    echo "$(date): ❌ Failed to join cluster with CA certificate hash"
-    echo "$(date): Attempting fallback with unsafe skip CA verification..."
-    if kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS --token $BOOTSTRAP_TOKEN --discovery-token-unsafe-skip-ca-verification --skip-phases=preflight; then
-        echo "$(date): ✅ Successfully joined cluster with fallback method!"
-        echo "$(date): ⚠️  Warning: Used unsafe CA verification skip"
-    else
-        echo "$(date): ❌ Failed to join cluster with both methods"
-        # Show detailed error info
-        echo "$(date): Checking kubelet status..."
-        systemctl status kubelet --no-pager
-        echo "$(date): Checking kubelet logs..."
-        journalctl -u kubelet --no-pager -n 20
-        echo "$(date): Checking CA certificate..."
-        ls -la /etc/kubernetes/pki/ca.crt
-        openssl x509 -in /etc/kubernetes/pki/ca.crt -text -noout | head -20
-        echo "$(date): CA certificate hash: sha256:$CA_CERT_HASH"
-        exit 1
-    fi
-fi
+# Configure kubelet service
+cat > /etc/systemd/system/kubelet.service.d/10-karpenter.conf << EOF
+[Service]
+Environment="KUBELET_EXTRA_ARGS=--cloud-provider=external --hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP}{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
+EOF
 
-echo "$(date): ===== Bootstrap process completed ====="
-echo "$(date): Log available at: $LOG_FILE"
+# Create kubelet service override
+cat > /etc/systemd/system/kubelet.service << 'EOF'
+[Unit]
+Description=kubelet: The Kubernetes Node Agent
+Documentation=https://kubernetes.io/docs/
+Wants=network-online.target
+After=network-online.target
 
+[Service]
+ExecStart=/usr/bin/kubelet \
+  --bootstrap-kubeconfig=/var/lib/kubelet/bootstrap-kubeconfig \
+  --kubeconfig=/var/lib/kubelet/kubeconfig \
+  --config=/var/lib/kubelet/config.yaml \
+  $KUBELET_EXTRA_ARGS
+Restart=always
+StartLimitInterval=0
+RestartSec=10
 
-# Run custom user data first if provided
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "$(date): ✅ Kubelet service configured"
+
+# Start kubelet
+systemctl daemon-reload
+systemctl enable kubelet
+systemctl start kubelet
+
+echo "$(date): Waiting for node to be ready..."
+for i in {1..60}; do
+  if systemctl is-active kubelet >/dev/null 2>&1; then
+    echo "$(date): ✅ Kubelet is running"
+    break
+  fi
+  sleep 5
+done
+
+echo "$(date): Checking kubelet status..."
+systemctl status kubelet --no-pager || true
+journalctl -u kubelet --no-pager -n 20 || true
+
+# Run custom user data if provided
 {{ if .CustomUserData }}
 echo "$(date): Running custom user data..."
 {{ .CustomUserData }}
 {{ end }}
 
-echo "$(date): Node bootstrap completed!"
-
+echo "$(date): ===== Bootstrap completed ====="
 `
 
 // generateCloudInitScript generates a cloud-init script for node bootstrapping
@@ -217,11 +259,9 @@ func (p *VPCBootstrapProvider) generateCloudInitScript(ctx context.Context, opti
 	data := struct {
 		types.Options
 		KubeletExtraArgs string
-		CABundle         string
 	}{
 		Options:          options,
 		KubeletExtraArgs: p.buildKubeletExtraArgs(options.KubeletConfig),
-		CABundle:         options.CABundle, // Use raw CA certificate, not base64 encoded
 	}
 
 	// Execute template

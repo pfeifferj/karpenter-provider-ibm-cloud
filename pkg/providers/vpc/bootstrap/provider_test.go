@@ -799,17 +799,19 @@ func TestVPCBootstrapProvider_GetUserData_WithCABundle(t *testing.T) {
 				assert.NotEmpty(t, userData)
 				
 				// Should contain CA certificate content
-				assert.Contains(t, userData, "Creating cluster CA certificate")
+				assert.Contains(t, userData, "CA certificate created")
 				assert.Contains(t, userData, "-----BEGIN CERTIFICATE-----")
 				assert.Contains(t, userData, "-----END CERTIFICATE-----")
 				
-				// Should use token-based discovery with CA certificate hash
-				assert.Contains(t, userData, "Using token-based discovery with static CA certificate verification")
-				assert.Contains(t, userData, "Calculating CA certificate hash")
-				assert.Contains(t, userData, "discovery-token-ca-cert-hash sha256:")
+				// Should use direct kubelet approach (not kubeadm)
+				assert.Contains(t, userData, "Direct Kubelet")
+				assert.Contains(t, userData, "bootstrap-kubeconfig")
+				assert.Contains(t, userData, "kubelet.service")
+				assert.Contains(t, userData, "systemctl start kubelet")
 				
-				// Should have fallback to unsafe skip CA verification (as a last resort)
-				assert.Contains(t, userData, "discovery-token-unsafe-skip-ca-verification")
+				// Should not contain kubeadm-specific text (since we bypassed kubeadm)
+				assert.NotContains(t, userData, "kubeadm join")
+				assert.NotContains(t, userData, "discovery-token-ca-cert-hash")
 			},
 		},
 		{
