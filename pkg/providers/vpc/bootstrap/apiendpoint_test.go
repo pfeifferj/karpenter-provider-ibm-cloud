@@ -144,13 +144,17 @@ func TestVPCBootstrapProvider_APIServerEndpoint_Override(t *testing.T) {
 				assert.Contains(t, userData, tt.expectedInUserData, 
 					"Expected endpoint %s to be in user data", tt.expectedInUserData)
 				
-				// Verify kubeadm join uses the variable (not literal endpoint)
-				assert.Contains(t, userData, "kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS", 
-					"kubeadm join should use CLUSTER_ENDPOINT_NO_HTTPS variable")
+				// Verify direct kubelet uses the cluster endpoint variable in bootstrap kubeconfig
+				assert.Contains(t, userData, "server: ${CLUSTER_ENDPOINT}", 
+					"bootstrap kubeconfig should use CLUSTER_ENDPOINT variable")
 				
-				// Verify https:// prefix is NOT in kubeadm join command
-				assert.NotContains(t, userData, "kubeadm join https://", 
-					"kubeadm join should not contain https:// prefix")
+				// Verify the script uses direct kubelet approach (not kubeadm)
+				assert.Contains(t, userData, "bootstrap-kubeconfig", 
+					"script should create bootstrap kubeconfig for direct kubelet")
+				
+				// Verify kubeadm is NOT used
+				assert.NotContains(t, userData, "kubeadm join", 
+					"script should not use kubeadm join")
 			}
 		})
 	}
@@ -236,13 +240,17 @@ func TestVPCBootstrapProvider_APIServerEndpoint_Issue18_Fix(t *testing.T) {
 	assert.NotContains(t, userData, "10.96.0.1:443", 
 		"Should not use internal Kubernetes service IP")
 	
-	// 4. kubeadm join should use host:port format (no https:// prefix)
-	assert.Contains(t, userData, "kubeadm join $CLUSTER_ENDPOINT_NO_HTTPS", 
-		"kubeadm join should use CLUSTER_ENDPOINT_NO_HTTPS variable")
+	// 4. bootstrap kubeconfig should use the correct server endpoint with https://
+	assert.Contains(t, userData, "server: ${CLUSTER_ENDPOINT}", 
+		"bootstrap kubeconfig should use CLUSTER_ENDPOINT variable")
 	
-	// 5. Should not contain https:// in kubeadm join command
-	assert.NotContains(t, userData, "kubeadm join https://", 
-		"kubeadm join should not contain https:// prefix")
+	// 5. Should use direct kubelet approach (not kubeadm)
+	assert.Contains(t, userData, "bootstrap-kubeconfig", 
+		"script should create bootstrap kubeconfig for direct kubelet")
+	
+	// 6. Should not use kubeadm join
+	assert.NotContains(t, userData, "kubeadm join", 
+		"script should not use kubeadm join")
 }
 
 func TestVPCBootstrapProvider_APIServerEndpoint_ValidationPattern(t *testing.T) {

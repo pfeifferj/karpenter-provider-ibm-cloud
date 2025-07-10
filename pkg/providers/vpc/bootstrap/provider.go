@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -47,7 +48,7 @@ func NewVPCBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface)
 // GetUserData generates VPC-specific user data for node bootstrapping using cloud-init
 func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Generating VPC cloud-init user data for dynamic bootstrap")
+	logger.Info("Generating VPC cloud-init user data for direct kubelet bootstrap")
 
 	// Get API server endpoint - use NodeClass override if specified
 	var clusterEndpoint string
@@ -77,10 +78,24 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 		return "", fmt.Errorf("getting cluster CA certificate: %w", err)
 	}
 
+	// Get cluster DNS IP (typically 172.21.0.10 for IBM Cloud)
+	clusterDNS, err := p.getClusterDNS(ctx)
+	if err != nil {
+		// Fallback to common default
+		clusterDNS = "172.21.0.10"
+		logger.Info("Using default cluster DNS", "dns", clusterDNS)
+	}
+
 	// Detect container runtime from existing nodes
 	containerRuntime := p.detectContainerRuntime(ctx)
 	
-	// Build bootstrap options for VPC mode
+	// Get NodeClaim to extract labels and taints
+	nodeClaimObj, err := p.getNodeClaim(ctx, nodeClaim)
+	if err != nil {
+		logger.Error(err, "Failed to get NodeClaim, proceeding without labels/taints")
+	}
+	
+	// Build bootstrap options for direct kubelet
 	options := commonTypes.Options{
 		ClusterEndpoint:  clusterEndpoint,
 		BootstrapToken:   bootstrapToken,
@@ -89,14 +104,29 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 		Region:           nodeClass.Spec.Region,
 		Zone:             nodeClass.Spec.Zone,
 		CABundle:         caCert,
+		DNSClusterIP:     clusterDNS,
+	}
+	
+	// Add labels and taints if NodeClaim was found
+	if nodeClaimObj != nil {
+		options.Labels = nodeClaimObj.Labels
+		options.Taints = nodeClaimObj.Spec.Taints
+	}
+	
+	// Add kubelet extra args if needed
+	if options.KubeletConfig == nil {
+		options.KubeletConfig = &commonTypes.KubeletConfig{
+			ExtraArgs: make(map[string]string),
+		}
 	}
 
 	logger.Info("Generated bootstrap configuration", 
 		"endpoint", clusterEndpoint,
 		"token", fmt.Sprintf("%s...", bootstrapToken[:10]),
-		"region", nodeClass.Spec.Region)
+		"region", nodeClass.Spec.Region,
+		"dns", clusterDNS)
 
-	// Generate cloud-init script for VPC
+	// Generate cloud-init script for direct kubelet
 	return p.generateCloudInitScript(ctx, options)
 }
 
@@ -222,4 +252,43 @@ func (p *VPCBootstrapProvider) getClusterCA(ctx context.Context) (string, error)
 		"caSize", len(caCert))
 	
 	return string(caCert), nil
+}
+
+// getClusterDNS gets the cluster DNS service IP
+func (p *VPCBootstrapProvider) getClusterDNS(ctx context.Context) (string, error) {
+	// Get kube-dns or coredns service
+	services := []string{"kube-dns", "coredns"}
+	for _, svcName := range services {
+		svc, err := p.k8sClient.CoreV1().Services("kube-system").Get(ctx, svcName, metav1.GetOptions{})
+		if err == nil && svc.Spec.ClusterIP != "" {
+			return svc.Spec.ClusterIP, nil
+		}
+	}
+	
+	// Try to get from kubelet configmap
+	cm, err := p.k8sClient.CoreV1().ConfigMaps("kube-system").Get(ctx, "kubelet-config", metav1.GetOptions{})
+	if err == nil {
+		// Parse YAML to find clusterDNS - simplified version
+		if data, ok := cm.Data["kubelet"]; ok && strings.Contains(data, "clusterDNS:") {
+			lines := strings.Split(data, "\n")
+			for i, line := range lines {
+				if strings.Contains(line, "clusterDNS:") && i+1 < len(lines) {
+					// Next line should have the DNS IP
+					dnsLine := strings.TrimSpace(lines[i+1])
+					if strings.HasPrefix(dnsLine, "- ") {
+						return strings.TrimPrefix(dnsLine, "- "), nil
+					}
+				}
+			}
+		}
+	}
+	
+	return "", fmt.Errorf("unable to determine cluster DNS IP")
+}
+
+// getNodeClaim retrieves the NodeClaim object
+func (p *VPCBootstrapProvider) getNodeClaim(ctx context.Context, nodeClaim types.NamespacedName) (*corev1.Node, error) {
+	// For now, we'll return nil as we don't have direct access to NodeClaim
+	// In a real implementation, you'd need to access the Karpenter CRDs
+	return nil, nil
 }
