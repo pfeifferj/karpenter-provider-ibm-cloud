@@ -60,7 +60,7 @@ func GenerateBootstrapToken(ctx context.Context, client kubernetes.Interface, tt
 			"token-secret": []byte(tokenSecret[7:]), // Remove the "tokenID." prefix
 			"usage-bootstrap-authentication": []byte("true"),
 			"usage-bootstrap-signing":         []byte("true"),
-			"auth-extra-groups":               []byte("system:bootstrappers:karpenter:default-node-pool"),
+			"auth-extra-groups":               []byte("system:bootstrappers:karpenter:ibm-cloud"),
 		},
 	}
 
