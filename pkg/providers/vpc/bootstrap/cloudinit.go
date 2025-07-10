@@ -77,7 +77,19 @@ install_containerd() {
     # Configure containerd
     echo "$(date): Configuring containerd..."
     mkdir -p /etc/containerd
-    containerd config default | sed 's/SystemdCgroup = false/SystemdCgroup = true/' > /etc/containerd/config.toml
+    containerd config default > /etc/containerd/config.toml
+    
+    # Enable systemd cgroups for both containerd and kubelet compatibility
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+    
+    # Ensure proper cgroup configuration for systemd
+    cat >> /etc/containerd/config.toml << 'EOF'
+
+# Additional systemd cgroup configuration
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+  SystemdCgroup = true
+EOF
+    
     systemctl restart containerd
     systemctl enable containerd
     echo "$(date): ✅ Containerd configured and started"
@@ -177,6 +189,7 @@ rotateCertificates: true
 serverTLSBootstrap: true
 cloudProvider: external
 registerNode: true
+cgroupDriver: systemd
 registerWithTaints:
 {{ range .Taints }}
 - key: {{ .Key }}
