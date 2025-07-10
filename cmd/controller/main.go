@@ -42,6 +42,11 @@ func main() {
 	cloudProvider := metrics.Decorate(ibmCloudProvider)
 	clusterState := state.NewCluster(op.Clock, op.GetClient(), cloudProvider)
 
+	// Register bootstrap controller
+	if err := controllers.RegisterBootstrapController(op.Manager); err != nil {
+		panic(err)
+	}
+
 	// Register controllers using the proper operator pattern
 	op.
 		WithControllers(ctx, corecontrollers.NewControllers(
