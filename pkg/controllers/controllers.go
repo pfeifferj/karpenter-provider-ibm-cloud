@@ -27,6 +27,7 @@ package controllers
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;create;update;patch
 //+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
 //+kubebuilder:rbac:groups=storage.k8s.io,resources=csinodes,verbs=get;list;watch
 //+kubebuilder:rbac:groups=storage.k8s.io,resources=volumeattachments,verbs=get;list;watch
@@ -47,6 +48,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/events"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/bootstrap"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
 	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
 	nodeclaimregistration "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
@@ -151,4 +153,13 @@ func NewControllers(
 	controllers = append(controllers, interruptionCtrl)
 
 	return controllers
+}
+
+// RegisterBootstrapController adds the bootstrap token controller to the manager
+func RegisterBootstrapController(mgr manager.Manager) error {
+	bootstrapCtrl := bootstrap.NewTokenController(mgr)
+	if err := bootstrapCtrl.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setting up bootstrap token controller: %w", err)
+	}
+	return nil
 }
