@@ -227,8 +227,20 @@ func (p *VPCBootstrapProvider) parseKubeconfig(kubeconfig string) (string, []byt
 func (p *VPCBootstrapProvider) getClusterCA(ctx context.Context) (string, error) {
 	logger := log.FromContext(ctx)
 	
-	// Get cluster CA from kube-system namespace's default service account token
-	// This is the most reliable way to get the CA in any Kubernetes cluster
+	// For VPC clusters, try to get CA from kube-root-ca.crt ConfigMap first
+	// This is the standard location in modern Kubernetes clusters
+	cm, err := p.k8sClient.CoreV1().ConfigMaps("kube-system").Get(ctx, "kube-root-ca.crt", metav1.GetOptions{})
+	if err == nil {
+		if caCert, exists := cm.Data["ca.crt"]; exists && caCert != "" {
+			logger.Info("Successfully extracted cluster CA certificate from ConfigMap", 
+				"configMapName", "kube-root-ca.crt", 
+				"caSize", len(caCert))
+			return caCert, nil
+		}
+	}
+	
+	// Fallback: Get cluster CA from kube-system namespace's default service account token
+	// This is for older clusters or IKS clusters (though IKS doesn't use this bootstrap method)
 	secret, err := p.k8sClient.CoreV1().Secrets("kube-system").Get(ctx, "default-token", metav1.GetOptions{})
 	if err != nil {
 		// Try to get CA from any service account token in kube-system
@@ -236,7 +248,7 @@ func (p *VPCBootstrapProvider) getClusterCA(ctx context.Context) (string, error)
 			FieldSelector: "type=kubernetes.io/service-account-token",
 		})
 		if err != nil || len(secrets.Items) == 0 {
-			return "", fmt.Errorf("unable to find service account tokens to extract CA certificate: %w", err)
+			return "", fmt.Errorf("unable to find CA certificate in ConfigMap or service account tokens")
 		}
 		secret = &secrets.Items[0]
 	}
@@ -247,7 +259,7 @@ func (p *VPCBootstrapProvider) getClusterCA(ctx context.Context) (string, error)
 		return "", fmt.Errorf("ca.crt not found in service account token secret")
 	}
 	
-	logger.Info("Successfully extracted cluster CA certificate", 
+	logger.Info("Successfully extracted cluster CA certificate from service account token", 
 		"secretName", secret.Name, 
 		"caSize", len(caCert))
 	
