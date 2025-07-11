@@ -51,6 +51,9 @@ type Options struct {
 	// ClusterName is the name of the Kubernetes cluster
 	ClusterName string
 	
+	// NodeName is the name of the node (should match NodeClaim name)
+	NodeName string
+	
 	// ClusterEndpoint is the API server endpoint
 	ClusterEndpoint string
 	
