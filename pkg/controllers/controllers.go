@@ -43,6 +43,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/events"
@@ -109,23 +110,32 @@ func NewControllers(
 ) []controller.Controller {
 	// Create event recorder adapter
 	recorderAdapter := &RecorderAdapter{recorder}
+	logger := log.FromContext(ctx).WithName("controllers")
 
 	controllers := []controller.Controller{}
 
 	// Add IBM-specific controllers
-	if hashCtrl, err := nodeclasshash.NewController(kubeClient); err == nil {
+	if hashCtrl, err := nodeclasshash.NewController(kubeClient); err != nil {
+		logger.Error(err, "failed to create hash controller")
+	} else {
 		controllers = append(controllers, hashCtrl)
 	}
 
-	if statusCtrl, err := nodeclaasstatus.NewController(kubeClient); err == nil {
+	if statusCtrl, err := nodeclaasstatus.NewController(kubeClient); err != nil {
+		logger.Error(err, "failed to create status controller")
+	} else {
 		controllers = append(controllers, statusCtrl)
 	}
 
-	if terminationCtrl, err := nodeclasstermination.NewController(kubeClient, recorderAdapter); err == nil {
+	if terminationCtrl, err := nodeclasstermination.NewController(kubeClient, recorderAdapter); err != nil {
+		logger.Error(err, "failed to create termination controller")
+	} else {
 		controllers = append(controllers, terminationCtrl)
 	}
 
-	if pricingCtrl, err := controllerspricing.NewController(nil); err == nil {
+	if pricingCtrl, err := controllerspricing.NewController(nil); err != nil {
+		logger.Error(err, "failed to create pricing controller")
+	} else {
 		controllers = append(controllers, pricingCtrl)
 	}
 
@@ -134,17 +144,23 @@ func NewControllers(
 	controllers = append(controllers, garbageCollectionCtrl)
 
 	// Add NodeClaim registration controller for proper labeling and status management
-	if registrationCtrl, err := nodeclaimregistration.NewController(kubeClient); err == nil {
+	if registrationCtrl, err := nodeclaimregistration.NewController(kubeClient); err != nil {
+		logger.Error(err, "failed to create registration controller")
+	} else {
 		controllers = append(controllers, registrationCtrl)
 	}
 
 	// Add tagging controller (VPC mode only)
-	if taggingCtrl, err := nodeclaimtagging.NewController(kubeClient); err == nil {
+	if taggingCtrl, err := nodeclaimtagging.NewController(kubeClient); err != nil {
+		logger.Error(err, "failed to create tagging controller")
+	} else {
 		controllers = append(controllers, taggingCtrl)
 	}
 
 	// Add instance type controller
-	if instanceTypeCtrl, err := providersinstancetype.NewController(); err == nil {
+	if instanceTypeCtrl, err := providersinstancetype.NewController(); err != nil {
+		logger.Error(err, "failed to create instance type controller")
+	} else {
 		controllers = append(controllers, instanceTypeCtrl)
 	}
 

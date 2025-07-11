@@ -20,11 +20,12 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -33,15 +34,17 @@ import (
 
 // VPCBootstrapProvider provides VPC-specific bootstrap functionality
 type VPCBootstrapProvider struct {
-	client    *ibm.Client
-	k8sClient kubernetes.Interface
+	client       *ibm.Client
+	k8sClient    kubernetes.Interface
+	kubeClient   client.Client
 }
 
 // NewVPCBootstrapProvider creates a new VPC bootstrap provider
-func NewVPCBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface) *VPCBootstrapProvider {
+func NewVPCBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface, kubeClient client.Client) *VPCBootstrapProvider {
 	return &VPCBootstrapProvider{
-		client:    client,
-		k8sClient: k8sClient,
+		client:     client,
+		k8sClient:  k8sClient,
+		kubeClient: kubeClient,
 	}
 }
 
@@ -109,8 +112,25 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 	
 	// Add labels and taints if NodeClaim was found
 	if nodeClaimObj != nil {
-		options.Labels = nodeClaimObj.Labels
+		// Start with NodeClaim labels
+		options.Labels = make(map[string]string)
+		for k, v := range nodeClaimObj.Labels {
+			options.Labels[k] = v
+		}
+		
+		// Ensure essential Karpenter labels are present
+		if nodePool, exists := nodeClaimObj.Labels["karpenter.sh/nodepool"]; exists {
+			options.Labels["karpenter.sh/nodepool"] = nodePool
+		}
+		if nodeClass, exists := nodeClaimObj.Labels["karpenter.ibm.sh/ibmnodeclass"]; exists {
+			options.Labels["karpenter.ibm.sh/ibmnodeclass"] = nodeClass
+		}
+		
+		// Add taints from NodeClaim
 		options.Taints = nodeClaimObj.Spec.Taints
+	} else {
+		// If no NodeClaim found, create basic labels map
+		options.Labels = make(map[string]string)
 	}
 	
 	// Add kubelet extra args if needed
@@ -299,8 +319,13 @@ func (p *VPCBootstrapProvider) getClusterDNS(ctx context.Context) (string, error
 }
 
 // getNodeClaim retrieves the NodeClaim object
-func (p *VPCBootstrapProvider) getNodeClaim(ctx context.Context, nodeClaim types.NamespacedName) (*corev1.Node, error) {
-	// For now, we'll return nil as we don't have direct access to NodeClaim
-	// In a real implementation, you'd need to access the Karpenter CRDs
-	return nil, nil
+func (p *VPCBootstrapProvider) getNodeClaim(ctx context.Context, nodeClaimName types.NamespacedName) (*karpv1.NodeClaim, error) {
+	if p.kubeClient == nil {
+		return nil, fmt.Errorf("kubeClient is nil, cannot retrieve NodeClaim")
+	}
+	nodeClaim := &karpv1.NodeClaim{}
+	if err := p.kubeClient.Get(ctx, nodeClaimName, nodeClaim); err != nil {
+		return nil, err
+	}
+	return nodeClaim, nil
 }

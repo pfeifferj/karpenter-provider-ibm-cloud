@@ -68,7 +68,7 @@ func TestVPCBootstrapProvider_APIServerEndpoint_Override(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create provider
-	provider := NewVPCBootstrapProvider(nil, k8sClient)
+	provider := NewVPCBootstrapProvider(nil, k8sClient, nil)
 
 	tests := []struct {
 		name                    string
@@ -199,7 +199,7 @@ func TestVPCBootstrapProvider_APIServerEndpoint_Issue18_Fix(t *testing.T) {
 	_, err = k8sClient.CoreV1().Secrets("kube-system").Create(ctx, caSecret, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	provider := NewVPCBootstrapProvider(nil, k8sClient)
+	provider := NewVPCBootstrapProvider(nil, k8sClient, nil)
 
 	// Test case from Issue #18: Internal control plane should be used instead of external
 	nodeClass := &v1alpha1.IBMNodeClass{
