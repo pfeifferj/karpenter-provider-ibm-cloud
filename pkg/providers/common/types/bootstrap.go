@@ -44,6 +44,9 @@ const (
 type Provider interface {
 	// GetUserData generates the user data for node bootstrapping
 	GetUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error)
+	
+	// GetUserDataWithInstanceID generates the user data with a known instance ID
+	GetUserDataWithInstanceID(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID string) (string, error)
 }
 
 // Options contains configuration for bootstrap script generation
@@ -56,6 +59,9 @@ type Options struct {
 	
 	// ProviderID is the provider ID for the node
 	ProviderID string
+	
+	// InstanceID is the VPC instance ID (when known)
+	InstanceID string
 	
 	// ClusterEndpoint is the API server endpoint
 	ClusterEndpoint string
