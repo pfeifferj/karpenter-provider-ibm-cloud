@@ -344,8 +344,6 @@ func (p *TestWorkerPoolProvider) Get(ctx context.Context, providerID string) (*c
 
 // List returns all instances managed by IKS worker pools
 func (p *TestWorkerPoolProvider) List(ctx context.Context) ([]*corev1.Node, error) {
-	// In a real implementation, this would list workers across all pools
-	// For this test implementation, return empty list
 	return []*corev1.Node{}, nil
 }
 

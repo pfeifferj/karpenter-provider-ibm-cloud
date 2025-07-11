@@ -37,6 +37,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/awslabs/operatorpkg/controller"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -57,8 +58,10 @@ import (
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
 	nodeclaasstatus "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/status"
 	nodeclasstermination "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/termination"
+	nodeorphancleanup "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/node/orphancleanup"
 	providersinstancetype "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 	controllerspricing "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/pricing"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
 )
 
@@ -107,6 +110,7 @@ func NewControllers(
 	unavailableOfferings *cache.UnavailableOfferings,
 	cloudProvider cloudprovider.CloudProvider,
 	instanceTypeProvider instancetype.Provider,
+	ibmClient *ibm.Client,
 ) []controller.Controller {
 	// Create event recorder adapter
 	recorderAdapter := &RecorderAdapter{recorder}
@@ -168,7 +172,23 @@ func NewControllers(
 	interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings)
 	controllers = append(controllers, interruptionCtrl)
 
+	// Add orphaned node cleanup controller (only if enabled and IBM client available)
+	if ibmClient != nil && isOrphanCleanupEnabled() {
+		orphanCleanupCtrl := nodeorphancleanup.NewController(kubeClient, ibmClient)
+		controllers = append(controllers, orphanCleanupCtrl)
+		logger.Info("enabled orphaned node cleanup controller")
+	} else if ibmClient == nil {
+		logger.Info("IBM client not available, skipping orphaned node cleanup controller")
+	} else {
+		logger.Info("orphaned node cleanup controller is disabled")
+	}
+
 	return controllers
+}
+
+// isOrphanCleanupEnabled checks if orphan cleanup is enabled via environment variable
+func isOrphanCleanupEnabled() bool {
+	return os.Getenv("KARPENTER_ENABLE_ORPHAN_CLEANUP") == "true"
 }
 
 // RegisterBootstrapController adds the bootstrap token controller to the manager

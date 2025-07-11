@@ -106,3 +106,54 @@ func (c *Client) GetIAMClient() *IAMClient {
 func (c *Client) GetRegion() string {
 	return c.region
 }
+
+// VPCInstanceExists checks if a VPC instance exists by its ID
+func (c *Client) VPCInstanceExists(ctx context.Context, instanceID string) (bool, error) {
+	vpcClient, err := c.GetVPCClient()
+	if err != nil {
+		return false, fmt.Errorf("getting VPC client: %w", err)
+	}
+	
+	_, err = vpcClient.GetInstance(ctx, instanceID)
+	if err != nil {
+		// If the error indicates the instance doesn't exist, return false
+		if containsNotFoundError(err) {
+			return false, nil
+		}
+		// For other errors, return the error
+		return false, fmt.Errorf("checking VPC instance existence: %w", err)
+	}
+	
+	return true, nil
+}
+
+// containsNotFoundError checks if an error indicates a resource was not found
+func containsNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	errStr := err.Error()
+	// Check for common "not found" error patterns from IBM Cloud VPC API
+	return containsAnyString(errStr, []string{
+		"not found",
+		"404",
+		"Not Found",
+		"does not exist",
+		"cannot be found",
+	})
+}
+
+// containsAnyString checks if a string contains any of the specified substrings
+func containsAnyString(s string, substrings []string) bool {
+	for _, substring := range substrings {
+		if len(substring) > 0 && len(s) >= len(substring) {
+			for i := 0; i <= len(s)-len(substring); i++ {
+				if s[i:i+len(substring)] == substring {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

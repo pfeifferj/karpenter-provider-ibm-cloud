@@ -68,6 +68,7 @@ func main() {
 			op.UnavailableOfferings,
 			cloudProvider,
 			op.ProviderFactory.GetInstanceTypeProvider(),
+			op.ProviderFactory.GetClient(),
 		)...).
 		Start(ctx)
 }
