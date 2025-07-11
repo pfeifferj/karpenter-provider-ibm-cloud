@@ -143,17 +143,23 @@ func (c *Controller) isNodeClaimRegistered(nodeClaim *karpv1.NodeClaim) bool {
 
 // findNodeForNodeClaim finds the Node corresponding to a NodeClaim
 func (c *Controller) findNodeForNodeClaim(ctx context.Context, nodeClaim *karpv1.NodeClaim) (*corev1.Node, error) {
+	logger := log.FromContext(ctx).WithValues("nodeclaim", nodeClaim.Name)
+	
 	// If NodeClaim already has a node name, use it
 	if nodeClaim.Status.NodeName != "" {
+		logger.V(1).Info("looking for node by nodeclaim status node name", "nodeName", nodeClaim.Status.NodeName)
 		node := &corev1.Node{}
 		if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Status.NodeName}, node); err != nil {
+			logger.V(1).Info("node not found by status node name", "nodeName", nodeClaim.Status.NodeName, "error", err)
 			return nil, client.IgnoreNotFound(err)
 		}
+		logger.V(1).Info("found node by status node name", "nodeName", node.Name)
 		return node, nil
 	}
 
 	// Find node by provider ID
 	if nodeClaim.Status.ProviderID != "" {
+		logger.V(1).Info("looking for node by provider ID", "providerID", nodeClaim.Status.ProviderID)
 		nodeList := &corev1.NodeList{}
 		if err := c.kubeClient.List(ctx, nodeList); err != nil {
 			return nil, err
@@ -161,21 +167,37 @@ func (c *Controller) findNodeForNodeClaim(ctx context.Context, nodeClaim *karpv1
 
 		for _, node := range nodeList.Items {
 			if node.Spec.ProviderID == nodeClaim.Status.ProviderID {
+				logger.V(1).Info("found node by provider ID", "nodeName", node.Name, "providerID", node.Spec.ProviderID)
 				return &node, nil
 			}
 		}
+		logger.V(1).Info("no node found matching provider ID", "providerID", nodeClaim.Status.ProviderID)
 	}
 
+	// Fallback: try to find node by NodeClaim name (hostname-based matching)
+	// This handles cases where NodeClaim name is used as hostname
+	logger.V(1).Info("trying fallback: looking for node by nodeclaim name", "nodeClaimName", nodeClaim.Name)
+	node := &corev1.Node{}
+	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaim.Name}, node); err == nil {
+		logger.Info("found node by nodeclaim name fallback", "nodeName", node.Name)
+		return node, nil
+	}
+
+	logger.V(1).Info("no node found for nodeclaim", "nodeClaimName", nodeClaim.Name, "statusNodeName", nodeClaim.Status.NodeName, "providerID", nodeClaim.Status.ProviderID)
 	return nil, nil
 }
 
 // syncNodeClaimToNode syncs labels and taints from NodeClaim to Node
 func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.NodeClaim, node *corev1.Node) error {
+	logger := log.FromContext(ctx).WithValues("nodeclaim", nodeClaim.Name, "node", node.Name)
+	logger.Info("syncing nodeclaim properties to node")
+	
 	patch := client.MergeFrom(node.DeepCopy())
 	modified := false
 
 	// Add finalizer to node
 	if !controllerutil.ContainsFinalizer(node, NodeClaimRegistrationFinalizer) {
+		logger.V(1).Info("adding finalizer to node")
 		controllerutil.AddFinalizer(node, NodeClaimRegistrationFinalizer)
 		modified = true
 	}
@@ -187,10 +209,16 @@ func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.
 
 	// Add NodePool label
 	if nodePoolName, exists := nodeClaim.Labels[NodePoolLabel]; exists {
+		logger.Info("syncing nodepool label", "nodePoolName", nodePoolName, "currentNodeLabel", node.Labels[NodePoolLabel])
 		if node.Labels[NodePoolLabel] != nodePoolName {
+			logger.Info("updating nodepool label on node", "from", node.Labels[NodePoolLabel], "to", nodePoolName)
 			node.Labels[NodePoolLabel] = nodePoolName
 			modified = true
+		} else {
+			logger.V(1).Info("nodepool label already correct on node", "nodePoolName", nodePoolName)
 		}
+	} else {
+		logger.Info("nodepool label missing from nodeclaim", "nodeClaimLabels", nodeClaim.Labels)
 	}
 
 	// Add NodeClass label
@@ -228,9 +256,14 @@ func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.
 	}
 
 	if modified {
+		logger.Info("applying node label and taint updates", "modified", modified)
 		if err := c.kubeClient.Patch(ctx, node, patch); err != nil {
+			logger.Error(err, "failed to patch node with updated labels/taints")
 			return fmt.Errorf("patching node: %w", err)
 		}
+		logger.Info("successfully updated node labels and taints")
+	} else {
+		logger.V(1).Info("no changes needed for node")
 	}
 
 	return nil
