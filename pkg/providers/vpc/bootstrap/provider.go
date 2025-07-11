@@ -222,8 +222,7 @@ func (p *VPCBootstrapProvider) buildKubeletConfig(clusterConfig *commonTypes.Clu
 		ExtraArgs:  make(map[string]string),
 	}
 
-	// Add cloud provider configuration for VPC mode
-	config.ExtraArgs["cloud-provider"] = "external"
+	// Add provider ID configuration for VPC mode  
 	config.ExtraArgs["provider-id"] = "ibm://$(curl -s -H 'Authorization: Bearer TOKEN' https://api.metadata.cloud.ibm.com/metadata/v1/instance | jq -r '.id')"
 
 	// Add network configuration based on CNI
