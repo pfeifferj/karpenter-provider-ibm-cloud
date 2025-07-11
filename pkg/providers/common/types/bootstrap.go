@@ -54,6 +54,9 @@ type Options struct {
 	// NodeName is the name of the node (should match NodeClaim name)
 	NodeName string
 	
+	// ProviderID is the provider ID for the node
+	ProviderID string
+	
 	// ClusterEndpoint is the API server endpoint
 	ClusterEndpoint string
 	
