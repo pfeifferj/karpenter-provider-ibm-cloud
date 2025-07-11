@@ -280,10 +280,14 @@ nodeLabels:
 EOF
 echo "$(date): ✅ Kubelet configuration created"
 
+# Get instance metadata for provider ID
+INSTANCE_ID=$(curl -s -f http://169.254.169.254/metadata/v1/instance/id || echo "unknown")
+PROVIDER_ID="ibm:///${REGION}/${INSTANCE_ID}"
+
 # Configure kubelet service
 cat > /etc/systemd/system/kubelet.service.d/10-karpenter.conf << EOF
 [Service]
-Environment="KUBELET_EXTRA_ARGS=--cloud-provider=external --hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP}{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
+Environment="KUBELET_EXTRA_ARGS=--cloud-provider=external --hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP} --provider-id=${PROVIDER_ID}{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
 EOF
 
 # Create kubelet service override
