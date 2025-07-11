@@ -68,7 +68,7 @@ func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient c
 	}
 	
 	// Create bootstrap provider immediately with proper dependency injection
-	bootstrapProvider := bootstrap.NewVPCBootstrapProvider(client, kubernetesClient)
+	bootstrapProvider := bootstrap.NewVPCBootstrapProvider(client, kubernetesClient, kubeClient)
 	
 	return &VPCInstanceProvider{
 		client:            client,
@@ -416,7 +416,7 @@ func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nod
 	if p.bootstrapProvider == nil {
 		if p.k8sClient != nil {
 			// Use properly injected kubernetes client
-			p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, p.k8sClient)
+			p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, p.k8sClient, p.kubeClient)
 		} else {
 			// Fallback to creating kubernetes client (for backward compatibility)
 			k8sClient, err := p.createKubernetesClient(ctx)
@@ -426,7 +426,7 @@ func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nod
 			}
 			
 			p.k8sClient = k8sClient
-			p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, k8sClient)
+			p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, k8sClient, p.kubeClient)
 		}
 	}
 	

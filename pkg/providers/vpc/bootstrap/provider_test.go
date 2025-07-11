@@ -356,7 +356,7 @@ func TestVPCBootstrapProvider_GetUserData(t *testing.T) {
 			tt.setupMocks(fakeClient)
 
 			// Create VPC bootstrap provider
-			provider := NewVPCBootstrapProvider(nil, fakeClient)
+			provider := NewVPCBootstrapProvider(nil, fakeClient, nil)
 
 			// Test GetUserData method
 			result, err := provider.GetUserData(ctx, tt.nodeClass, tt.nodeClaim)
@@ -455,7 +455,7 @@ func TestVPCBootstrapProvider_getClusterInfo(t *testing.T) {
 			tt.setupMocks(fakeClient)
 
 			// Create VPC bootstrap provider
-			provider := NewVPCBootstrapProvider(nil, fakeClient)
+			provider := NewVPCBootstrapProvider(nil, fakeClient, nil)
 
 			// Test getClusterInfo method
 			result, err := provider.getClusterInfo(ctx)
@@ -549,7 +549,7 @@ func TestVPCBootstrapProvider_detectContainerRuntime(t *testing.T) {
 			tt.setupMocks(fakeClient)
 
 			// Create VPC bootstrap provider
-			provider := NewVPCBootstrapProvider(nil, fakeClient)
+			provider := NewVPCBootstrapProvider(nil, fakeClient, nil)
 
 			// Test detectContainerRuntime method
 			result := provider.detectContainerRuntime(ctx)
@@ -619,7 +619,7 @@ func TestVPCBootstrapProvider_buildKubeletConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create VPC bootstrap provider
-			provider := NewVPCBootstrapProvider(nil, nil)
+			provider := NewVPCBootstrapProvider(nil, nil, nil)
 
 			// Test buildKubeletConfig method
 			result := provider.buildKubeletConfig(tt.clusterConfig)
@@ -747,7 +747,7 @@ func TestVPCBootstrapProvider_getClusterCA(t *testing.T) {
 			tt.setupMocks(fakeClient)
 
 			// Create VPC bootstrap provider
-			provider := NewVPCBootstrapProvider(nil, fakeClient)
+			provider := NewVPCBootstrapProvider(nil, fakeClient, nil)
 
 			// Test getClusterCA method
 			result, err := provider.getClusterCA(ctx)
@@ -863,7 +863,7 @@ func TestVPCBootstrapProvider_GetUserData_WithCABundle(t *testing.T) {
 			tt.setupMocks(fakeClient)
 
 			// Create VPC bootstrap provider
-			provider := NewVPCBootstrapProvider(nil, fakeClient)
+			provider := NewVPCBootstrapProvider(nil, fakeClient, nil)
 
 			// Test GetUserData method
 			result, err := provider.GetUserData(ctx, tt.nodeClass, tt.nodeClaim)
@@ -944,7 +944,7 @@ clusters:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create VPC bootstrap provider
-			provider := NewVPCBootstrapProvider(nil, nil)
+			provider := NewVPCBootstrapProvider(nil, nil, nil)
 
 			// Test parseKubeconfig method
 			endpoint, caData, err := provider.parseKubeconfig(tt.kubeconfig)
