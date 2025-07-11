@@ -576,7 +576,6 @@ func TestVPCBootstrapProvider_buildKubeletConfig(t *testing.T) {
 			validateConfig: func(t *testing.T, config *commonTypes.KubeletConfig) {
 				assert.NotNil(t, config)
 				assert.Equal(t, []string{"10.96.0.10"}, config.ClusterDNS)
-				assert.Equal(t, "external", config.ExtraArgs["cloud-provider"])
 				assert.Equal(t, "cni", config.ExtraArgs["network-plugin"])
 				assert.Equal(t, "/etc/cni/net.d", config.ExtraArgs["cni-conf-dir"])
 				assert.Equal(t, "/opt/cni/bin", config.ExtraArgs["cni-bin-dir"])
@@ -593,7 +592,6 @@ func TestVPCBootstrapProvider_buildKubeletConfig(t *testing.T) {
 			validateConfig: func(t *testing.T, config *commonTypes.KubeletConfig) {
 				assert.NotNil(t, config)
 				assert.Equal(t, []string{"10.96.0.10"}, config.ClusterDNS)
-				assert.Equal(t, "external", config.ExtraArgs["cloud-provider"])
 				assert.Equal(t, "cni", config.ExtraArgs["network-plugin"])
 				assert.Equal(t, "/etc/cni/net.d", config.ExtraArgs["cni-conf-dir"])
 				assert.Equal(t, "/opt/cni/bin", config.ExtraArgs["cni-bin-dir"])
@@ -609,7 +607,6 @@ func TestVPCBootstrapProvider_buildKubeletConfig(t *testing.T) {
 			validateConfig: func(t *testing.T, config *commonTypes.KubeletConfig) {
 				assert.NotNil(t, config)
 				assert.Equal(t, []string{"10.96.0.10"}, config.ClusterDNS)
-				assert.Equal(t, "external", config.ExtraArgs["cloud-provider"])
 				// Should not have CNI-specific configuration for unknown plugin
 				assert.NotContains(t, config.ExtraArgs, "network-plugin")
 			},

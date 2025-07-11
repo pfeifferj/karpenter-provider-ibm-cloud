@@ -268,7 +268,6 @@ clusterDNS:
   - ${CLUSTER_DNS}
 rotateCertificates: true
 serverTLSBootstrap: true
-cloudProvider: external
 registerNode: true
 cgroupDriver: systemd
 registerWithTaints:
@@ -291,7 +290,7 @@ echo "$(date): Instance ID: $INSTANCE_ID, Provider ID: $PROVIDER_ID"
 # Configure kubelet service
 cat > /etc/systemd/system/kubelet.service.d/10-karpenter.conf << EOF
 [Service]
-Environment="KUBELET_EXTRA_ARGS=--cloud-provider=external --hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP} --provider-id=${PROVIDER_ID}{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
+Environment="KUBELET_EXTRA_ARGS=--hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP} --provider-id=${PROVIDER_ID}{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
 EOF
 
 # Create kubelet service override
