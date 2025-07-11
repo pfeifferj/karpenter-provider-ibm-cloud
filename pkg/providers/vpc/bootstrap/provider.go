@@ -50,6 +50,11 @@ func NewVPCBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface,
 
 // GetUserData generates VPC-specific user data for node bootstrapping using cloud-init
 func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error) {
+	return p.GetUserDataWithInstanceID(ctx, nodeClass, nodeClaim, "")
+}
+
+// GetUserDataWithInstanceID generates VPC-specific user data with a known instance ID
+func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID string) (string, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Generating VPC cloud-init user data for direct kubelet bootstrap")
 
@@ -109,6 +114,7 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 		CABundle:         caCert,
 		DNSClusterIP:     clusterDNS,
 		NodeName:         nodeClaim.Name, // Use NodeClaim name as the node name
+		InstanceID:       instanceID,     // Pass the instance ID if provided
 		ProviderID:       "", // Will be set from NodeClaim if available
 	}
 	
@@ -151,6 +157,7 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 	// Generate cloud-init script for direct kubelet
 	return p.generateCloudInitScript(ctx, options)
 }
+
 
 // getClusterInfo retrieves cluster information for VPC mode
 func (p *VPCBootstrapProvider) getClusterInfo(ctx context.Context) (*commonTypes.ClusterInfo, error) {
@@ -217,7 +224,7 @@ func (p *VPCBootstrapProvider) buildKubeletConfig(clusterConfig *commonTypes.Clu
 
 	// Add cloud provider configuration for VPC mode
 	config.ExtraArgs["cloud-provider"] = "external"
-	config.ExtraArgs["provider-id"] = "ibm://$(curl -s http://169.254.169.254/metadata/v1/instance/id)"
+	config.ExtraArgs["provider-id"] = "ibm://$(curl -s -H 'Authorization: Bearer TOKEN' https://api.metadata.cloud.ibm.com/metadata/v1/instance | jq -r '.id')"
 
 	// Add network configuration based on CNI
 	switch clusterConfig.CNIPlugin {

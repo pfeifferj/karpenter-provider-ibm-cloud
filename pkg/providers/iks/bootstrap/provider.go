@@ -112,3 +112,10 @@ func (p *IKSBootstrapProvider) getClusterName() string {
 	}
 	return "karpenter-iks-cluster"
 }
+
+// GetUserDataWithInstanceID generates IKS-specific user data with a known instance ID
+// For IKS, the instance ID doesn't affect the user data since IKS handles node registration
+func (p *IKSBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID string) (string, error) {
+	// For IKS, instance ID doesn't matter - delegate to regular GetUserData
+	return p.GetUserData(ctx, nodeClass, nodeClaim)
+}
