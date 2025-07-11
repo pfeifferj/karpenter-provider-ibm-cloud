@@ -42,8 +42,12 @@ ZONE="{{ .Zone }}"
 NODE_NAME="{{ .NodeName }}"
 
 # Instance metadata
-INSTANCE_ID=$(dmidecode -s system-uuid 2>/dev/null || echo "unknown")
 PRIVATE_IP=$(hostname -I | awk '{print $1}')
+{{- if .InstanceID }}
+INSTANCE_ID="{{ .InstanceID }}"
+{{- else }}
+INSTANCE_ID=$(dmidecode -s system-uuid 2>/dev/null || echo "unknown")
+{{- end }}
 
 # Use NodeClaim name as hostname for proper Karpenter registration
 HOSTNAME="$NODE_NAME"
@@ -62,7 +66,7 @@ echo "$(date): ✅ System configured"
 echo "$(date): Installing prerequisites..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y curl apt-transport-https ca-certificates gnupg lsb-release dmidecode
+apt-get install -y curl apt-transport-https ca-certificates gnupg lsb-release dmidecode jq
 echo "$(date): ✅ Prerequisites installed"
 
 # Install container runtime based on configuration
@@ -280,9 +284,9 @@ nodeLabels:
 EOF
 echo "$(date): ✅ Kubelet configuration created"
 
-# Get instance metadata for provider ID
-INSTANCE_ID=$(curl -s -f http://169.254.169.254/metadata/v1/instance/id || echo "unknown")
+# Provider ID configuration
 PROVIDER_ID="ibm:///${REGION}/${INSTANCE_ID}"
+echo "$(date): Instance ID: $INSTANCE_ID, Provider ID: $PROVIDER_ID"
 
 # Configure kubelet service
 cat > /etc/systemd/system/kubelet.service.d/10-karpenter.conf << EOF
