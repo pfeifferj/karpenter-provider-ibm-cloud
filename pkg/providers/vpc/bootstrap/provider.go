@@ -109,6 +109,7 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 		CABundle:         caCert,
 		DNSClusterIP:     clusterDNS,
 		NodeName:         nodeClaim.Name, // Use NodeClaim name as the node name
+		ProviderID:       "", // Will be set from NodeClaim if available
 	}
 	
 	// Add labels and taints if NodeClaim was found
