@@ -136,7 +136,6 @@ version = 2
     selinux_category_range = 1024
     sandbox_image = "registry.k8s.io/pause:3.6"
     stats_collect_period = 10
-    systemd_cgroup = true
     enable_tls_streaming = false
     max_container_log_line_size = 16384
     disable_cgroup = false
