@@ -39,16 +39,19 @@ BOOTSTRAP_TOKEN="{{ .BootstrapToken }}"
 CLUSTER_DNS="{{ .DNSClusterIP }}"
 REGION="{{ .Region }}"
 ZONE="{{ .Zone }}"
+NODE_NAME="{{ .NodeName }}"
 
 # Instance metadata
 INSTANCE_ID=$(dmidecode -s system-uuid 2>/dev/null || echo "unknown")
 PRIVATE_IP=$(hostname -I | awk '{print $1}')
-HOSTNAME="ip-$(echo $PRIVATE_IP | tr '.' '-').{{ .Region }}.compute.ibmcloud.local"
+
+# Use NodeClaim name as hostname for proper Karpenter registration
+HOSTNAME="$NODE_NAME"
 
 # Set hostname
 hostnamectl set-hostname "$HOSTNAME"
 echo "127.0.0.1 $HOSTNAME" >> /etc/hosts
-echo "$(date): ✅ Hostname set to: $HOSTNAME"
+echo "$(date): ✅ Hostname set to: $HOSTNAME (NodeClaim name)"
 
 # System configuration
 echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf && sysctl -p
