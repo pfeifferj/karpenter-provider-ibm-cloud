@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/awslabs/operatorpkg/singleton"
@@ -115,13 +116,37 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 		log.FromContext(ctx).Error(registrationErr, "failed to handle failed registration nodeclaims")
 	}
 
+	// Handle orphaned cloud instances (AWS-style garbage collection)
 	errs := make([]error, len(cloudNodeClaims))
 	workqueue.ParallelizeUntil(ctx, 100, len(cloudNodeClaims), func(i int) {
 		if nc := cloudNodeClaims[i]; !clusterProviderIDs.Has(nc.Status.ProviderID) && time.Since(nc.CreationTimestamp.Time) > time.Second*30 {
+			log.FromContext(ctx).WithValues(
+				"provider-id", nc.Status.ProviderID,
+				"nodeclaim", nc.Name,
+				"age", time.Since(nc.CreationTimestamp.Time),
+			).Info("garbage collecting orphaned cloud instance (no matching cluster NodeClaim)")
 			errs[i] = c.garbageCollect(ctx, cloudNodeClaims[i], nodeList)
 		}
 	})
-	if err = multierr.Combine(errs...); err != nil {
+	
+	// Handle orphaned Kubernetes nodes (nodes without corresponding cloud instances)
+	if orphanedNodeErr := c.handleOrphanedNodes(ctx, nodeList, cloudNodeClaims); orphanedNodeErr != nil {
+		log.FromContext(ctx).Error(orphanedNodeErr, "failed to handle orphaned kubernetes nodes")
+	}
+	
+	// Filter out expected errors
+	filteredErrs := lo.Filter(errs, func(err error, _ int) bool {
+		if err == nil {
+			return false
+		}
+		// Ignore "nodeclaim not found" errors as these are expected for orphaned instances
+		if cloudprovider.IsNodeClaimNotFoundError(err) {
+			return false
+		}
+		return true
+	})
+	
+	if err = multierr.Combine(filteredErrs...); err != nil {
 		return reconcile.Result{}, err
 	}
 	c.successfulCount++
@@ -163,6 +188,74 @@ func (c *Controller) handleStuckTerminatingNodeClaims(ctx context.Context, clust
 	}
 
 	return multierr.Combine(errs...)
+}
+
+// handleOrphanedNodes identifies and cleans up Kubernetes nodes without corresponding cloud instances
+func (c *Controller) handleOrphanedNodes(ctx context.Context, nodeList *corev1.NodeList, cloudNodeClaims []*karpv1.NodeClaim) error {
+	// Create a set of cloud instance provider IDs for fast lookup
+	cloudProviderIDs := sets.New(lo.FilterMap(cloudNodeClaims, func(nc *karpv1.NodeClaim, _ int) (string, bool) {
+		return nc.Status.ProviderID, nc.Status.ProviderID != ""
+	})...)
+
+	var errs []error
+	
+	for _, node := range nodeList.Items {
+		// Skip nodes that don't have provider IDs
+		if node.Spec.ProviderID == "" {
+			continue
+		}
+		
+		// Skip nodes that aren't managed by Karpenter
+		if !c.isKarpenterManagedNode(&node) {
+			continue
+		}
+		
+		// Check if this node has a corresponding cloud instance
+		if cloudProviderIDs.Has(node.Spec.ProviderID) {
+			continue // Node has corresponding cloud instance, skip
+		}
+		
+		// This is an orphaned node - Kubernetes node exists but no cloud instance
+		ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+			"node", node.Name,
+			"provider-id", node.Spec.ProviderID,
+		))
+		
+		log.FromContext(ctx).Info("found orphaned kubernetes node (no corresponding cloud instance), cleaning up")
+		
+		// Delete the orphaned node with proper grace period
+		if err := c.kubeClient.Delete(ctx, &node, &client.DeleteOptions{
+			GracePeriodSeconds: lo.ToPtr(int64(30)), // 30 second grace period
+		}); err != nil && client.IgnoreNotFound(err) != nil {
+			errs = append(errs, fmt.Errorf("failed to delete orphaned node %s: %w", node.Name, err))
+			continue
+		}
+		
+		log.FromContext(ctx).Info("successfully cleaned up orphaned kubernetes node")
+	}
+	
+	return multierr.Combine(errs...)
+}
+
+// isKarpenterManagedNode checks if a node is managed by Karpenter
+func (c *Controller) isKarpenterManagedNode(node *corev1.Node) bool {
+	// Check for Karpenter-specific labels that indicate management
+	if _, hasNodePool := node.Labels["karpenter.sh/nodepool"]; hasNodePool {
+		return true
+	}
+	
+	// Check for IBM Cloud VPC provider ID pattern (indicates Karpenter-managed IBM node)
+	if node.Spec.ProviderID != "" {
+		ibmPrefixes := []string{"ibm://", "ibm:///eu-", "ibm:///us-", "ibm:///ca-", "ibm:///jp-", "ibm:///au-", "ibm:///br-"}
+		for _, prefix := range ibmPrefixes {
+			if strings.HasPrefix(node.Spec.ProviderID, prefix) {
+				return true
+			}
+		}
+	}
+	
+	// Default to not managed to be safe
+	return false
 }
 
 // handleFailedRegistrationNodeClaims identifies and cleans up NodeClaims that failed to register after timeout
@@ -314,20 +407,34 @@ func (c *Controller) forceDeletePodsOnNode(ctx context.Context, nodeName string)
 
 func (c *Controller) garbageCollect(ctx context.Context, nodeClaim *karpv1.NodeClaim, nodeList *corev1.NodeList) error {
 	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("provider-id", nodeClaim.Status.ProviderID))
+	
+	// Step 1: Delete the cloud provider instance
 	if err := c.cloudProvider.Delete(ctx, nodeClaim); err != nil {
-		return cloudprovider.IgnoreNodeClaimNotFoundError(err)
+		// ignore NodeClaim not found errors
+		if cloudprovider.IsNodeClaimNotFoundError(err) {
+			log.FromContext(ctx).V(1).Info("cloud instance already deleted or not found, continuing with node cleanup")
+		} else {
+			return fmt.Errorf("failed to delete cloud provider instance: %w", err)
+		}
+	} else {
+		log.FromContext(ctx).V(1).Info("garbage collected cloudprovider instance")
 	}
-	log.FromContext(ctx).V(1).Info("garbage collected cloudprovider instance")
 
-	// Go ahead and cleanup the node if we know that it exists to make scheduling go quicker
+	// Step 2: Find and delete the corresponding Kubernetes node
 	if node, ok := lo.Find(nodeList.Items, func(n corev1.Node) bool {
 		return n.Spec.ProviderID == nodeClaim.Status.ProviderID
 	}); ok {
 		if err := c.kubeClient.Delete(ctx, &node); err != nil {
-			return client.IgnoreNotFound(err)
+			// ignore not found errors
+			if client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("failed to delete corresponding node %s: %w", node.Name, err)
+			}
 		}
 		log.FromContext(ctx).WithValues("Node", klog.KObj(&node)).V(1).Info("garbage collected node")
+	} else {
+		log.FromContext(ctx).V(1).Info("no corresponding kubernetes node found for garbage collection")
 	}
+	
 	return nil
 }
 
