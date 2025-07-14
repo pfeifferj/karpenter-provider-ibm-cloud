@@ -331,6 +331,38 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		},
 	}
 
+	// Populate NodeClaim labels similar to AWS provider reference
+	// This ensures proper kubectl column display and NodeClaim labeling
+	if nc.Labels == nil {
+		nc.Labels = make(map[string]string)
+	}
+	
+	// Copy essential labels from the created node first
+	for key, value := range node.Labels {
+		switch key {
+		case "node.kubernetes.io/instance-type",    // TYPE column
+			"karpenter.sh/capacity-type",           // CAPACITY column  
+			"topology.kubernetes.io/zone",          // ZONE column
+			"topology.kubernetes.io/region",        // Region info
+			"karpenter.sh/nodepool":                // Preserve nodepool label
+			nc.Labels[key] = value
+		}
+	}
+	
+	// Populate labels from instance type requirements (similar to AWS)
+	// These take precedence over node labels when available
+	if instanceType != nil {
+		for key, req := range instanceType.Requirements {
+			if req.Len() == 1 {
+				nc.Labels[key] = req.Values()[0]
+			}
+		}
+	}
+	
+	// Set the node name in status for the NODE column
+	// This will be populated once the node registers with the cluster
+	nc.Status.NodeName = node.Name
+
 	if instanceType != nil {
 		nc.Status.Capacity = instanceType.Capacity
 		nc.Status.Allocatable = instanceType.Allocatable()
