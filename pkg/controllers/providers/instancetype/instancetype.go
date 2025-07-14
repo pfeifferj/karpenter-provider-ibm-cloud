@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package instancetype
 
 import (
@@ -11,7 +26,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/karpenter/pkg/operator/injection"
 
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/pricing"
 )
 
 type Controller struct {
@@ -19,10 +36,17 @@ type Controller struct {
 }
 
 func NewController() (*Controller, error) {
-	provider, err := instancetype.NewProvider()
+	// Create IBM client
+	client, err := ibm.NewClient()
 	if err != nil {
-		return nil, fmt.Errorf("creating instance type provider: %w", err)
+		return nil, fmt.Errorf("creating IBM client: %w", err)
 	}
+
+	// Create pricing provider
+	pricingProvider := pricing.NewIBMPricingProvider(client)
+
+	// Create instance type provider
+	provider := instancetype.NewProvider(client, pricingProvider)
 
 	return &Controller{
 		instanceTypeProvider: provider,

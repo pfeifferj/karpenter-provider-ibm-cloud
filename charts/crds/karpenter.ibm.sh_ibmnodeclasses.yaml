@@ -39,18 +39,55 @@ spec:
           spec:
             description: Spec defines the desired state of IBMNodeClass
             properties:
+              apiServerEndpoint:
+                description: |-
+                  APIServerEndpoint is the Kubernetes API server endpoint for node registration
+                  If specified, this endpoint will be used instead of automatic discovery
+                  This is useful when the control plane is not accessible via standard discovery methods
+                  Example: "https://10.243.65.4:6443"
+                pattern: ^https://[a-zA-Z0-9.-]+:[0-9]+$
+                type: string
+              bootstrapMode:
+                default: auto
+                description: |-
+                  BootstrapMode determines how nodes should be bootstrapped to join the cluster
+                  Valid values are:
+                  - "cloud-init" - Use cloud-init scripts to bootstrap nodes (default)
+                  - "iks-api" - Use IKS Worker Pool API to add nodes to cluster
+                  - "auto" - Automatically select the best method based on cluster type
+                enum:
+                - cloud-init
+                - iks-api
+                - auto
+                type: string
+              iksClusterID:
+                description: |-
+                  IKSClusterID is the IKS cluster ID for API-based bootstrapping
+                  Required when BootstrapMode is "iks-api"
+                pattern: ^[a-z0-9]+$
+                type: string
+              iksWorkerPoolID:
+                description: |-
+                  IKSWorkerPoolID is the worker pool ID to add nodes to
+                  Used with IKS API bootstrapping mode
+                type: string
               image:
                 description: Image is the ID of the image to use for nodes
+                minLength: 1
                 type: string
               instanceProfile:
                 description: |-
                   InstanceProfile is the name of the instance profile to use
                   If not specified, instance types will be automatically selected based on requirements
+                  Either InstanceProfile or InstanceRequirements must be specified
+                minLength: 1
+                pattern: ^[a-z0-9]+-[0-9]+x[0-9]+$
                 type: string
               instanceRequirements:
                 description: |-
                   InstanceRequirements defines requirements for automatic instance type selection
                   Only used when InstanceProfile is not specified
+                  Either InstanceProfile or InstanceRequirements must be specified
                 properties:
                   architecture:
                     description: |-
@@ -113,12 +150,29 @@ spec:
                     - CostOptimized
                     type: string
                 type: object
+              placementTarget:
+                description: PlacementTarget is the ID of the placement target (dedicated
+                  host, placement group)
+                type: string
               region:
                 description: Region is the IBM Cloud region where nodes will be created
+                minLength: 1
+                pattern: ^[a-z]{2}-[a-z]+$
+                type: string
+              resourceGroup:
+                description: ResourceGroup is the ID of the resource group for the
+                  instance
                 type: string
               securityGroups:
-                description: SecurityGroups is a list of security group IDs to attach
-                  to nodes
+                description: |-
+                  SecurityGroups is a list of security group IDs to attach to nodes
+                  At least one security group must be specified for VPC instance creation
+                items:
+                  type: string
+                minItems: 1
+                type: array
+              sshKeys:
+                description: SSHKeys is a list of SSH key names to add to the instance
                 items:
                   type: string
                 type: array
@@ -132,19 +186,42 @@ spec:
                   type: string
                 description: Tags to apply to the instances
                 type: object
+              userData:
+                description: UserData contains user data script to run on instance
+                  initialization
+                type: string
               vpc:
                 description: VPC is the ID of the VPC where nodes will be created
+                minLength: 1
                 type: string
               zone:
                 description: |-
                   Zone is the availability zone where nodes will be created
                   If not specified, zones will be automatically selected based on placement strategy
+                pattern: ^[a-z]{2}-[a-z]+-[0-9]+$
                 type: string
             required:
             - image
             - region
+            - securityGroups
             - vpc
             type: object
+            x-kubernetes-validations:
+            - message: either instanceProfile or instanceRequirements must be specified
+              rule: has(self.instanceProfile) || has(self.instanceRequirements)
+            - message: instanceProfile and instanceRequirements are mutually exclusive
+              rule: '!(has(self.instanceProfile) && has(self.instanceRequirements))'
+            - message: iksClusterID is required when bootstrapMode is 'iks-api'
+              rule: self.bootstrapMode != 'iks-api' || has(self.iksClusterID)
+            - message: zone must be within the specified region
+              rule: self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1])
+                || self.zone == ''
+            - message: vpc must be a valid IBM Cloud VPC ID format
+              rule: self.vpc.matches('^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+            - message: subnet must be a valid IBM Cloud subnet ID format
+              rule: self.subnet == '' || self.subnet.matches('^[0-9a-f]{4}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+            - message: image must contain only lowercase letters, numbers, and hyphens
+              rule: self.image.matches('^[a-z0-9-]+$')
           status:
             description: Status defines the observed state of IBMNodeClass
             properties:
@@ -224,10 +301,6 @@ spec:
                 items:
                   type: string
                 type: array
-              specHash:
-                description: SpecHash is a hash of the IBMNodeClass spec
-                format: int64
-                type: integer
               validationError:
                 description: ValidationError contains the error message from the last
                   validation

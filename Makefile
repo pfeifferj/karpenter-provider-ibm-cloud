@@ -16,7 +16,7 @@ PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
 VERSION ?= $(shell git describe --tags --always --dirty)
 
 # Build settings
-BINARY_NAME = karpenter-clusterapi-controller
+BINARY_NAME = karpenter-ibm-controller
 BUILD_DIR = bin
 PLATFORMS = linux/amd64 linux/arm64
 
@@ -24,12 +24,8 @@ PLATFORMS = linux/amd64 linux/arm64
 LDFLAGS = -ldflags "-X main.version=${VERSION}"
 CGO_ENABLED = 0
 
-# ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION = 1.29
-ENVTEST = go run ${PROJECT_DIR}/vendor/sigs.k8s.io/controller-runtime/tools/setup-envtest
-
-GINKGO = go run ${PROJECT_DIR}/vendor/github.com/onsi/ginkgo/v2/ginkgo
-GINKGO_ARGS = -v --randomize-all --randomize-suites --keep-going --race --trace --timeout=30m
+# Test settings
+GTEST_ARGS = -v -race -timeout=30m
 
 CONTROLLER_GEN = ~/.local/share/go/bin/controller-gen
 
@@ -65,19 +61,26 @@ generate: gen-objects manifests ## generate all controller-gen files
 
 .PHONY: manifests
 manifests: ## generate the controller-gen kubernetes manifests
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./..." output:crd:artifacts:config=pkg/apis/crds
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./vendor/sigs.k8s.io/karpenter/..." output:crd:artifacts:config=pkg/apis/crds
-	@echo "Copying generated CRDs to Helm chart..."
-	@mkdir -p charts/crds
-	@cp pkg/apis/crds/*.yaml charts/crds/
+	@echo "Generating base Karpenter CRDs and IBM-specific CRDs directly to Helm chart..."
+	$(CONTROLLER_GEN) crd paths="./pkg/apis/v1alpha1" output:crd:artifacts:config=charts/crds
+	$(CONTROLLER_GEN) crd paths="./vendor/sigs.k8s.io/karpenter/pkg/apis/..." output:crd:artifacts:config=charts/crds
+	@echo "Generating RBAC manifests..."
+	@rm -f charts/templates/rbac_*.yaml charts/templates/role_*.yaml charts/templates/clusterrole_*.yaml
+	GOFLAGS="-mod=mod" $(CONTROLLER_GEN) rbac:roleName=karpenter-manager paths="./pkg/controllers/..." output:rbac:dir=charts/templates
 
 .PHONY: test
 test: vendor unit
 
+.PHONY: ci
+ci: vendor unit lint ## Run all CI checks (tests + linting)
+
 .PHONY: unit
 unit: 
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd paths="./vendor/sigs.k8s.io/cluster-api/api/v1beta1/..." output:crd:artifacts:config=vendor/sigs.k8s.io/cluster-api/api/v1beta1
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path --bin-dir $(PROJECT_DIR)/bin)" ${GINKGO} ${GINKGO_ARGS} ${GINKGO_EXTRA_ARGS} ./...
+	go test $(GTEST_ARGS) ./...
+
+.PHONY: lint
+lint: ## Run golangci-lint
+	golangci-lint run --timeout=5m
 
 .PHONY: vendor
 vendor: ## update modules and populate local vendor directory
@@ -88,3 +91,23 @@ vendor: ## update modules and populate local vendor directory
 .PHONY: clean
 clean: ## Clean build artifacts
 	rm -rf $(BUILD_DIR)
+
+.PHONY: docker-base
+docker-base: ## Build custom base image with IBM Cloud CLI
+	docker build -f Dockerfile.base -t karpenter-ibm-base:latest .
+
+.PHONY: docker-build
+docker-build: docker-base build ## Build container image locally using Ko
+	KO_CONFIG_PATH=.ko.local.yaml ko build --local ./cmd/controller
+
+.PHONY: license
+license: ## Add license headers to all Go files
+	hack/boilerplate.sh
+
+.PHONY: verify-license
+verify-license: ## Verify all Go files have license headers
+	hack/verify-boilerplate.sh
+
+.PHONY: pre-commit
+pre-commit: ## Run pre-commit checks (license headers + linting)
+	hack/pre-commit.sh

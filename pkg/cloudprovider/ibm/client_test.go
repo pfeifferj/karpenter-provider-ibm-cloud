@@ -1,9 +1,52 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package ibm
 
 import (
+	"context"
 	"os"
 	"testing"
 )
+
+// MockCredentialStore implements SecureCredentialManager for testing
+type MockCredentialStore struct {
+	vpcAPIKey string
+	ibmAPIKey string
+	region    string
+}
+
+func (m *MockCredentialStore) GetVPCAPIKey(ctx context.Context) (string, error) {
+	return m.vpcAPIKey, nil
+}
+
+func (m *MockCredentialStore) GetIBMAPIKey(ctx context.Context) (string, error) {
+	return m.ibmAPIKey, nil
+}
+
+func (m *MockCredentialStore) GetRegion(ctx context.Context) (string, error) {
+	return m.region, nil
+}
+
+func (m *MockCredentialStore) RotateCredentials(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockCredentialStore) ClearCredentials() {
+	// No-op for mock
+}
 
 func TestNewClient(t *testing.T) {
 	tests := []struct {
@@ -63,7 +106,7 @@ func TestNewClient(t *testing.T) {
 
 			// Set environment variables for this test
 			for k, v := range tt.envVars {
-				os.Setenv(k, v)
+				_ = os.Setenv(k, v)
 			}
 
 			// Run the test
@@ -97,10 +140,17 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestGetVPCClient(t *testing.T) {
+	// Create a mock credential store for testing
+	mockCredStore := &MockCredentialStore{
+		vpcAPIKey: "test-key",
+		ibmAPIKey: "test-ibm-key",
+		region:    "us-south",
+	}
+	
 	client := &Client{
 		vpcURL:      "https://test.vpc.url/v1",
 		vpcAuthType: "iam",
-		vpcAPIKey:   "test-key",
+		credStore:   mockCredStore,
 		region:      "us-south",
 	}
 
@@ -115,7 +165,6 @@ func TestGetVPCClient(t *testing.T) {
 
 func TestGetGlobalCatalogClient(t *testing.T) {
 	client := &Client{
-		ibmAPIKey: "test-key",
 		iamClient: NewIAMClient("test-key"),
 	}
 

@@ -1,31 +1,68 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package controllers
+
+//+kubebuilder:rbac:groups=karpenter.sh,resources=nodepools,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=karpenter.sh,resources=nodepools/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;create;delete;update;patch
+//+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch;patch;update
+//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;create;delete;update;patch
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;create;update;patch
+//+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=storage.k8s.io,resources=csinodes,verbs=get;list;watch
+//+kubebuilder:rbac:groups=storage.k8s.io,resources=volumeattachments,verbs=get;list;watch
+//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 
 import (
 	"context"
 	"fmt"
+	"os"
 
+	"github.com/awslabs/operatorpkg/controller"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/clock"
-	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/events"
-	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/bootstrap"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
-	nodeclaimgarbagecollection "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
+	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
+	nodeclaimregistration "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
 	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
 	nodeclaasstatus "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/status"
 	nodeclasstermination "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/termination"
+	nodeorphancleanup "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/node/orphancleanup"
 	providersinstancetype "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
 	controllerspricing "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/pricing"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
 )
 
 // RecorderAdapter adapts between events.Recorder and record.EventRecorder
@@ -63,117 +100,102 @@ func (r *RecorderAdapter) AnnotatedEventf(object runtime.Object, annotations map
 	})
 }
 
-func RegisterControllers(ctx context.Context, mgr manager.Manager, clk clock.Clock,
-	kubeClient client.Client, recorder events.Recorder,
+func NewControllers(
+	ctx context.Context,
+	mgr manager.Manager,
+	clk clock.Clock,
+	kubeClient client.Client,
+	kubernetesClient kubernetes.Interface,
+	recorder events.Recorder,
 	unavailableOfferings *cache.UnavailableOfferings,
 	cloudProvider cloudprovider.CloudProvider,
-	instanceProvider instance.Provider, instanceTypeProvider instancetype.Provider) error {
-
+	instanceTypeProvider instancetype.Provider,
+	ibmClient *ibm.Client,
+) []controller.Controller {
 	// Create event recorder adapter
 	recorderAdapter := &RecorderAdapter{recorder}
+	logger := log.FromContext(ctx).WithName("controllers")
 
-	// Register core Karpenter controllers
-	// NodePool controller - essential for detecting unschedulable pods and creating NodeClaims
-	if err := controllerruntime.NewControllerManagedBy(mgr).
-		Named("nodepool").
-		For(&v1.NodePool{}).
-		Owns(&v1.NodeClaim{}).
-		Complete(&NodePoolReconciler{
-			kubeClient:    kubeClient,
-			cloudProvider: cloudProvider,
-		}); err != nil {
-		return fmt.Errorf("registering nodepool controller: %w", err)
-	}
+	controllers := []controller.Controller{}
 
-	// NodeClaim controller - handles complete NodeClaim lifecycle
-	if err := controllerruntime.NewControllerManagedBy(mgr).
-		Named("nodeclaim").
-		For(&v1.NodeClaim{}).
-		Complete(&NodeClaimReconciler{
-			kubeClient:    kubeClient,
-			cloudProvider: cloudProvider,
-		}); err != nil {
-		return fmt.Errorf("registering nodeclaim controller: %w", err)
-	}
-
-	// Register IBMNodeClass hash controller
+	// Add IBM-specific controllers
 	if hashCtrl, err := nodeclasshash.NewController(kubeClient); err != nil {
-		return fmt.Errorf("creating nodeclass hash controller: %w", err)
-	} else if err := hashCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering nodeclass hash controller: %w", err)
+		logger.Error(err, "failed to create hash controller")
+	} else {
+		controllers = append(controllers, hashCtrl)
 	}
 
-	// Register IBMNodeClass status controller
 	if statusCtrl, err := nodeclaasstatus.NewController(kubeClient); err != nil {
-		return fmt.Errorf("creating nodeclass status controller: %w", err)
-	} else if err := statusCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering nodeclass status controller: %w", err)
+		logger.Error(err, "failed to create status controller")
+	} else {
+		controllers = append(controllers, statusCtrl)
 	}
 
-	// Register IBMNodeClass termination controller
 	if terminationCtrl, err := nodeclasstermination.NewController(kubeClient, recorderAdapter); err != nil {
-		return fmt.Errorf("creating nodeclass termination controller: %w", err)
-	} else if err := terminationCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering nodeclass termination controller: %w", err)
+		logger.Error(err, "failed to create termination controller")
+	} else {
+		controllers = append(controllers, terminationCtrl)
 	}
 
-	// Register pricing controller
 	if pricingCtrl, err := controllerspricing.NewController(nil); err != nil {
-		return fmt.Errorf("creating pricing controller: %w", err)
-	} else if err := pricingCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering pricing controller: %w", err)
+		logger.Error(err, "failed to create pricing controller")
+	} else {
+		controllers = append(controllers, pricingCtrl)
 	}
 
-	// Register garbage collection controller
-	garbageCollectionCtrl := nodeclaimgarbagecollection.NewController(kubeClient, cloudProvider)
-	if err := garbageCollectionCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering garbage collection controller: %w", err)
+	// Add garbage collection controller
+	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, cloudProvider)
+	controllers = append(controllers, garbageCollectionCtrl)
+
+	// Add NodeClaim registration controller for proper labeling and status management
+	if registrationCtrl, err := nodeclaimregistration.NewController(kubeClient); err != nil {
+		logger.Error(err, "failed to create registration controller")
+	} else {
+		controllers = append(controllers, registrationCtrl)
 	}
 
-	// Register tagging controller
-	taggingCtrl := nodeclaimtagging.NewController(kubeClient, instanceProvider)
-	if err := taggingCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering tagging controller: %w", err)
+	// Add tagging controller (VPC mode only)
+	if taggingCtrl, err := nodeclaimtagging.NewController(kubeClient); err != nil {
+		logger.Error(err, "failed to create tagging controller")
+	} else {
+		controllers = append(controllers, taggingCtrl)
 	}
 
-	// Register instance type controller
+	// Add instance type controller
 	if instanceTypeCtrl, err := providersinstancetype.NewController(); err != nil {
-		return fmt.Errorf("creating instance type controller: %w", err)
-	} else if err := instanceTypeCtrl.Register(ctx, mgr); err != nil {
-		return fmt.Errorf("registering instance type controller: %w", err)
+		logger.Error(err, "failed to create instance type controller")
+	} else {
+		controllers = append(controllers, instanceTypeCtrl)
 	}
 
-	// Register interruption controller if enabled
-	if options.FromContext(ctx).Interruption {
-		interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings)
-		if err := interruptionCtrl.Register(ctx, mgr); err != nil {
-			return fmt.Errorf("registering interruption controller: %w", err)
-		}
+	// Add interruption controller (always add for now)
+	interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings)
+	controllers = append(controllers, interruptionCtrl)
+
+	// Add orphaned node cleanup controller (only if enabled and IBM client available)
+	if ibmClient != nil && isOrphanCleanupEnabled() {
+		orphanCleanupCtrl := nodeorphancleanup.NewController(kubeClient, ibmClient)
+		controllers = append(controllers, orphanCleanupCtrl)
+		logger.Info("enabled orphaned node cleanup controller")
+	} else if ibmClient == nil {
+		logger.Info("IBM client not available, skipping orphaned node cleanup controller")
+	} else {
+		logger.Info("orphaned node cleanup controller is disabled")
 	}
 
+	return controllers
+}
+
+// isOrphanCleanupEnabled checks if orphan cleanup is enabled via environment variable
+func isOrphanCleanupEnabled() bool {
+	return os.Getenv("KARPENTER_ENABLE_ORPHAN_CLEANUP") == "true"
+}
+
+// RegisterBootstrapController adds the bootstrap token controller to the manager
+func RegisterBootstrapController(mgr manager.Manager) error {
+	bootstrapCtrl := bootstrap.NewTokenController(mgr)
+	if err := bootstrapCtrl.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setting up bootstrap token controller: %w", err)
+	}
 	return nil
-}
-
-// NodePoolReconciler handles NodePool lifecycle and creates NodeClaims for unschedulable pods
-type NodePoolReconciler struct {
-	kubeClient    client.Client
-	cloudProvider cloudprovider.CloudProvider
-}
-
-func (r *NodePoolReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	// TODO: Implement NodePool reconciliation logic
-	// This should watch for unschedulable pods and create NodeClaims
-	return reconcile.Result{}, nil
-}
-
-// NodeClaimReconciler handles complete NodeClaim lifecycle
-type NodeClaimReconciler struct {
-	kubeClient    client.Client
-	cloudProvider cloudprovider.CloudProvider
-}
-
-func (r *NodeClaimReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	// TODO: Implement NodeClaim reconciliation logic
-	// This should handle the complete lifecycle from creation to deletion
-	return reconcile.Result{}, nil
 }

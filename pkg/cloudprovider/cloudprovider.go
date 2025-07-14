@@ -1,8 +1,26 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package cloudprovider
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
@@ -21,8 +39,10 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instance"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
+	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 const CloudProviderName = "ibmcloud"
@@ -35,21 +55,37 @@ type CloudProvider struct {
 	ibmClient  *ibm.Client
 
 	instanceTypeProvider instancetype.Provider
-	instanceProvider     instance.Provider
+	providerFactory      *providers.ProviderFactory
+	subnetProvider       subnet.Provider
+	defaultProviderMode  commonTypes.ProviderMode
+	circuitBreaker       *CircuitBreaker
 }
 
 func New(kubeClient client.Client,
 	recorder events.Recorder,
 	ibmClient *ibm.Client,
 	instanceTypeProvider instancetype.Provider,
-	instanceProvider instance.Provider) *CloudProvider {
+	subnetProvider subnet.Provider) *CloudProvider {
+	// Determine the default provider mode based on environment
+	defaultMode := commonTypes.VPCMode
+	if os.Getenv("IKS_CLUSTER_ID") != "" {
+		defaultMode = commonTypes.IKSMode
+	}
+	
+	// Initialize circuit breaker with default config
+	logger := log.FromContext(context.Background()).WithName("circuit-breaker")
+	circuitBreaker := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logger)
+	
 	return &CloudProvider{
 		kubeClient: kubeClient,
 		recorder:   recorder,
 		ibmClient:  ibmClient,
 
 		instanceTypeProvider: instanceTypeProvider,
-		instanceProvider:     instanceProvider,
+		providerFactory:      providers.NewProviderFactory(ibmClient, kubeClient, nil),
+		subnetProvider:       subnetProvider,
+		defaultProviderMode:  defaultMode,
+		circuitBreaker:       circuitBreaker,
 	}
 }
 
@@ -57,18 +93,31 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 	log := log.FromContext(ctx).WithValues("providerID", providerID)
 	log.Info("Getting instance details")
 
-	node := &corev1.Node{
-		Spec: corev1.NodeSpec{
-			ProviderID: providerID,
-		},
+	// For Get operations without NodeClass, use a minimal NodeClass with default provider mode
+	nodeClass := &v1alpha1.IBMNodeClass{}
+	if c.defaultProviderMode == commonTypes.IKSMode {
+		// Set IKS cluster ID from environment to trigger IKS mode
+		nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
 	}
-
-	instance, err := c.instanceProvider.GetInstance(ctx, node)
+	
+	// Get the appropriate instance provider
+	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
+	if err != nil {
+		log.Error(err, "Failed to get instance provider")
+		return nil, fmt.Errorf("getting instance provider, %w", err)
+	}
+	
+	// Get the instance details
+	node, err := instanceProvider.Get(ctx, providerID)
 	if err != nil {
 		log.Error(err, "Failed to get instance")
 		return nil, fmt.Errorf("getting instance, %w", err)
 	}
-	log.Info("Found instance", "type", instance.Type, "zone", instance.Zone)
+	
+	// Extract instance info from node
+	instanceTypeName := node.Labels["node.kubernetes.io/instance-type"]
+	zone := node.Labels["topology.kubernetes.io/zone"]
+	log.Info("Found instance", "type", instanceTypeName, "zone", zone)
 
 	instanceTypes, err := c.instanceTypeProvider.List(ctx)
 	if err != nil {
@@ -77,7 +126,7 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 	}
 
 	instanceType, _ := lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool {
-		return i.Name == instance.Type
+		return i.Name == instanceTypeName
 	})
 	if instanceType != nil {
 		log.Info("Resolved instance type", "type", instanceType.Name)
@@ -116,9 +165,33 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 		if node.Spec.ProviderID == "" {
 			continue
 		}
+		
+		// Skip nodes that don't have IBM provider IDs
+		if !strings.HasPrefix(node.Spec.ProviderID, "ibm://") {
+			continue
+		}
+		
+		// Handle IKS managed nodes (format: ibm://account-id///cluster-id/worker-id)
+		// These nodes are supported - the instance provider will map IKS worker to VPC instance
 
-		_, err := c.instanceProvider.GetInstance(ctx, &node)
+		// For List operations, use default provider mode
+		nodeClass := &v1alpha1.IBMNodeClass{}
+		if c.defaultProviderMode == commonTypes.IKSMode {
+			nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
+		}
+		
+		instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 		if err != nil {
+			continue // Skip if we can't get provider
+		}
+		
+		_, err = instanceProvider.Get(ctx, node.Spec.ProviderID)
+		if err != nil {
+			// Check if this is an IKS managed cluster that doesn't allow Karpenter management
+			if strings.Contains(err.Error(), "not configured for Karpenter management") {
+				log.V(1).Info("Skipping IKS managed node - cluster not configured for Karpenter", "node", node.Name)
+				continue
+			}
 			log.Error(err, "Failed to get instance details", "node", node.Name)
 			continue
 		}
@@ -214,11 +287,33 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	log.Info("Found compatible instance types", "count", len(compatible), "types", lo.Map(compatible, func(it *cloudprovider.InstanceType, _ int) string { return it.Name }))
 
 	log.Info("Creating instance")
-	node, err := c.instanceProvider.Create(ctx, nodeClaim)
+	
+	// Circuit breaker check - validate against failure rate and concurrency safeguards
+	if cbErr := c.circuitBreaker.CanProvision(ctx, nodeClass.Name, nodeClass.Spec.Region, 0); cbErr != nil {
+		log.Error(cbErr, "Circuit breaker blocked provisioning",
+			"nodeClass", nodeClass.Name,
+			"region", nodeClass.Spec.Region)
+		c.recorder.Publish(ibmevents.NodeClaimFailedToResolveNodeClass(nodeClaim))
+		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("circuit breaker blocked provisioning: %w", cbErr))
+	}
+	
+	// Get the appropriate instance provider based on NodeClass configuration
+	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
+	if err != nil {
+		log.Error(err, "Failed to get instance provider")
+		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
+		return nil, fmt.Errorf("getting instance provider, %w", err)
+	}
+	
+	node, err := instanceProvider.Create(ctx, nodeClaim)
 	if err != nil {
 		log.Error(err, "Failed to create instance")
+		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
+	
+	// Record successful provisioning
+	c.circuitBreaker.RecordSuccess(nodeClass.Name, nodeClass.Spec.Region)
 	log.Info("Successfully created instance", "providerID", node.Spec.ProviderID)
 
 	instanceType, _ := lo.Find(compatible, func(i *cloudprovider.InstanceType) bool {
@@ -242,7 +337,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 
 	nc.Annotations = lo.Assign(nc.Annotations, map[string]string{
-		v1alpha1.AnnotationIBMNodeClassHash:        fmt.Sprintf("%d", nodeClass.Status.SpecHash),
+		v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
 		v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
 	})
 
@@ -266,7 +361,36 @@ func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		},
 	}
 
-	if err := c.instanceProvider.Delete(ctx, node); err != nil {
+	// For Delete operations, get the NodeClass to determine provider mode
+	nodeClass := &v1alpha1.IBMNodeClass{}
+	// Try to get the NodeClass from the nodeClaim's nodeClassRef
+	if nodeClaim.Spec.NodeClassRef != nil && nodeClaim.Spec.NodeClassRef.Name != "" {
+		if getErr := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); getErr != nil {
+			// If we can't get NodeClass, use default provider mode
+			if c.defaultProviderMode == commonTypes.IKSMode {
+				nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
+			}
+		}
+	} else {
+		// No NodeClass reference, use default provider mode
+		if c.defaultProviderMode == commonTypes.IKSMode {
+			nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
+		}
+	}
+	
+	// Get the appropriate instance provider
+	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
+	if err != nil {
+		log.Error(err, "Failed to get instance provider")
+		return fmt.Errorf("getting instance provider, %w", err)
+	}
+	
+	if err := instanceProvider.Delete(ctx, node); err != nil {
+		// Return NodeClaimNotFoundError unchanged - this is expected during cleanup
+		if cloudprovider.IsNodeClaimNotFoundError(err) {
+			log.Info("Instance already deleted or not found")
+			return err
+		}
 		log.Error(err, "Failed to delete node")
 		return err
 	}
@@ -323,8 +447,9 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCla
 	}
 
 	// Check if the hash matches
-	if fmt.Sprintf("%d", nodeClass.Status.SpecHash) != currentHash {
-		log.Info("NodeClass hash mismatch", "current", currentHash, "expected", nodeClass.Status.SpecHash)
+	expectedHash := nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
+	if expectedHash != currentHash {
+		log.Info("NodeClass hash mismatch", "current", currentHash, "expected", expectedHash)
 		return "NodeClassHashChanged", nil
 	}
 
@@ -335,10 +460,54 @@ func (c *CloudProvider) Name() string {
 	return CloudProviderName
 }
 
+// GetIBMClient returns the IBM client
+func (c *CloudProvider) GetIBMClient() *ibm.Client {
+	return c.ibmClient
+}
+
+// GetInstanceTypeProvider returns the instance type provider
+func (c *CloudProvider) GetInstanceTypeProvider() instancetype.Provider {
+	return c.instanceTypeProvider
+}
+
+// GetSubnetProvider returns the subnet provider  
+func (c *CloudProvider) GetSubnetProvider() subnet.Provider {
+	return c.subnetProvider
+}
+
 func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
 	return []status.Object{&v1alpha1.IBMNodeClass{}}
 }
 
-func (c *CloudProvider) GetIBMClient() *ibm.Client {
-	return c.ibmClient
+// RepairPolicies returns the repair policies for the IBM cloud provider
+// These define conditions that Karpenter should monitor to detect unhealthy nodes
+func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
+	return []cloudprovider.RepairPolicy{
+		// Common node conditions that indicate unhealthy state
+		{
+			ConditionType:      corev1.NodeReady,
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 5 * time.Minute, // Wait 5 minutes before considering node for termination
+		},
+		{
+			ConditionType:      corev1.NodeReady,
+			ConditionStatus:    corev1.ConditionUnknown,
+			TolerationDuration: 5 * time.Minute, // Wait 5 minutes for unknown state
+		},
+		{
+			ConditionType:      corev1.NodeMemoryPressure,
+			ConditionStatus:    corev1.ConditionTrue,
+			TolerationDuration: 10 * time.Minute, // Give more time for memory pressure recovery
+		},
+		{
+			ConditionType:      corev1.NodeDiskPressure,
+			ConditionStatus:    corev1.ConditionTrue,
+			TolerationDuration: 5 * time.Minute, // Disk pressure should be addressed quickly
+		},
+		{
+			ConditionType:      corev1.NodePIDPressure,
+			ConditionStatus:    corev1.ConditionTrue,
+			TolerationDuration: 5 * time.Minute, // PID pressure indicates serious issues
+		},
+	}
 }

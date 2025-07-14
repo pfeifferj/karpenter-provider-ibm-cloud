@@ -32,6 +32,9 @@ func ParseInstanceID(providerID string) (string, error) {
 
 func GetAllSingleValuedRequirementLabels(instanceType *cloudprovider.InstanceType) map[string]string {
 	labels := map[string]string{}
+	if instanceType == nil {
+		return labels
+	}
 	for _, req := range instanceType.Requirements {
 		values := req.Values()
 		if len(values) == 1 && req.Operator() == corev1.NodeSelectorOpIn {

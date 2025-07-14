@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package autoplacement
 
 import (
@@ -16,8 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/instancetype"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/subnet"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 const (
@@ -97,8 +112,8 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.log.Error(err, "failed to select instance types", "nodeclass", req.Name)
 			InstanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
-			if err := c.client.Status().Update(ctx, nodeClass); err != nil {
-				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
+			if updateErr := c.client.Status().Update(ctx, nodeClass); updateErr != nil {
+				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
 			return reconcile.Result{}, err
 		}
@@ -108,8 +123,8 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.log.Error(err, "instance type selection failed", "nodeclass", req.Name)
 			InstanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
-			if err := c.client.Status().Update(ctx, nodeClass); err != nil {
-				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
+			if updateErr := c.client.Status().Update(ctx, nodeClass); updateErr != nil {
+				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
 			return reconcile.Result{}, err
 		}
