@@ -681,3 +681,156 @@ func TestForceCleanupStuckNodeClaim_WithStuckPods(t *testing.T) {
 	// Verify cloud provider delete was called
 	assert.Contains(t, cloudProvider.deletedProviderIDs, "ibm:///us-south/stuck-instance")
 }
+
+func TestHandleOrphanedNodes_WithFinalizers(t *testing.T) {
+	// Create cloud provider with no matching instances
+	cloudProvider := newMockCloudProvider()
+	
+	// Create orphaned node with finalizers
+	orphanedNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "orphaned-node",
+			Finalizers: []string{"registration.nodeclaim.ibm.sh/finalizer"},
+			Labels: map[string]string{
+				"karpenter.sh/nodepool": "test-nodepool",
+			},
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm:///eu-de/orphaned-instance",
+		},
+	}
+	
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(orphanedNode).
+		Build()
+	
+	controller := NewController(kubeClient, cloudProvider)
+	
+	// Create empty node list and cloud node claims (no matching instances)
+	nodeList := &corev1.NodeList{Items: []corev1.Node{*orphanedNode}}
+	cloudNodeClaims := []*karpv1.NodeClaim{}
+	
+	err := controller.handleOrphanedNodes(context.Background(), nodeList, cloudNodeClaims)
+	
+	assert.NoError(t, err)
+	
+	// Verify node was deleted (should not exist anymore)
+	var updatedNode corev1.Node
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "orphaned-node"}, &updatedNode)
+	assert.True(t, apierrors.IsNotFound(err), "orphaned node should be deleted")
+}
+
+func TestHandleOrphanedNodes_SkipNonKarpenterNodes(t *testing.T) {
+	// Create cloud provider with no matching instances
+	cloudProvider := newMockCloudProvider()
+	
+	// Create non-Karpenter node (no karpenter.sh/nodepool label and non-IBM provider ID)
+	nonKarpenterNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "non-karpenter-node",
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "aws:///us-east-1a/i-1234567890abcdef0",
+		},
+	}
+	
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(nonKarpenterNode).
+		Build()
+	
+	controller := NewController(kubeClient, cloudProvider)
+	
+	// Create node list and empty cloud node claims
+	nodeList := &corev1.NodeList{Items: []corev1.Node{*nonKarpenterNode}}
+	cloudNodeClaims := []*karpv1.NodeClaim{}
+	
+	err := controller.handleOrphanedNodes(context.Background(), nodeList, cloudNodeClaims)
+	
+	assert.NoError(t, err)
+	
+	// Verify non-Karpenter node was NOT deleted
+	var updatedNode corev1.Node
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "non-karpenter-node"}, &updatedNode)
+	assert.NoError(t, err, "non-Karpenter node should not be deleted")
+}
+
+func TestRemoveNodeFinalizers(t *testing.T) {
+	// Create node with finalizers
+	nodeWithFinalizers := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-node",
+			Finalizers: []string{"registration.nodeclaim.ibm.sh/finalizer", "other-finalizer"},
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm:///eu-de/test-instance",
+		},
+	}
+	
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(nodeWithFinalizers).
+		Build()
+	
+	controller := NewController(kubeClient, newMockCloudProvider())
+	
+	err := controller.removeNodeFinalizers(context.Background(), nodeWithFinalizers)
+	
+	assert.NoError(t, err)
+	
+	// Verify finalizers were removed
+	var updatedNode corev1.Node
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, &updatedNode)
+	assert.NoError(t, err)
+	assert.Empty(t, updatedNode.Finalizers, "all finalizers should be removed")
+}
+
+func TestRemoveNodeFinalizers_NoFinalizers(t *testing.T) {
+	// Create node without finalizers
+	nodeWithoutFinalizers := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm:///eu-de/test-instance",
+		},
+	}
+	
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(nodeWithoutFinalizers).
+		Build()
+	
+	controller := NewController(kubeClient, newMockCloudProvider())
+	
+	err := controller.removeNodeFinalizers(context.Background(), nodeWithoutFinalizers)
+	
+	assert.NoError(t, err)
+	
+	// Verify node is unchanged
+	var updatedNode corev1.Node
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, &updatedNode)
+	assert.NoError(t, err)
+	assert.Empty(t, updatedNode.Finalizers)
+}
+
+func TestRemoveNodeFinalizers_NodeNotFound(t *testing.T) {
+	// Create node object but don't add it to the client
+	nonExistentNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "non-existent-node",
+			Finalizers: []string{"registration.nodeclaim.ibm.sh/finalizer"},
+		},
+	}
+	
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		Build()
+	
+	controller := NewController(kubeClient, newMockCloudProvider())
+	
+	err := controller.removeNodeFinalizers(context.Background(), nonExistentNode)
+	
+	assert.NoError(t, err, "should ignore NotFound errors")
+}

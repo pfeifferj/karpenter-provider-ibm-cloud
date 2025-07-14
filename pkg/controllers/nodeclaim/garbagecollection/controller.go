@@ -223,7 +223,13 @@ func (c *Controller) handleOrphanedNodes(ctx context.Context, nodeList *corev1.N
 		
 		log.FromContext(ctx).Info("found orphaned kubernetes node (no corresponding cloud instance), cleaning up")
 		
-		// Delete the orphaned node with proper grace period
+		// Step 1: Remove finalizers to ensure proper cleanup
+		if err := c.removeNodeFinalizers(ctx, &node); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove finalizers from orphaned node %s: %w", node.Name, err))
+			continue
+		}
+		
+		// Step 2: Delete the orphaned node with proper grace period
 		if err := c.kubeClient.Delete(ctx, &node, &client.DeleteOptions{
 			GracePeriodSeconds: lo.ToPtr(int64(30)), // 30 second grace period
 		}); err != nil && client.IgnoreNotFound(err) != nil {
@@ -235,6 +241,33 @@ func (c *Controller) handleOrphanedNodes(ctx context.Context, nodeList *corev1.N
 	}
 	
 	return multierr.Combine(errs...)
+}
+
+// removeNodeFinalizers removes all finalizers from a node to ensure proper cleanup
+func (c *Controller) removeNodeFinalizers(ctx context.Context, node *corev1.Node) error {
+	// Skip if node has no finalizers
+	if len(node.Finalizers) == 0 {
+		return nil
+	}
+	
+	// Get fresh copy of the node to avoid conflicts
+	freshNode := &corev1.Node{}
+	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: node.Name}, freshNode); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	
+	// Remove all finalizers
+	if len(freshNode.Finalizers) > 0 {
+		finalizerCount := len(freshNode.Finalizers)
+		patch := client.MergeFrom(freshNode.DeepCopy())
+		freshNode.Finalizers = nil
+		if err := c.kubeClient.Patch(ctx, freshNode, patch); err != nil {
+			return fmt.Errorf("removing finalizers from node: %w", err)
+		}
+		log.FromContext(ctx).Info("removed finalizers from orphaned node", "finalizer-count", finalizerCount)
+	}
+	
+	return nil
 }
 
 // isKarpenterManagedNode checks if a node is managed by Karpenter
@@ -355,6 +388,11 @@ func (c *Controller) forceCleanupStuckNodeClaim(ctx context.Context, nc *karpv1.
 	if nc.Status.NodeName != "" {
 		node := &corev1.Node{}
 		if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nc.Status.NodeName}, node); err == nil {
+			// Remove finalizers first
+			if err := c.removeNodeFinalizers(ctx, node); err != nil {
+				log.FromContext(ctx).Error(err, "failed to remove finalizers from node", "node", nc.Status.NodeName)
+			}
+			
 			if err := c.kubeClient.Delete(ctx, node, &client.DeleteOptions{
 				GracePeriodSeconds: lo.ToPtr(int64(0)),
 			}); err != nil {
@@ -424,6 +462,11 @@ func (c *Controller) garbageCollect(ctx context.Context, nodeClaim *karpv1.NodeC
 	if node, ok := lo.Find(nodeList.Items, func(n corev1.Node) bool {
 		return n.Spec.ProviderID == nodeClaim.Status.ProviderID
 	}); ok {
+		// Remove finalizers first
+		if err := c.removeNodeFinalizers(ctx, &node); err != nil {
+			log.FromContext(ctx).Error(err, "failed to remove finalizers from node", "node", node.Name)
+		}
+		
 		if err := c.kubeClient.Delete(ctx, &node); err != nil {
 			// ignore not found errors
 			if client.IgnoreNotFound(err) != nil {
