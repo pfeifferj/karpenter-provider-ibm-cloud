@@ -7,6 +7,11 @@ metadata:
     {{- include "karpenter.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
   selector:
     matchLabels:
       {{- include "karpenter.selectorLabels" . | nindent 6 }}
@@ -68,21 +73,43 @@ spec:
               value: {{ .Values.controllerVerbosity | default "4" | quote }}
             - name: CONTROLLER_MANAGER_LOG_LEVEL
               value: {{ .Values.controllerLogLevel | default "debug" | quote }}
+            {{- if .Values.iksClusterID }}
+            - name: IKS_CLUSTER_ID
+              value: {{ .Values.iksClusterID | quote }}
+            {{- end }}
+            {{- if .Values.clusterName }}
+            - name: CLUSTER_NAME
+              value: {{ .Values.clusterName | quote }}
+            {{- end }}
+            - name: BOOTSTRAP_MODE
+              value: {{ .Values.bootstrapMode | default "auto" | quote }}
+            - name: METRICS_PORT
+              value: {{ .Values.controller.metrics.port | quote }}
+            - name: HEALTH_PROBE_PORT
+              value: {{ .Values.controller.healthProbe.port | quote }}
+            {{- if .Values.customResources.enabled }}
+            {{- include "karpenter.cr.environmentConfig" . | nindent 12 }}
+            {{- include "karpenter.cr.bootstrapConfig" . | nindent 12 }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metrics.port }}
               protocol: TCP
             - name: health
-              containerPort: 8081
+              containerPort: {{ .Values.controller.healthProbe.port }}
               protocol: TCP
-          {{- with .Values.controller.livenessProbe }}
           livenessProbe:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.controller.readinessProbe }}
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            timeoutSeconds: 1
           readinessProbe:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            timeoutSeconds: 1
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}

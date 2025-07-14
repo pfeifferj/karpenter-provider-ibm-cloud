@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package ibm
 
 import (
@@ -119,4 +134,26 @@ func (c *GlobalCatalogClient) ListInstanceTypes(ctx context.Context) ([]globalca
 	}
 
 	return allEntries, nil
+}
+
+func (c *GlobalCatalogClient) GetPricing(ctx context.Context, catalogEntryID string) (*globalcatalogv1.PricingGet, error) {
+	if err := c.ensureClient(ctx); err != nil {
+		return nil, err
+	}
+
+	// Cast the client interface to access GetPricing method
+	if sdkClient, ok := c.client.(*globalcatalogv1.GlobalCatalogV1); ok {
+		pricingOptions := &globalcatalogv1.GetPricingOptions{
+			ID: &catalogEntryID,
+		}
+		
+		pricingData, _, err := sdkClient.GetPricing(pricingOptions)
+		if err != nil {
+			return nil, fmt.Errorf("calling GetPricing API: %w", err)
+		}
+		
+		return pricingData, nil
+	}
+	
+	return nil, fmt.Errorf("invalid client type for GetPricing")
 }

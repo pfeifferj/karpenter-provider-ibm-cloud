@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package hash
 
 import (
@@ -15,6 +30,8 @@ import (
 )
 
 // Controller computes a hash of the IBMNodeClass spec and stores it in the status
+//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch;patch;update
+//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses/status,verbs=get;update;patch
 type Controller struct {
 	kubeClient client.Client
 }
@@ -36,18 +53,32 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Skip reconciliation if the NodeClass is being deleted
+	if nc.DeletionTimestamp != nil && !nc.DeletionTimestamp.IsZero() {
+		return reconcile.Result{}, fmt.Errorf("cannot reconcile IBMNodeClass being deleted")
+	}
+
 	// Compute hash of the spec
 	hash, err := hashstructure.Hash(nc.Spec, hashstructure.FormatV2, nil)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{}, fmt.Errorf("failed to compute hash: %w", err)
 	}
 
-	// Update status if hash changed
-	if nc.Status.SpecHash != hash {
-		patch := client.MergeFrom(nc.DeepCopy())
-		nc.Status.SpecHash = hash
-		if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
-			return reconcile.Result{}, err
+	// Convert hash to string
+	hashString := fmt.Sprint(hash)
+
+	// Store hash in annotations (following AWS pattern)
+	stored := nc.DeepCopy()
+	if nc.Annotations == nil {
+		nc.Annotations = make(map[string]string)
+	}
+
+	// Check if hash has changed
+	currentHash, exists := nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
+	if !exists || currentHash != hashString {
+		nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash] = hashString
+		if err := c.kubeClient.Patch(ctx, nc, client.MergeFrom(stored)); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to patch annotations: %w", err)
 		}
 	}
 

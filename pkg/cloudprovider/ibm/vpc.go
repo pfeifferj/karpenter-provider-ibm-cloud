@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package ibm
 
 import (
@@ -17,6 +32,11 @@ type vpcClientInterface interface {
 	UpdateInstanceWithContext(context.Context, *vpcv1.UpdateInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error)
 	ListSubnetsWithContext(context.Context, *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error)
 	GetSubnetWithContext(context.Context, *vpcv1.GetSubnetOptions) (*vpcv1.Subnet, *core.DetailedResponse, error)
+	GetVPCWithContext(context.Context, *vpcv1.GetVPCOptions) (*vpcv1.VPC, *core.DetailedResponse, error)
+	GetImageWithContext(context.Context, *vpcv1.GetImageOptions) (*vpcv1.Image, *core.DetailedResponse, error)
+	ListImagesWithContext(context.Context, *vpcv1.ListImagesOptions) (*vpcv1.ImageCollection, *core.DetailedResponse, error)
+	ListInstanceProfilesWithContext(context.Context, *vpcv1.ListInstanceProfilesOptions) (*vpcv1.InstanceProfileCollection, *core.DetailedResponse, error)
+	ListSecurityGroupsWithContext(context.Context, *vpcv1.ListSecurityGroupsOptions) (*vpcv1.SecurityGroupCollection, *core.DetailedResponse, error)
 }
 
 // VPCClient handles interactions with the IBM Cloud VPC API
@@ -52,7 +72,18 @@ func NewVPCClient(baseURL, authType, apiKey, region string) (*VPCClient, error) 
 	}, nil
 }
 
-func (c *VPCClient) CreateInstance(ctx context.Context, instancePrototype *vpcv1.InstancePrototype) (*vpcv1.Instance, error) {
+// NewVPCClientWithMock creates a VPC client with a mock SDK client for testing
+func NewVPCClientWithMock(mockClient vpcClientInterface) *VPCClient {
+	return &VPCClient{
+		baseURL:  "test",
+		authType: "test",
+		apiKey:   "test",
+		region:   "test",
+		client:   mockClient,
+	}
+}
+
+func (c *VPCClient) CreateInstance(ctx context.Context, instancePrototype vpcv1.InstancePrototypeIntf) (*vpcv1.Instance, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("VPC client not initialized")
 	}
@@ -176,4 +207,79 @@ func (c *VPCClient) GetSubnet(ctx context.Context, subnetID string) (*vpcv1.Subn
 	}
 
 	return subnet, nil
+}
+
+func (c *VPCClient) GetVPC(ctx context.Context, vpcID string) (*vpcv1.VPC, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.GetVPCOptions{
+		ID: &vpcID,
+	}
+
+	vpc, _, err := c.client.GetVPCWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("getting VPC: %w", err)
+	}
+
+	return vpc, nil
+}
+
+func (c *VPCClient) GetImage(ctx context.Context, imageID string) (*vpcv1.Image, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.GetImageOptions{
+		ID: &imageID,
+	}
+
+	image, _, err := c.client.GetImageWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("getting image: %w", err)
+	}
+
+	return image, nil
+}
+
+// ListImages lists available images with optional filtering
+func (c *VPCClient) ListImages(ctx context.Context, options *vpcv1.ListImagesOptions) (*vpcv1.ImageCollection, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	images, _, err := c.client.ListImagesWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("listing images: %w", err)
+	}
+
+	return images, nil
+}
+
+// ListSecurityGroups lists security groups with optional filtering
+func (c *VPCClient) ListSecurityGroupsWithContext(ctx context.Context, options *vpcv1.ListSecurityGroupsOptions) (*vpcv1.SecurityGroupCollection, *core.DetailedResponse, error) {
+	if c.client == nil {
+		return nil, nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	return c.client.ListSecurityGroupsWithContext(ctx, options)
+}
+
+// ListSubnetsWithContext lists subnets with context
+func (c *VPCClient) ListSubnetsWithContext(ctx context.Context, options *vpcv1.ListSubnetsOptions) (*vpcv1.SubnetCollection, *core.DetailedResponse, error) {
+	if c.client == nil {
+		return nil, nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	return c.client.ListSubnetsWithContext(ctx, options)
+}
+
+// ListInstanceProfiles lists available instance profiles
+func (c *VPCClient) ListInstanceProfiles(options *vpcv1.ListInstanceProfilesOptions) (*vpcv1.InstanceProfileCollection, *core.DetailedResponse, error) {
+	if c.client == nil {
+		return nil, nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	return c.client.ListInstanceProfilesWithContext(context.Background(), options)
 }

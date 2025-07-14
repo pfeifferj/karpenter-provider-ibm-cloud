@@ -4,7 +4,15 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'charts/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'charts/**'
   workflow_dispatch:
 
 jobs:
@@ -52,7 +60,7 @@ jobs:
         cache: true
 
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v3
+      uses: golangci/golangci-lint-action@v8
       with:
         version: latest
         args: --timeout=5m

@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package controllers
 
 import (
@@ -66,23 +81,23 @@ func TestHashControllerIntegration(t *testing.T) {
 	var updatedNodeClass v1alpha1.IBMNodeClass
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass)
 	require.NoError(t, err)
-	assert.NotZero(t, updatedNodeClass.Status.SpecHash)
+	assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
 
 	// Store original hash
-	originalHash := updatedNodeClass.Status.SpecHash
+	originalHash := updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
 
 	// Update the spec and reconcile again
 	updatedNodeClass.Spec.InstanceProfile = "bx2-8x32"
 	err = fakeClient.Update(ctx, &updatedNodeClass)
 	require.NoError(t, err)
 
-	result, err = hashController.Reconcile(ctx, req)
+	_, err = hashController.Reconcile(ctx, req)
 	assert.NoError(t, err)
 
 	// Verify hash changed
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass)
 	require.NoError(t, err)
-	assert.NotEqual(t, originalHash, updatedNodeClass.Status.SpecHash)
+	assert.NotEqual(t, originalHash, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
 }
 
 func TestStatusControllerIntegration(t *testing.T) {
@@ -140,9 +155,8 @@ func TestStatusControllerIntegration(t *testing.T) {
 				WithStatusSubresource(tt.nodeClass).
 				Build()
 
-			// Create status controller
-			statusController, err := nodeclassstatus.NewController(fakeClient)
-			require.NoError(t, err)
+			// Create status controller for testing (bypasses IBM client requirement)
+			statusController := nodeclassstatus.NewTestController(fakeClient)
 
 			// Reconcile the NodeClass
 			req := reconcile.Request{
@@ -251,9 +265,9 @@ func TestControllerConcurrency(t *testing.T) {
 				},
 			}
 
-			_, err := hashController.Reconcile(ctx, req)
-			if err != nil {
-				errors <- err
+			_, reconcileErr := hashController.Reconcile(ctx, req)
+			if reconcileErr != nil {
+				errors <- reconcileErr
 			} else {
 				done <- true
 			}
@@ -268,8 +282,8 @@ func TestControllerConcurrency(t *testing.T) {
 		select {
 		case <-done:
 			completed++
-		case err := <-errors:
-			t.Errorf("Unexpected error during concurrent reconciliation: %v", err)
+		case recvErr := <-errors:
+			t.Errorf("Unexpected error during concurrent reconciliation: %v", recvErr)
 			completed++
 		case <-timeout:
 			t.Fatal("Timeout waiting for concurrent reconciliation to complete")
@@ -281,7 +295,7 @@ func TestControllerConcurrency(t *testing.T) {
 		var updatedNodeClass v1alpha1.IBMNodeClass
 		err = fakeClient.Get(ctx, types.NamespacedName{Name: nc.Name}, &updatedNodeClass)
 		require.NoError(t, err)
-		assert.NotZero(t, updatedNodeClass.Status.SpecHash, "Hash should be set for %s", nc.Name)
+		assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash], "Hash should be set for %s", nc.Name)
 	}
 }
 
@@ -322,9 +336,10 @@ func TestControllerLifecycle(t *testing.T) {
 		},
 	}
 
-	// Reconcile should handle deletion gracefully
+	// Reconcile should return error when NodeClass is being deleted
 	result, err := hashController.Reconcile(ctx, req)
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot reconcile IBMNodeClass being deleted")
 	assert.Equal(t, reconcile.Result{}, result)
 }
 
@@ -359,8 +374,7 @@ func TestMultiControllerIntegration(t *testing.T) {
 	hashController, err := hash.NewController(fakeClient)
 	require.NoError(t, err)
 
-	statusController, err := nodeclassstatus.NewController(fakeClient)
-	require.NoError(t, err)
+	statusController := nodeclassstatus.NewTestController(fakeClient)
 
 	req := reconcile.Request{
 		NamespacedName: types.NamespacedName{
@@ -382,7 +396,7 @@ func TestMultiControllerIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Hash should be set
-	assert.NotZero(t, updatedNodeClass.Status.SpecHash)
+	assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
 	
 	// Status condition should be set
 	assert.NotEmpty(t, updatedNodeClass.Status.Conditions)

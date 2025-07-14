@@ -1,3 +1,18 @@
+/*
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package v1alpha1
 
 import (
@@ -75,32 +90,48 @@ type InstanceTypeRequirements struct {
 }
 
 // IBMNodeClassSpec defines the desired state of IBMNodeClass
+// +kubebuilder:validation:XValidation:rule="has(self.instanceProfile) || has(self.instanceRequirements)", message="either instanceProfile or instanceRequirements must be specified"
+// +kubebuilder:validation:XValidation:rule="!(has(self.instanceProfile) && has(self.instanceRequirements))", message="instanceProfile and instanceRequirements are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="self.bootstrapMode != 'iks-api' || has(self.iksClusterID)", message="iksClusterID is required when bootstrapMode is 'iks-api'"
+// +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == ''", message="zone must be within the specified region"
+// +kubebuilder:validation:XValidation:rule="self.vpc.matches('^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')", message="vpc must be a valid IBM Cloud VPC ID format"
+// +kubebuilder:validation:XValidation:rule="self.subnet == '' || self.subnet.matches('^[0-9a-f]{4}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')", message="subnet must be a valid IBM Cloud subnet ID format"
+// +kubebuilder:validation:XValidation:rule="self.image.matches('^[a-z0-9-]+$')", message="image must contain only lowercase letters, numbers, and hyphens"
 type IBMNodeClassSpec struct {
 	// Region is the IBM Cloud region where nodes will be created
 	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^[a-z]{2}-[a-z]+$"
 	Region string `json:"region"`
 
 	// Zone is the availability zone where nodes will be created
 	// If not specified, zones will be automatically selected based on placement strategy
 	// +optional
+	// +kubebuilder:validation:Pattern="^[a-z]{2}-[a-z]+-[0-9]+$"
 	Zone string `json:"zone,omitempty"`
 
 	// InstanceProfile is the name of the instance profile to use
 	// If not specified, instance types will be automatically selected based on requirements
+	// Either InstanceProfile or InstanceRequirements must be specified
 	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^[a-z0-9]+-[0-9]+x[0-9]+$"
 	InstanceProfile string `json:"instanceProfile,omitempty"`
 
 	// InstanceRequirements defines requirements for automatic instance type selection
 	// Only used when InstanceProfile is not specified
+	// Either InstanceProfile or InstanceRequirements must be specified
 	// +optional
 	InstanceRequirements *InstanceTypeRequirements `json:"instanceRequirements,omitempty"`
 
 	// Image is the ID of the image to use for nodes
 	// +required
+	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 
 	// VPC is the ID of the VPC where nodes will be created
 	// +required
+	// +kubebuilder:validation:MinLength=1
 	VPC string `json:"vpc"`
 
 	// Subnet is the ID of the subnet where nodes will be created
@@ -114,15 +145,19 @@ type IBMNodeClassSpec struct {
 	PlacementStrategy *PlacementStrategy `json:"placementStrategy,omitempty"`
 
 	// SecurityGroups is a list of security group IDs to attach to nodes
-	// +optional
-	SecurityGroups []string `json:"securityGroups,omitempty"`
+	// At least one security group must be specified for VPC instance creation
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:Items:Pattern="^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+	SecurityGroups []string `json:"securityGroups"`
 
 	// UserData contains user data script to run on instance initialization
 	// +optional
 	UserData string `json:"userData,omitempty"`
 
-	// SSHKeys is a list of SSH key IDs to add to the instance
+	// SSHKeys is a list of SSH key names to add to the instance
 	// +optional
+	// +kubebuilder:validation:Items:MinLength=1
+	// +kubebuilder:validation:Items:Pattern="^[a-z0-9-]+$"
 	SSHKeys []string `json:"sshKeys,omitempty"`
 
 	// ResourceGroup is the ID of the resource group for the instance
@@ -136,14 +171,39 @@ type IBMNodeClassSpec struct {
 	// Tags to apply to the instances
 	// +optional
 	Tags map[string]string `json:"tags,omitempty"`
+
+	// BootstrapMode determines how nodes should be bootstrapped to join the cluster
+	// Valid values are:
+	// - "cloud-init" - Use cloud-init scripts to bootstrap nodes (default)
+	// - "iks-api" - Use IKS Worker Pool API to add nodes to cluster
+	// - "auto" - Automatically select the best method based on cluster type
+	// +optional
+	// +kubebuilder:validation:Enum=cloud-init;iks-api;auto
+	// +kubebuilder:default=auto
+	BootstrapMode *string `json:"bootstrapMode,omitempty"`
+
+	// APIServerEndpoint is the Kubernetes API server endpoint for node registration
+	// If specified, this endpoint will be used instead of automatic discovery
+	// This is useful when the control plane is not accessible via standard discovery methods
+	// Example: "https://10.243.65.4:6443"
+	// +optional
+	// +kubebuilder:validation:Pattern="^https://[a-zA-Z0-9.-]+:[0-9]+$"
+	APIServerEndpoint string `json:"apiServerEndpoint,omitempty"`
+
+	// IKSClusterID is the IKS cluster ID for API-based bootstrapping
+	// Required when BootstrapMode is "iks-api"
+	// +optional
+	// +kubebuilder:validation:Pattern="^[a-z0-9]+$"
+	IKSClusterID string `json:"iksClusterID,omitempty"`
+
+	// IKSWorkerPoolID is the worker pool ID to add nodes to
+	// Used with IKS API bootstrapping mode
+	// +optional
+	IKSWorkerPoolID string `json:"iksWorkerPoolID,omitempty"`
 }
 
 // IBMNodeClassStatus defines the observed state of IBMNodeClass
 type IBMNodeClassStatus struct {
-	// SpecHash is a hash of the IBMNodeClass spec
-	// +optional
-	SpecHash uint64 `json:"specHash,omitempty"`
-
 	// LastValidationTime is the last time the nodeclass was validated
 	// +optional
 	LastValidationTime metav1.Time `json:"lastValidationTime,omitempty"`
