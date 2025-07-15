@@ -351,6 +351,114 @@ for i in {1..30}; do
   sleep 2
 done
 
+# Install CNI configuration
+CNI_PLUGIN="{{ .CNIPlugin }}"
+echo "$(date): Installing $CNI_PLUGIN CNI configuration..."
+mkdir -p /etc/cni/net.d
+
+# Create log directories based on CNI plugin
+case "$CNI_PLUGIN" in
+  "calico")
+    mkdir -p /var/log/calico/cni
+    ;;
+  "cilium")
+    mkdir -p /var/log/cilium
+    ;;
+  "flannel")
+    mkdir -p /var/log/flannel
+    ;;
+esac
+
+# Install CNI configuration based on detected plugin
+case "$CNI_PLUGIN" in
+  "calico")
+    echo "$(date): Installing Calico CNI configuration..."
+    cat > /etc/cni/net.d/10-calico.conflist << 'EOF'
+{
+  "name": "k8s-pod-network",
+  "cniVersion": "0.3.1",
+  "plugins": [
+    {
+      "type": "calico",
+      "log_level": "info",
+      "log_file_path": "/var/log/calico/cni/cni.log",
+      "datastore_type": "kubernetes",
+      "nodename": "__KUBERNETES_NODE_NAME__",
+      "mtu": 1440,
+      "ipam": {
+          "type": "calico-ipam"
+      },
+      "policy": {
+          "type": "k8s"
+      },
+      "kubernetes": {
+          "kubeconfig": "__KUBECONFIG_FILEPATH__"
+      }
+    },
+    {
+      "type": "portmap",
+      "snat": true,
+      "capabilities": {"portMappings": true}
+    },
+    {
+      "type": "bandwidth",
+      "capabilities": {"bandwidth": true}
+    }
+  ]
+}
+EOF
+    # Replace placeholders in CNI configuration
+    sed -i "s/__KUBERNETES_NODE_NAME__/$(hostname)/g" /etc/cni/net.d/10-calico.conflist
+    sed -i "s/__KUBECONFIG_FILEPATH__/\/var\/lib\/kubelet\/bootstrap-kubeconfig/g" /etc/cni/net.d/10-calico.conflist
+    ;;
+  "cilium")
+    echo "$(date): Installing Cilium CNI configuration..."
+    cat > /etc/cni/net.d/05-cilium.conflist << 'EOF'
+{
+  "name": "cilium",
+  "cniVersion": "0.3.1",
+  "plugins": [
+    {
+      "type": "cilium-cni",
+      "enable-debug": false,
+      "log-file": "/var/log/cilium/cilium-cni.log"
+    }
+  ]
+}
+EOF
+    ;;
+  "flannel")
+    echo "$(date): Installing Flannel CNI configuration..."
+    cat > /etc/cni/net.d/10-flannel.conflist << 'EOF'
+{
+  "name": "cbr0",
+  "cniVersion": "0.3.1",
+  "plugins": [
+    {
+      "type": "flannel",
+      "delegate": {
+        "hairpinMode": true,
+        "isDefaultGateway": true
+      }
+    },
+    {
+      "type": "portmap",
+      "capabilities": {
+        "portMappings": true
+      }
+    }
+  ]
+}
+EOF
+    ;;
+  *)
+    echo "$(date): ⚠️  Unknown CNI plugin: $CNI_PLUGIN, skipping CNI configuration"
+    echo "$(date): Node will rely on CNI DaemonSet deployment"
+    ;;
+esac
+
+echo "$(date): ✅ CNI configuration installed for $CNI_PLUGIN"
+
 # Start kubelet
 systemctl daemon-reload
 systemctl enable kubelet
@@ -369,63 +477,116 @@ echo "$(date): Checking kubelet status..."
 systemctl status kubelet --no-pager || true
 journalctl -u kubelet --no-pager -n 20 || true
 
-# Wait for Calico CNI to be fully operational
-echo "$(date): Waiting for Calico CNI to initialize..."
-CALICO_WAIT_TIMEOUT=300  # 5 minutes
-CALICO_WAIT_INTERVAL=5
+# Wait for CNI to be fully operational
+echo "$(date): Waiting for $CNI_PLUGIN CNI to initialize..."
+CNI_WAIT_TIMEOUT=300  # 5 minutes
+CNI_WAIT_INTERVAL=5
 elapsed=0
 
 check_cni_ready() {
-    # Check 1: CNI binaries exist and are executable
-    [ -x /opt/cni/bin/calico ] || return 1
-    [ -x /opt/cni/bin/calico-ipam ] || return 1
-    
-    # Check 2: CNI configuration exists and is valid JSON
-    [ -f /etc/cni/net.d/10-calico.conflist ] || return 1
-    
-    # Check 3: Calico nodename file exists
-    [ -f /var/lib/calico/nodename ] || return 1
-    
-    # Check 4: Calico node container is running (if crictl available)
-    if command -v crictl >/dev/null 2>&1; then
-        crictl ps 2>/dev/null | grep -q calico-node || return 1
-    fi
-    
-    # Check 5: CNI can be invoked successfully
-    if [ -x /opt/cni/bin/calico ] && [ -f /etc/cni/net.d/10-calico.conflist ]; then
-        # Try a simple CNI version check
-        CNI_PATH=/opt/cni/bin /opt/cni/bin/calico version >/dev/null 2>&1 || return 1
-    fi
+    case "$CNI_PLUGIN" in
+      "calico")
+        # Check 1: CNI binaries exist and are executable
+        [ -x /opt/cni/bin/calico ] || return 1
+        [ -x /opt/cni/bin/calico-ipam ] || return 1
+        
+        # Check 2: CNI configuration exists and is valid JSON
+        [ -f /etc/cni/net.d/10-calico.conflist ] || return 1
+        
+        # Check 3: Calico nodename file exists (may be created by DaemonSet)
+        # This is optional for initial bootstrap
+        
+        # Check 4: CNI can be invoked successfully
+        if [ -x /opt/cni/bin/calico ] && [ -f /etc/cni/net.d/10-calico.conflist ]; then
+            # Try a simple CNI version check
+            CNI_PATH=/opt/cni/bin /opt/cni/bin/calico version >/dev/null 2>&1 || return 1
+        fi
+        ;;
+      "cilium")
+        # Check 1: CNI binaries exist and are executable
+        [ -x /opt/cni/bin/cilium-cni ] || return 1
+        
+        # Check 2: CNI configuration exists
+        [ -f /etc/cni/net.d/05-cilium.conflist ] || return 1
+        
+        # Check 3: Cilium agent is running (if crictl available)
+        if command -v crictl >/dev/null 2>&1; then
+            crictl ps 2>/dev/null | grep -q cilium || return 1
+        fi
+        ;;
+      "flannel")
+        # Check 1: CNI binaries exist and are executable
+        [ -x /opt/cni/bin/flannel ] || return 1
+        
+        # Check 2: CNI configuration exists
+        [ -f /etc/cni/net.d/10-flannel.conflist ] || return 1
+        
+        # Check 3: Flannel is running (if crictl available)
+        if command -v crictl >/dev/null 2>&1; then
+            crictl ps 2>/dev/null | grep -q flannel || return 1
+        fi
+        ;;
+      *)
+        # For unknown CNI plugins, just check basic CNI setup
+        # Look for any CNI configuration file
+        ls /etc/cni/net.d/*.conflist >/dev/null 2>&1 || return 1
+        # Check for basic CNI binaries
+        [ -x /opt/cni/bin/bridge ] || return 1
+        [ -x /opt/cni/bin/loopback ] || return 1
+        ;;
+    esac
     
     return 0
 }
 
-while [ $elapsed -lt $CALICO_WAIT_TIMEOUT ]; do
+while [ $elapsed -lt $CNI_WAIT_TIMEOUT ]; do
   if check_cni_ready; then
-    echo "$(date): ✅ Calico CNI is fully operational"
+    echo "$(date): ✅ $CNI_PLUGIN CNI is fully operational"
     break
   fi
   
-  echo "$(date): Waiting for Calico CNI readiness... (elapsed: ${elapsed}s)"
+  echo "$(date): Waiting for $CNI_PLUGIN CNI readiness... (elapsed: ${elapsed}s)"
   
   # Detailed status for debugging every 30 seconds
   if [ $((elapsed % 30)) -eq 0 ] && [ $elapsed -gt 0 ]; then
     echo "$(date): CNI Status Check:"
-    echo "  - CNI binaries: $([ -x /opt/cni/bin/calico ] && echo "✓" || echo "✗")"
-    echo "  - CNI config: $([ -f /etc/cni/net.d/10-calico.conflist ] && echo "✓" || echo "✗")"
-    echo "  - Calico nodename: $([ -f /var/lib/calico/nodename ] && echo "✓" || echo "✗")"
-    if command -v crictl >/dev/null 2>&1; then
-      echo "  - Calico container: $(crictl ps 2>/dev/null | grep -q calico-node && echo "✓" || echo "✗")"
-    fi
+    case "$CNI_PLUGIN" in
+      "calico")
+        echo "  - CNI binaries: $([ -x /opt/cni/bin/calico ] && echo "✓" || echo "✗")"
+        echo "  - CNI config: $([ -f /etc/cni/net.d/10-calico.conflist ] && echo "✓" || echo "✗")"
+        echo "  - Calico nodename: $([ -f /var/lib/calico/nodename ] && echo "✓" || echo "✗")"
+        if command -v crictl >/dev/null 2>&1; then
+          echo "  - Calico container: $(crictl ps 2>/dev/null | grep -q calico-node && echo "✓" || echo "✗")"
+        fi
+        ;;
+      "cilium")
+        echo "  - CNI binaries: $([ -x /opt/cni/bin/cilium-cni ] && echo "✓" || echo "✗")"
+        echo "  - CNI config: $([ -f /etc/cni/net.d/05-cilium.conflist ] && echo "✓" || echo "✗")"
+        if command -v crictl >/dev/null 2>&1; then
+          echo "  - Cilium container: $(crictl ps 2>/dev/null | grep -q cilium && echo "✓" || echo "✗")"
+        fi
+        ;;
+      "flannel")
+        echo "  - CNI binaries: $([ -x /opt/cni/bin/flannel ] && echo "✓" || echo "✗")"
+        echo "  - CNI config: $([ -f /etc/cni/net.d/10-flannel.conflist ] && echo "✓" || echo "✗")"
+        if command -v crictl >/dev/null 2>&1; then
+          echo "  - Flannel container: $(crictl ps 2>/dev/null | grep -q flannel && echo "✓" || echo "✗")"
+        fi
+        ;;
+      *)
+        echo "  - CNI configs: $(ls /etc/cni/net.d/*.conflist 2>/dev/null | wc -l) found"
+        echo "  - Basic CNI binaries: $([ -x /opt/cni/bin/bridge ] && echo "✓" || echo "✗")"
+        ;;
+    esac
   fi
   
-  sleep $CALICO_WAIT_INTERVAL
-  elapsed=$((elapsed + CALICO_WAIT_INTERVAL))
+  sleep $CNI_WAIT_INTERVAL
+  elapsed=$((elapsed + CNI_WAIT_INTERVAL))
 done
 
 # Check if we timed out
-if [ $elapsed -ge $CALICO_WAIT_TIMEOUT ]; then
-  echo "$(date): ⚠️ Calico CNI failed to become ready after ${CALICO_WAIT_TIMEOUT}s"
+if [ $elapsed -ge $CNI_WAIT_TIMEOUT ]; then
+  echo "$(date): ⚠️ $CNI_PLUGIN CNI failed to become ready after ${CNI_WAIT_TIMEOUT}s"
   echo "$(date): Comprehensive diagnostic information:"
   
   # CNI binaries
@@ -435,16 +596,36 @@ if [ $elapsed -ge $CALICO_WAIT_TIMEOUT ]; then
   # CNI configs
   echo "  CNI configs in /etc/cni/net.d/:"
   ls -la /etc/cni/net.d/ 2>/dev/null || echo "    Directory does not exist"
-  if [ -f /etc/cni/net.d/10-calico.conflist ]; then
-    echo "  Calico CNI config content:"
-    head -20 /etc/cni/net.d/10-calico.conflist 2>/dev/null | sed 's/^/    /'
-  fi
   
-  # Calico directories and files
-  echo "  Calico directory /var/lib/calico/:"
-  ls -la /var/lib/calico/ 2>/dev/null || echo "    Directory does not exist"
-  echo "  Calico runtime directory /var/run/calico/:"
-  ls -la /var/run/calico/ 2>/dev/null || echo "    Directory does not exist"
+  # Plugin-specific diagnostics
+  case "$CNI_PLUGIN" in
+    "calico")
+      if [ -f /etc/cni/net.d/10-calico.conflist ]; then
+        echo "  Calico CNI config content:"
+        head -20 /etc/cni/net.d/10-calico.conflist 2>/dev/null | sed 's/^/    /'
+      fi
+      echo "  Calico directory /var/lib/calico/:"
+      ls -la /var/lib/calico/ 2>/dev/null || echo "    Directory does not exist"
+      echo "  Calico runtime directory /var/run/calico/:"
+      ls -la /var/run/calico/ 2>/dev/null || echo "    Directory does not exist"
+      ;;
+    "cilium")
+      if [ -f /etc/cni/net.d/05-cilium.conflist ]; then
+        echo "  Cilium CNI config content:"
+        head -20 /etc/cni/net.d/05-cilium.conflist 2>/dev/null | sed 's/^/    /'
+      fi
+      echo "  Cilium directory /var/run/cilium/:"
+      ls -la /var/run/cilium/ 2>/dev/null || echo "    Directory does not exist"
+      ;;
+    "flannel")
+      if [ -f /etc/cni/net.d/10-flannel.conflist ]; then
+        echo "  Flannel CNI config content:"
+        head -20 /etc/cni/net.d/10-flannel.conflist 2>/dev/null | sed 's/^/    /'
+      fi
+      echo "  Flannel directory /var/run/flannel/:"
+      ls -la /var/run/flannel/ 2>/dev/null || echo "    Directory does not exist"
+      ;;
+  esac
   
   # Container runtime status
   if command -v crictl >/dev/null 2>&1; then
@@ -456,16 +637,16 @@ if [ $elapsed -ge $CALICO_WAIT_TIMEOUT ]; then
   echo "  Recent kubelet CNI logs:"
   journalctl -u kubelet --no-pager -n 10 2>/dev/null | grep -i cni | tail -5 | sed 's/^/    /' || echo "    No CNI-related logs found"
   
-  # Try to get Calico pod status
+  # Try to get CNI pod status
   if command -v kubectl >/dev/null 2>&1; then
-    echo "  Calico pod status:"
-    kubectl --kubeconfig=/var/lib/kubelet/kubeconfig get pods -n kube-system -l k8s-app=calico-node --field-selector spec.nodeName=$(hostname) -o wide 2>/dev/null | sed 's/^/    /' || echo "    Could not get pod status"
+    echo "  $CNI_PLUGIN pod status:"
+    kubectl --kubeconfig=/var/lib/kubelet/kubeconfig get pods -n kube-system -l k8s-app=$CNI_PLUGIN --field-selector spec.nodeName=$(hostname) -o wide 2>/dev/null | sed 's/^/    /' || echo "    Could not get pod status"
   fi
   
   # Continue anyway - let Kubernetes handle the CNI readiness
   echo "$(date): Continuing bootstrap despite CNI issues..."
 else
-  echo "$(date): ✅ Calico CNI initialization completed successfully"
+  echo "$(date): ✅ $CNI_PLUGIN CNI initialization completed successfully"
 fi
 
 # Run custom user data if provided
