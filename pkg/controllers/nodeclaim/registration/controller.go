@@ -85,8 +85,8 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		logger.V(1).Info("added registration finalizer to nodeclaim")
 	}
 
-	// Skip if already registered
-	if c.isNodeClaimRegistered(nodeClaim) {
+	// Skip if already fully initialized (registered and ready)
+	if c.isNodeClaimFullyInitialized(nodeClaim) {
 		return reconcile.Result{}, nil
 	}
 
@@ -102,17 +102,27 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Sync NodeClaim properties to Node
-	if err := c.syncNodeClaimToNode(ctx, nodeClaim, node); err != nil {
-		return reconcile.Result{}, fmt.Errorf("syncing nodeclaim properties to node: %w", err)
+	// Sync NodeClaim properties to Node if not already registered
+	if !c.isNodeClaimRegistered(nodeClaim) {
+		if err := c.syncNodeClaimToNode(ctx, nodeClaim, node); err != nil {
+			return reconcile.Result{}, fmt.Errorf("syncing nodeclaim properties to node: %w", err)
+		}
 	}
 
-	// Update NodeClaim status to mark as registered
+	// Update NodeClaim status (handles both registration and initialization)
 	if err := c.updateNodeClaimStatus(ctx, nodeClaim, node); err != nil {
 		return reconcile.Result{}, fmt.Errorf("updating nodeclaim status: %w", err)
 	}
 
-	logger.Info("successfully registered nodeclaim with node", "node", node.Name)
+	// If registered but not initialized, requeue to check node readiness again
+	if c.isNodeClaimRegistered(nodeClaim) && !nodeClaim.StatusConditions().Get(karpv1.ConditionTypeInitialized).IsTrue() {
+		logger.V(1).Info("nodeclaim registered but not initialized, requeueing to check node readiness")
+		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
+	logger.Info("successfully processed nodeclaim", "node", node.Name, 
+		"registered", c.isNodeClaimRegistered(nodeClaim),
+		"initialized", nodeClaim.StatusConditions().Get(karpv1.ConditionTypeInitialized).IsTrue())
 	return reconcile.Result{}, nil
 }
 
@@ -139,6 +149,12 @@ func (c *Controller) handleDeletion(ctx context.Context, nodeClaim *karpv1.NodeC
 // isNodeClaimRegistered checks if a NodeClaim is already registered
 func (c *Controller) isNodeClaimRegistered(nodeClaim *karpv1.NodeClaim) bool {
 	return nodeClaim.StatusConditions().Get(karpv1.ConditionTypeRegistered).IsTrue()
+}
+
+// isNodeClaimFullyInitialized checks if a NodeClaim is both registered and initialized
+func (c *Controller) isNodeClaimFullyInitialized(nodeClaim *karpv1.NodeClaim) bool {
+	return nodeClaim.StatusConditions().Get(karpv1.ConditionTypeRegistered).IsTrue() &&
+		nodeClaim.StatusConditions().Get(karpv1.ConditionTypeInitialized).IsTrue()
 }
 
 // findNodeForNodeClaim finds the Node corresponding to a NodeClaim
@@ -315,6 +331,14 @@ func (c *Controller) updateNodeClaimStatus(ctx context.Context, nodeClaim *karpv
 
 	// Set registered condition using the proper StatusConditions interface
 	nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeRegistered)
+	
+	// Check if the node is ready and set Initialized condition
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeInitialized)
+			break
+		}
+	}
 
 	return c.kubeClient.Status().Patch(ctx, nodeClaim, patch)
 }

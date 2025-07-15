@@ -153,8 +153,9 @@ func TestController_Reconcile_SkipsAlreadyRegistered(t *testing.T) {
 	scheme := getTestScheme()
 	nodeClaim := getTestNodeClaim("test-nodeclaim", "ibm://test-instance-id")
 	
-	// Mark as already registered
+	// Mark as already registered AND initialized (fully ready)
 	nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeRegistered)
+	nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeInitialized)
 	nodeClaim.Finalizers = []string{NodeClaimRegistrationFinalizer}
 	
 	fakeClient := fake.NewClientBuilder().
@@ -169,7 +170,41 @@ func TestController_Reconcile_SkipsAlreadyRegistered(t *testing.T) {
 	})
 	
 	assert.NoError(t, err)
-	assert.Zero(t, result.RequeueAfter) // Should not requeue
+	assert.Zero(t, result.RequeueAfter) // Should not requeue when fully initialized
+}
+
+func TestController_Reconcile_RequeuesWhenRegisteredButNotInitialized(t *testing.T) {
+	scheme := getTestScheme()
+	nodeClaim := getTestNodeClaim("test-nodeclaim", "ibm://test-instance-id")
+	
+	// Mark as registered but NOT initialized
+	nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeRegistered)
+	nodeClaim.Finalizers = []string{NodeClaimRegistrationFinalizer}
+	nodeClaim.Status.NodeName = "test-node"
+	
+	// Create a node that is not ready yet
+	node := getTestNode("test-node", "ibm://test-instance-id")
+	node.Status.Conditions = []corev1.NodeCondition{
+		{
+			Type:   corev1.NodeReady,
+			Status: corev1.ConditionFalse,
+		},
+	}
+	
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nodeClaim, node).
+		WithStatusSubresource(nodeClaim).
+		Build()
+	
+	controller, _ := NewController(fakeClient)
+	
+	result, err := controller.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "test-nodeclaim"},
+	})
+	
+	assert.NoError(t, err)
+	assert.Equal(t, 15*time.Second, result.RequeueAfter) // Should requeue to check readiness
 }
 
 func TestController_Reconcile_RequeuesWhenNodeNotFound(t *testing.T) {
@@ -458,6 +493,48 @@ func TestController_IsNodeClaimRegistered(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := controller.isNodeClaimRegistered(tt.nodeClaim)
 			assert.Equal(t, tt.registered, result)
+		})
+	}
+}
+
+func TestController_IsNodeClaimFullyInitialized(t *testing.T) {
+	controller := &Controller{}
+	
+	tests := []struct {
+		name        string
+		nodeClaim   *karpv1.NodeClaim
+		initialized bool
+	}{
+		{
+			name:        "not registered or initialized",
+			nodeClaim:   getTestNodeClaim("test", "ibm://test"),
+			initialized: false,
+		},
+		{
+			name: "registered but not initialized",
+			nodeClaim: func() *karpv1.NodeClaim {
+				nc := getTestNodeClaim("test", "ibm://test")
+				nc.StatusConditions().SetTrue(karpv1.ConditionTypeRegistered)
+				return nc
+			}(),
+			initialized: false,
+		},
+		{
+			name: "registered and initialized",
+			nodeClaim: func() *karpv1.NodeClaim {
+				nc := getTestNodeClaim("test", "ibm://test")
+				nc.StatusConditions().SetTrue(karpv1.ConditionTypeRegistered)
+				nc.StatusConditions().SetTrue(karpv1.ConditionTypeInitialized)
+				return nc
+			}(),
+			initialized: true,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := controller.isNodeClaimFullyInitialized(tt.nodeClaim)
+			assert.Equal(t, tt.initialized, result)
 		})
 	}
 }
