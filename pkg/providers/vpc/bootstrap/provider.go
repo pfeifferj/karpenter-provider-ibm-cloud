@@ -97,6 +97,9 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 	// Detect container runtime from existing nodes
 	containerRuntime := p.detectContainerRuntime(ctx)
 	
+	// Detect CNI plugin from cluster configuration
+	cniPlugin := p.detectCNIPlugin(ctx)
+	
 	// Get NodeClaim to extract labels and taints
 	nodeClaimObj, err := p.getNodeClaim(ctx, nodeClaim)
 	if err != nil {
@@ -109,6 +112,7 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 		BootstrapToken:   bootstrapToken,
 		CustomUserData:   nodeClass.Spec.UserData,
 		ContainerRuntime: containerRuntime,
+		CNIPlugin:        cniPlugin,
 		Region:           nodeClass.Spec.Region,
 		Zone:             nodeClass.Spec.Zone,
 		CABundle:         caCert,
@@ -152,7 +156,9 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 		"endpoint", clusterEndpoint,
 		"token", fmt.Sprintf("%s...", bootstrapToken[:10]),
 		"region", nodeClass.Spec.Region,
-		"dns", clusterDNS)
+		"dns", clusterDNS,
+		"cni", cniPlugin,
+		"runtime", containerRuntime)
 
 	// Generate cloud-init script for direct kubelet
 	return p.generateCloudInitScript(ctx, options)
@@ -213,6 +219,46 @@ func (p *VPCBootstrapProvider) detectContainerRuntime(ctx context.Context) strin
 	}
 
 	return "containerd" // Default
+}
+
+// detectCNIPlugin detects the CNI plugin being used in the cluster
+func (p *VPCBootstrapProvider) detectCNIPlugin(ctx context.Context) string {
+	logger := log.FromContext(ctx)
+	
+	// Check for Calico
+	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "calico-node", metav1.GetOptions{}); err == nil {
+		logger.Info("Detected Calico CNI plugin")
+		return "calico"
+	}
+	
+	// Check for Cilium
+	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "cilium", metav1.GetOptions{}); err == nil {
+		logger.Info("Detected Cilium CNI plugin")
+		return "cilium"
+	}
+	
+	// Check for Flannel
+	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
+		logger.Info("Detected Flannel CNI plugin")
+		return "flannel"
+	}
+	
+	// Check for Weave Net
+	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "weave-net", metav1.GetOptions{}); err == nil {
+		logger.Info("Detected Weave Net CNI plugin")
+		return "weave"
+	}
+	
+	// Check for CNI configuration files in ConfigMaps
+	if cm, err := p.k8sClient.CoreV1().ConfigMaps("kube-system").Get(ctx, "calico-config", metav1.GetOptions{}); err == nil {
+		if _, exists := cm.Data["cni_network_config"]; exists {
+			logger.Info("Detected Calico CNI plugin from ConfigMap")
+			return "calico"
+		}
+	}
+	
+	logger.Info("CNI plugin not detected, defaulting to calico")
+	return "calico" // Default for IBM Cloud VPC
 }
 
 // buildKubeletConfig builds kubelet configuration for VPC mode
@@ -337,3 +383,4 @@ func (p *VPCBootstrapProvider) getNodeClaim(ctx context.Context, nodeClaimName t
 	}
 	return nodeClaim, nil
 }
+
