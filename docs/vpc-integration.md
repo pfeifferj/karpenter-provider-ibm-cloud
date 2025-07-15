@@ -446,3 +446,38 @@ ibmcloud is instances --output json | jq 'length'
 # Check subnet capacity
 ibmcloud is subnet <subnet-id> --output json | jq '.available_ipv4_address_count'
 ```
+
+#### CNI Initialization Timing Issues
+
+**Problem**: Newly provisioned nodes may be terminated prematurely before CNI (Calico) fully initializes.
+
+**Symptoms**:
+- Nodes created successfully but pods fail with CNI errors
+- `Failed to create pod sandbox: plugin type="calico" failed (add): stat /var/lib/calico/nodename: no such file or directory`
+- Nodes get terminated and recreated in a loop
+
+**Root Cause**: Karpenter's `consolidateAfter` setting is too aggressive, terminating nodes before CNI initialization completes.
+
+**Solution**:
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: vpc-nodepool
+spec:
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 300s  # Wait 5 minutes for CNI initialization
+```
+
+**Verification**:
+```bash
+# Check if Calico pods are running on new nodes
+kubectl get pods -n kube-system -o wide | grep calico-node
+
+# Monitor CNI status on a node
+ssh ubuntu@<node-ip> "sudo ls -la /var/lib/calico/"
+
+# Check for CNI-related events
+kubectl get events --field-selector involvedObject.kind=Pod | grep -i sandbox
+```

@@ -330,6 +330,9 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 			ProviderID: node.Spec.ProviderID,
 		},
 	}
+	
+	// Set the Launched condition to indicate the instance was successfully created
+	nc.StatusConditions().SetTrue(karpv1.ConditionTypeLaunched)
 
 	// Populate NodeClaim labels similar to AWS provider reference
 	// This ensures proper kubectl column display and NodeClaim labeling
