@@ -369,6 +369,43 @@ echo "$(date): Checking kubelet status..."
 systemctl status kubelet --no-pager || true
 journalctl -u kubelet --no-pager -n 20 || true
 
+# Wait for Calico to initialize and create the nodename file
+echo "$(date): Waiting for Calico CNI to initialize..."
+CALICO_WAIT_TIMEOUT=300  # 5 minutes
+CALICO_WAIT_INTERVAL=5
+elapsed=0
+
+while [ $elapsed -lt $CALICO_WAIT_TIMEOUT ]; do
+  if [ -f /var/lib/calico/nodename ]; then
+    echo "$(date): ✅ Calico nodename file found at /var/lib/calico/nodename"
+    break
+  fi
+  
+  echo "$(date): Waiting for Calico to create nodename file... (elapsed: ${elapsed}s)"
+  sleep $CALICO_WAIT_INTERVAL
+  elapsed=$((elapsed + CALICO_WAIT_INTERVAL))
+done
+
+# Check if we timed out
+if [ $elapsed -ge $CALICO_WAIT_TIMEOUT ]; then
+  echo "$(date): ⚠️ Calico initialization timeout after ${CALICO_WAIT_TIMEOUT}s"
+  echo "$(date): Checking Calico pod status..."
+  
+  # Try to get some diagnostic information
+  if command -v kubectl >/dev/null 2>&1; then
+    kubectl --kubeconfig=/var/lib/kubelet/kubeconfig get pods -n kube-system -l k8s-app=calico-node --field-selector spec.nodeName=$(hostname) -o wide 2>/dev/null || true
+  fi
+  
+  # Check if calico directories exist
+  ls -la /var/lib/calico/ 2>/dev/null || echo "$(date): /var/lib/calico/ directory not found"
+  ls -la /var/run/calico/ 2>/dev/null || echo "$(date): /var/run/calico/ directory not found"
+  
+  # Continue anyway - let Kubernetes handle the CNI readiness
+  echo "$(date): Continuing bootstrap despite Calico timeout..."
+else
+  echo "$(date): ✅ Calico CNI initialization completed successfully"
+fi
+
 # Run custom user data if provided
 {{ if .CustomUserData }}
 echo "$(date): Running custom user data..."
