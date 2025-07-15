@@ -834,3 +834,155 @@ func TestRemoveNodeFinalizers_NodeNotFound(t *testing.T) {
 	
 	assert.NoError(t, err, "should ignore NotFound errors")
 }
+
+func TestNormalizeProviderID(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "cloud API with zone prefix",
+			input:    "ibm:///eu-de/02c7_7905bd15-f7b7-4812-9c1a-e3a46fe629df",
+			expected: "ibm:///eu-de/7905bd15-f7b7-4812-9c1a-e3a46fe629df",
+		},
+		{
+			name:     "node registration without zone prefix",
+			input:    "ibm:///eu-de/7905bd15-f7b7-4812-9c1a-e3a46fe629df",
+			expected: "ibm:///eu-de/7905bd15-f7b7-4812-9c1a-e3a46fe629df",
+		},
+		{
+			name:     "different region with zone prefix",
+			input:    "ibm:///us-south/02c7_abc123-def456",
+			expected: "ibm:///us-south/abc123-def456",
+		},
+		{
+			name:     "multiple underscores in instance ID",
+			input:    "ibm:///us-east/02c7_abc123_def456_ghi789",
+			expected: "ibm:///us-east/abc123_def456_ghi789",
+		},
+		{
+			name:     "no zone prefix",
+			input:    "ibm:///ca-tor/simple-instance-id",
+			expected: "ibm:///ca-tor/simple-instance-id",
+		},
+		{
+			name:     "invalid format should return as-is",
+			input:    "invalid-provider-id",
+			expected: "invalid-provider-id",
+		},
+		{
+			name:     "short format should return as-is",
+			input:    "ibm://short",
+			expected: "ibm://short",
+		},
+	}
+
+	controller := NewController(nil, nil)
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := controller.normalizeProviderID(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestReconcile_NormalizedProviderIDMatching(t *testing.T) {
+	// Create cloud provider instance with zone-prefixed ID
+	cloudProvider := newMockCloudProvider()
+	cloudProvider.nodeClaims["ibm:///eu-de/02c7_7905bd15-f7b7-4812-9c1a-e3a46fe629df"] = testNodeClaim("cloud-1", "ibm:///eu-de/02c7_7905bd15-f7b7-4812-9c1a-e3a46fe629df", time.Now().Add(-time.Hour))
+	
+	// Create cluster NodeClaim with non-prefixed ID (as would happen during node registration)
+	clusterNC := testNodeClaim("cluster-1", "ibm:///eu-de/7905bd15-f7b7-4812-9c1a-e3a46fe629df", time.Now().Add(-time.Hour))
+	clusterNC.Status.NodeName = "node-1" // Indicates successful registration
+	
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(clusterNC).
+		Build()
+	
+	controller := NewController(kubeClient, cloudProvider)
+	
+	result, err := controller.Reconcile(context.Background())
+	
+	assert.NoError(t, err)
+	assert.NotZero(t, result.RequeueAfter)
+	// Should NOT delete the cloud instance because normalized IDs match
+	assert.Empty(t, cloudProvider.deletedProviderIDs)
+}
+
+func TestHandleOrphanedNodes_NormalizedProviderIDMatching(t *testing.T) {
+	// Create cloud provider instance with zone-prefixed ID
+	cloudProvider := newMockCloudProvider()
+	cloudNodeClaim := testNodeClaim("cloud-1", "ibm:///eu-de/02c7_7905bd15-f7b7-4812-9c1a-e3a46fe629df", time.Now().Add(-time.Hour))
+	
+	// Create Kubernetes node with non-prefixed ID (as would happen during node registration)
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "karpenter-node",
+			Labels: map[string]string{
+				"karpenter.sh/nodepool": "test-nodepool",
+			},
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm:///eu-de/7905bd15-f7b7-4812-9c1a-e3a46fe629df",
+		},
+	}
+	
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(node).
+		Build()
+	
+	controller := NewController(kubeClient, cloudProvider)
+	
+	nodeList := &corev1.NodeList{Items: []corev1.Node{*node}}
+	cloudNodeClaims := []*karpv1.NodeClaim{cloudNodeClaim}
+	
+	err := controller.handleOrphanedNodes(context.Background(), nodeList, cloudNodeClaims)
+	
+	assert.NoError(t, err)
+	
+	// Should NOT delete the node because normalized IDs match
+	var updatedNode corev1.Node
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "karpenter-node"}, &updatedNode)
+	assert.NoError(t, err, "node should not be deleted due to normalized ID matching")
+}
+
+func TestHandleOrphanedNodes_RealOrphanedNode(t *testing.T) {
+	// Create cloud provider with no matching instances
+	cloudProvider := newMockCloudProvider()
+	
+	// Create orphaned Kubernetes node
+	orphanedNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "orphaned-node",
+			Labels: map[string]string{
+				"karpenter.sh/nodepool": "test-nodepool",
+			},
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm:///eu-de/orphaned-instance-id",
+		},
+	}
+	
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(orphanedNode).
+		Build()
+	
+	controller := NewController(kubeClient, cloudProvider)
+	
+	nodeList := &corev1.NodeList{Items: []corev1.Node{*orphanedNode}}
+	cloudNodeClaims := []*karpv1.NodeClaim{} // No matching cloud instances
+	
+	err := controller.handleOrphanedNodes(context.Background(), nodeList, cloudNodeClaims)
+	
+	assert.NoError(t, err)
+	
+	// Should delete the orphaned node
+	var updatedNode corev1.Node
+	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "orphaned-node"}, &updatedNode)
+	assert.True(t, apierrors.IsNotFound(err), "orphaned node should be deleted")
+}
