@@ -60,6 +60,26 @@ echo "$(date): ✅ Hostname set to: $HOSTNAME (NodeClaim name)"
 # System configuration
 echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf && sysctl -p
 swapoff -a && sed -i '/swap/d' /etc/fstab
+
+# Filesystem preparation - fix disk capacity detection
+echo "$(date): Preparing filesystem..."
+# Resize the root filesystem to ensure full disk is available
+ROOT_DEV=$(df / | awk 'NR==2 {print $1}')
+if [[ "$ROOT_DEV" =~ ^/dev/ ]]; then
+    resize2fs "$ROOT_DEV" || true
+    echo "$(date): ✅ Root filesystem resized"
+else
+    echo "$(date): ⚠️ Could not identify root device: $ROOT_DEV"
+fi
+
+# Ensure proper directory structure for container storage
+mkdir -p /var/lib/containerd /var/lib/kubelet /var/log/pods /var/lib/cni
+chown -R root:root /var/lib/containerd /var/lib/kubelet
+
+# Create required directories for CNI
+mkdir -p /opt/cni/bin /etc/cni/net.d /var/lib/calico /var/run/calico /var/log/calico/cni
+chown -R root:root /var/lib/calico /var/run/calico /var/log/calico
+
 echo "$(date): ✅ System configured"
 
 # Install prerequisites
@@ -316,6 +336,20 @@ WantedBy=multi-user.target
 EOF
 
 echo "$(date): ✅ Kubelet service configured"
+
+# Verify filesystem before starting kubelet
+echo "$(date): Verifying filesystem readiness..."
+df -h / && echo "$(date): ✅ Filesystem verified" || echo "$(date): ⚠️ Filesystem verification failed"
+
+# Wait for container runtime to be ready
+echo "$(date): Waiting for container runtime to be ready..."
+for i in {1..30}; do
+  if systemctl is-active containerd >/dev/null 2>&1; then
+    echo "$(date): ✅ Container runtime is ready"
+    break
+  fi
+  sleep 2
+done
 
 # Start kubelet
 systemctl daemon-reload
