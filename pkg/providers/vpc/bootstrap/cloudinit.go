@@ -369,39 +369,101 @@ echo "$(date): Checking kubelet status..."
 systemctl status kubelet --no-pager || true
 journalctl -u kubelet --no-pager -n 20 || true
 
-# Wait for Calico to initialize and create the nodename file
+# Wait for Calico CNI to be fully operational
 echo "$(date): Waiting for Calico CNI to initialize..."
 CALICO_WAIT_TIMEOUT=300  # 5 minutes
 CALICO_WAIT_INTERVAL=5
 elapsed=0
 
+check_cni_ready() {
+    # Check 1: CNI binaries exist and are executable
+    [ -x /opt/cni/bin/calico ] || return 1
+    [ -x /opt/cni/bin/calico-ipam ] || return 1
+    
+    # Check 2: CNI configuration exists and is valid JSON
+    [ -f /etc/cni/net.d/10-calico.conflist ] || return 1
+    
+    # Check 3: Calico nodename file exists
+    [ -f /var/lib/calico/nodename ] || return 1
+    
+    # Check 4: Calico node container is running (if crictl available)
+    if command -v crictl >/dev/null 2>&1; then
+        crictl ps 2>/dev/null | grep -q calico-node || return 1
+    fi
+    
+    # Check 5: CNI can be invoked successfully
+    if [ -x /opt/cni/bin/calico ] && [ -f /etc/cni/net.d/10-calico.conflist ]; then
+        # Try a simple CNI version check
+        CNI_PATH=/opt/cni/bin /opt/cni/bin/calico version >/dev/null 2>&1 || return 1
+    fi
+    
+    return 0
+}
+
 while [ $elapsed -lt $CALICO_WAIT_TIMEOUT ]; do
-  if [ -f /var/lib/calico/nodename ]; then
-    echo "$(date): ✅ Calico nodename file found at /var/lib/calico/nodename"
+  if check_cni_ready; then
+    echo "$(date): ✅ Calico CNI is fully operational"
     break
   fi
   
-  echo "$(date): Waiting for Calico to create nodename file... (elapsed: ${elapsed}s)"
+  echo "$(date): Waiting for Calico CNI readiness... (elapsed: ${elapsed}s)"
+  
+  # Detailed status for debugging every 30 seconds
+  if [ $((elapsed % 30)) -eq 0 ] && [ $elapsed -gt 0 ]; then
+    echo "$(date): CNI Status Check:"
+    echo "  - CNI binaries: $([ -x /opt/cni/bin/calico ] && echo "✓" || echo "✗")"
+    echo "  - CNI config: $([ -f /etc/cni/net.d/10-calico.conflist ] && echo "✓" || echo "✗")"
+    echo "  - Calico nodename: $([ -f /var/lib/calico/nodename ] && echo "✓" || echo "✗")"
+    if command -v crictl >/dev/null 2>&1; then
+      echo "  - Calico container: $(crictl ps 2>/dev/null | grep -q calico-node && echo "✓" || echo "✗")"
+    fi
+  fi
+  
   sleep $CALICO_WAIT_INTERVAL
   elapsed=$((elapsed + CALICO_WAIT_INTERVAL))
 done
 
 # Check if we timed out
 if [ $elapsed -ge $CALICO_WAIT_TIMEOUT ]; then
-  echo "$(date): ⚠️ Calico initialization timeout after ${CALICO_WAIT_TIMEOUT}s"
-  echo "$(date): Checking Calico pod status..."
+  echo "$(date): ⚠️ Calico CNI failed to become ready after ${CALICO_WAIT_TIMEOUT}s"
+  echo "$(date): Comprehensive diagnostic information:"
   
-  # Try to get some diagnostic information
-  if command -v kubectl >/dev/null 2>&1; then
-    kubectl --kubeconfig=/var/lib/kubelet/kubeconfig get pods -n kube-system -l k8s-app=calico-node --field-selector spec.nodeName=$(hostname) -o wide 2>/dev/null || true
+  # CNI binaries
+  echo "  CNI binaries in /opt/cni/bin/:"
+  ls -la /opt/cni/bin/ 2>/dev/null || echo "    Directory does not exist"
+  
+  # CNI configs
+  echo "  CNI configs in /etc/cni/net.d/:"
+  ls -la /etc/cni/net.d/ 2>/dev/null || echo "    Directory does not exist"
+  if [ -f /etc/cni/net.d/10-calico.conflist ]; then
+    echo "  Calico CNI config content:"
+    head -20 /etc/cni/net.d/10-calico.conflist 2>/dev/null | sed 's/^/    /'
   fi
   
-  # Check if calico directories exist
-  ls -la /var/lib/calico/ 2>/dev/null || echo "$(date): /var/lib/calico/ directory not found"
-  ls -la /var/run/calico/ 2>/dev/null || echo "$(date): /var/run/calico/ directory not found"
+  # Calico directories and files
+  echo "  Calico directory /var/lib/calico/:"
+  ls -la /var/lib/calico/ 2>/dev/null || echo "    Directory does not exist"
+  echo "  Calico runtime directory /var/run/calico/:"
+  ls -la /var/run/calico/ 2>/dev/null || echo "    Directory does not exist"
+  
+  # Container runtime status
+  if command -v crictl >/dev/null 2>&1; then
+    echo "  Running containers:"
+    crictl ps 2>/dev/null | head -10 | sed 's/^/    /' || echo "    Could not list containers"
+  fi
+  
+  # Kubelet logs for CNI errors
+  echo "  Recent kubelet CNI logs:"
+  journalctl -u kubelet --no-pager -n 10 2>/dev/null | grep -i cni | tail -5 | sed 's/^/    /' || echo "    No CNI-related logs found"
+  
+  # Try to get Calico pod status
+  if command -v kubectl >/dev/null 2>&1; then
+    echo "  Calico pod status:"
+    kubectl --kubeconfig=/var/lib/kubelet/kubeconfig get pods -n kube-system -l k8s-app=calico-node --field-selector spec.nodeName=$(hostname) -o wide 2>/dev/null | sed 's/^/    /' || echo "    Could not get pod status"
+  fi
   
   # Continue anyway - let Kubernetes handle the CNI readiness
-  echo "$(date): Continuing bootstrap despite Calico timeout..."
+  echo "$(date): Continuing bootstrap despite CNI issues..."
 else
   echo "$(date): ✅ Calico CNI initialization completed successfully"
 fi
