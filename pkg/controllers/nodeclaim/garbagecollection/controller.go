@@ -99,9 +99,14 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	clusterProviderIDs := sets.New(lo.FilterMap(clusterNodeClaims, func(nc *karpv1.NodeClaim, _ int) (string, bool) {
-		return nc.Status.ProviderID, nc.Status.ProviderID != ""
+	// Create normalized provider ID sets for comparison
+	normalizedClusterProviderIDs := sets.New(lo.FilterMap(clusterNodeClaims, func(nc *karpv1.NodeClaim, _ int) (string, bool) {
+		if nc.Status.ProviderID != "" {
+			return c.normalizeProviderID(nc.Status.ProviderID), true
+		}
+		return "", false
 	})...)
+	
 	nodeList := &corev1.NodeList{}
 	if err = c.kubeClient.List(ctx, nodeList); err != nil {
 		return reconcile.Result{}, err
@@ -119,13 +124,17 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	// Handle orphaned cloud instances (AWS-style garbage collection)
 	errs := make([]error, len(cloudNodeClaims))
 	workqueue.ParallelizeUntil(ctx, 100, len(cloudNodeClaims), func(i int) {
-		if nc := cloudNodeClaims[i]; !clusterProviderIDs.Has(nc.Status.ProviderID) && time.Since(nc.CreationTimestamp.Time) > time.Second*30 {
-			log.FromContext(ctx).WithValues(
-				"provider-id", nc.Status.ProviderID,
-				"nodeclaim", nc.Name,
-				"age", time.Since(nc.CreationTimestamp.Time),
-			).Info("garbage collecting orphaned cloud instance (no matching cluster NodeClaim)")
-			errs[i] = c.garbageCollect(ctx, cloudNodeClaims[i], nodeList)
+		if nc := cloudNodeClaims[i]; nc.Status.ProviderID != "" && time.Since(nc.CreationTimestamp.Time) > time.Second*30 {
+			normalizedCloudID := c.normalizeProviderID(nc.Status.ProviderID)
+			if !normalizedClusterProviderIDs.Has(normalizedCloudID) {
+				log.FromContext(ctx).WithValues(
+					"provider-id", nc.Status.ProviderID,
+					"normalized-id", normalizedCloudID,
+					"nodeclaim", nc.Name,
+					"age", time.Since(nc.CreationTimestamp.Time),
+				).Info("garbage collecting orphaned cloud instance (no matching cluster NodeClaim)")
+				errs[i] = c.garbageCollect(ctx, cloudNodeClaims[i], nodeList)
+			}
 		}
 	})
 	
@@ -192,10 +201,15 @@ func (c *Controller) handleStuckTerminatingNodeClaims(ctx context.Context, clust
 
 // handleOrphanedNodes identifies and cleans up Kubernetes nodes without corresponding cloud instances
 func (c *Controller) handleOrphanedNodes(ctx context.Context, nodeList *corev1.NodeList, cloudNodeClaims []*karpv1.NodeClaim) error {
-	// Create a set of cloud instance provider IDs for fast lookup
-	cloudProviderIDs := sets.New(lo.FilterMap(cloudNodeClaims, func(nc *karpv1.NodeClaim, _ int) (string, bool) {
-		return nc.Status.ProviderID, nc.Status.ProviderID != ""
-	})...)
+	// Create a map of normalized cloud instance provider IDs for fast lookup
+	// Map from normalized ID to original ID
+	normalizedCloudProviderIDs := make(map[string]string)
+	for _, nc := range cloudNodeClaims {
+		if nc.Status.ProviderID != "" {
+			normalized := c.normalizeProviderID(nc.Status.ProviderID)
+			normalizedCloudProviderIDs[normalized] = nc.Status.ProviderID
+		}
+	}
 
 	var errs []error
 	
@@ -210,8 +224,9 @@ func (c *Controller) handleOrphanedNodes(ctx context.Context, nodeList *corev1.N
 			continue
 		}
 		
-		// Check if this node has a corresponding cloud instance
-		if cloudProviderIDs.Has(node.Spec.ProviderID) {
+		// Check if this node has a corresponding cloud instance using normalized IDs
+		normalizedNodeID := c.normalizeProviderID(node.Spec.ProviderID)
+		if _, exists := normalizedCloudProviderIDs[normalizedNodeID]; exists {
 			continue // Node has corresponding cloud instance, skip
 		}
 		
@@ -479,6 +494,32 @@ func (c *Controller) garbageCollect(ctx context.Context, nodeClaim *karpv1.NodeC
 	}
 	
 	return nil
+}
+
+// normalizeProviderID normalizes IBM Cloud provider IDs to handle format differences
+// between node registration and cloud API responses
+func (c *Controller) normalizeProviderID(providerID string) string {
+	// Extract the actual instance ID part from the provider ID
+	// Format: ibm:///region/[zone_prefix_]instance-id
+	parts := strings.Split(providerID, "/")
+	if len(parts) < 4 {
+		return providerID // Return as-is if format is unexpected
+	}
+	
+	region := parts[len(parts)-2]
+	instanceID := parts[len(parts)-1]
+	
+	// Remove zone prefix if present (e.g., "02c7_" from "02c7_abc123")
+	// This handles cases where cloud API returns zone-prefixed IDs but node registration doesn't
+	if strings.Contains(instanceID, "_") {
+		instanceIDParts := strings.Split(instanceID, "_")
+		if len(instanceIDParts) >= 2 {
+			instanceID = strings.Join(instanceIDParts[1:], "_")
+		}
+	}
+	
+	// Return normalized format: ibm:///region/instance-id
+	return fmt.Sprintf("ibm:///%s/%s", region, instanceID)
 }
 
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {
