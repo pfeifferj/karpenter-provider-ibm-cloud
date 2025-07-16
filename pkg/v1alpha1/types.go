@@ -29,8 +29,6 @@ const (
 	AnnotationIBMNodeClassHash = Group + "/nodeclass-hash"
 	// AnnotationIBMNodeClassHashVersion is the version of the hash algorithm
 	AnnotationIBMNodeClassHashVersion = Group + "/nodeclass-hash-version"
-	// IBMNodeClassHashVersion is the current version of the hash algorithm
-	IBMNodeClassHashVersion = "v1"
 
 	// Labels that can be selected on and are propagated to the node
 	InstanceSizeLabelKey   = Group + "/instance-size"
