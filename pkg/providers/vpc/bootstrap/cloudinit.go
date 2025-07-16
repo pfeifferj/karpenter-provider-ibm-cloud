@@ -373,6 +373,12 @@ esac
 case "$CNI_PLUGIN" in
   "calico")
     echo "$(date): Installing Calico CNI configuration..."
+    
+    # Create nodename file - this is critical for Calico CNI to work
+    # This prevents the race condition where CNI is invoked before the DaemonSet creates this file
+    echo "$HOSTNAME" > /var/lib/calico/nodename
+    echo "$(date): ✅ Created Calico nodename file: $HOSTNAME"
+    
     cat > /etc/cni/net.d/10-calico.conflist << 'EOF'
 {
   "name": "k8s-pod-network",
@@ -493,8 +499,8 @@ check_cni_ready() {
         # Check 2: CNI configuration exists and is valid JSON
         [ -f /etc/cni/net.d/10-calico.conflist ] || return 1
         
-        # Check 3: Calico nodename file exists (may be created by DaemonSet)
-        # This is optional for initial bootstrap
+        # Check 3: Calico nodename file exists (created during bootstrap)
+        [ -f /var/lib/calico/nodename ] || return 1
         
         # Check 4: CNI can be invoked successfully
         if [ -x /opt/cni/bin/calico ] && [ -f /etc/cni/net.d/10-calico.conflist ]; then
