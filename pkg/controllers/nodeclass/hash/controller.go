@@ -75,8 +75,10 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 	// Check if hash has changed
 	currentHash, exists := nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
-	if !exists || currentHash != hashString {
+	currentVersion, versionExists := nc.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion]
+	if !exists || currentHash != hashString || !versionExists || currentVersion != v1alpha1.IBMNodeClassHashVersion {
 		nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash] = hashString
+		nc.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion] = v1alpha1.IBMNodeClassHashVersion
 		if err := c.kubeClient.Patch(ctx, nc, client.MergeFrom(stored)); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to patch annotations: %w", err)
 		}
