@@ -100,11 +100,14 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 	// Detect CNI plugin and version from cluster configuration
 	cniPlugin, cniVersion := p.detectCNIPluginAndVersion(ctx)
 	
-	// Get NodeClaim to extract labels and taints
+	// Get NodeClaim to extract labels, taints, and architecture
 	nodeClaimObj, err := p.getNodeClaim(ctx, nodeClaim)
 	if err != nil {
 		logger.Error(err, "Failed to get NodeClaim, proceeding without labels/taints")
 	}
+	
+	// Detect architecture from instance profile
+	architecture := p.detectArchitectureFromInstanceProfile(nodeClass.Spec.InstanceProfile)
 	
 	// Build bootstrap options for direct kubelet
 	options := commonTypes.Options{
@@ -114,6 +117,7 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 		ContainerRuntime: containerRuntime,
 		CNIPlugin:        cniPlugin,
 		CNIVersion:       cniVersion,
+		Architecture:     architecture,
 		Region:           nodeClass.Spec.Region,
 		Zone:             nodeClass.Spec.Zone,
 		CABundle:         caCert,
@@ -402,5 +406,37 @@ func (p *VPCBootstrapProvider) getNodeClaim(ctx context.Context, nodeClaimName t
 		return nil, err
 	}
 	return nodeClaim, nil
+}
+
+// detectArchitectureFromInstanceProfile detects the architecture from instance profile using IBM Cloud API
+func (p *VPCBootstrapProvider) detectArchitectureFromInstanceProfile(instanceProfile string) string {
+	if instanceProfile == "" {
+		return "amd64"
+	}
+	
+	// Try to get the actual architecture from IBM Cloud API
+	if p.client != nil {
+		if vpcClient, err := p.client.GetVPCClient(); err == nil {
+			if profileCollection, _, err := vpcClient.ListInstanceProfiles(nil); err == nil {
+				for _, profile := range profileCollection.Profiles {
+					if profile.Name != nil && *profile.Name == instanceProfile {
+						if profile.VcpuArchitecture != nil && profile.VcpuArchitecture.Value != nil {
+							return *profile.VcpuArchitecture.Value
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Fallback to sensible defaults based on common IBM Cloud instance profiles
+	switch {
+	case strings.Contains(strings.ToLower(instanceProfile), "z"):
+		return "s390x"
+	case strings.Contains(strings.ToLower(instanceProfile), "arm"):
+		return "arm64"
+	default:
+		return "amd64"
+	}
 }
 

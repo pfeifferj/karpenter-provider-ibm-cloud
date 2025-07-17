@@ -362,14 +362,14 @@ echo "$(date): Downloading CNI binaries..."
 CNI_PLUGINS_VERSION="v1.4.0"
 
 # Download standard CNI plugins
-curl -L "https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGINS_VERSION}/cni-plugins-linux-amd64-${CNI_PLUGINS_VERSION}.tgz" | tar -C /opt/cni/bin -xz
+curl -L "https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGINS_VERSION}/cni-plugins-linux-{{ .Architecture }}-${CNI_PLUGINS_VERSION}.tgz" | tar -C /opt/cni/bin -xz
 
 # Download plugin-specific CNI binaries using detected version
 case "$CNI_PLUGIN" in
   "calico")
     echo "$(date): Downloading Calico CNI binaries version $CNI_VERSION..."
-    curl -L -o /opt/cni/bin/calico "https://github.com/projectcalico/cni-plugin/releases/download/${CNI_VERSION}/calico-amd64"
-    curl -L -o /opt/cni/bin/calico-ipam "https://github.com/projectcalico/cni-plugin/releases/download/${CNI_VERSION}/calico-ipam-amd64"
+    curl -L -o /opt/cni/bin/calico "https://github.com/projectcalico/cni-plugin/releases/download/${CNI_VERSION}/calico-{{ .Architecture }}"
+    curl -L -o /opt/cni/bin/calico-ipam "https://github.com/projectcalico/cni-plugin/releases/download/${CNI_VERSION}/calico-ipam-{{ .Architecture }}"
     chmod +x /opt/cni/bin/calico /opt/cni/bin/calico-ipam
     mkdir -p /var/log/calico/cni
     ;;
