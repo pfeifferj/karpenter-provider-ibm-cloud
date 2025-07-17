@@ -308,7 +308,7 @@ func TestIBMInstanceTypeProvider_GetWithMocks(t *testing.T) {
 		errContains  string
 	}{
 		{
-			name: "nil client",
+			name: "nil client - should not get nil pointer error",
 			provider: &IBMInstanceTypeProvider{
 				client: nil,
 			},
@@ -326,6 +326,11 @@ func TestIBMInstanceTypeProvider_GetWithMocks(t *testing.T) {
 			}
 			if err != nil && tt.errContains != "" && !contains(err.Error(), tt.errContains) {
 				t.Errorf("Get() error = %v, want error containing %v", err, tt.errContains)
+			}
+			
+			// Most importantly: verify we don't get the old nil pointer error
+			if err != nil && contains(err.Error(), "listInstanceProfilesOptions cannot be nil") {
+				t.Errorf("Get() should not return nil pointer error, got: %v", err)
 			}
 		})
 	}

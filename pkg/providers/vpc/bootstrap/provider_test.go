@@ -911,6 +911,7 @@ func TestVPCBootstrapProvider_detectArchitectureFromInstanceProfile(t *testing.T
 		instanceProfile string
 		expectError     bool
 		expectedArch    string
+		errorContains   string
 	}{
 		{
 			name:            "empty instance profile - should error",
@@ -918,9 +919,10 @@ func TestVPCBootstrapProvider_detectArchitectureFromInstanceProfile(t *testing.T
 			expectError:     true,
 		},
 		{
-			name:            "nil client - should error",
+			name:            "nil client - should error with proper message (not nil pointer)",
 			instanceProfile: "bx2-2x8",
 			expectError:     true,
+			errorContains:   "IBM Cloud client is not initialized",
 		},
 	}
 
@@ -935,6 +937,14 @@ func TestVPCBootstrapProvider_detectArchitectureFromInstanceProfile(t *testing.T
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Empty(t, result)
+				
+				// Verify we get the expected error message, not a nil pointer panic
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				
+				// Most importantly: verify we don't get the old nil pointer error
+				assert.NotContains(t, err.Error(), "listInstanceProfilesOptions cannot be nil")
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expectedArch, result)
