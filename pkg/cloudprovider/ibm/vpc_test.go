@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -714,7 +714,7 @@ func TestGetSubnet(t *testing.T) {
 						t.Errorf("got subnet %v, want %v", subnet, tt.wantSubnet)
 					}
 				} else if *subnet.ID != *tt.wantSubnet.ID || *subnet.Name != *tt.wantSubnet.Name {
-					t.Errorf("got subnet ID=%s Name=%s, want ID=%s Name=%s", 
+					t.Errorf("got subnet ID=%s Name=%s, want ID=%s Name=%s",
 						*subnet.ID, *subnet.Name, *tt.wantSubnet.ID, *tt.wantSubnet.Name)
 				}
 			}
@@ -731,14 +731,14 @@ func TestGetVPC(t *testing.T) {
 	vpcID := "test-vpc-id"
 
 	tests := []struct {
-		name     string
-		mockVPC  vpcClientInterface
-		vpcID    string
-		wantErr  bool
-		wantVPC  *vpcv1.VPC
+		name    string
+		mockVPC vpcClientInterface
+		vpcID   string
+		wantErr bool
+		wantVPC *vpcv1.VPC
 	}{
 		{
-			name: "successful VPC retrieval",
+			name:    "successful VPC retrieval",
 			mockVPC: &mockVPCClient{
 				// Mock will return VPC from GetVPCWithContext
 			},
@@ -759,11 +759,11 @@ func TestGetVPC(t *testing.T) {
 			wantVPC: nil,
 		},
 		{
-			name:     "uninitialized client",
-			mockVPC:  nil,
-			vpcID:    vpcID,
-			wantErr:  true,
-			wantVPC:  nil,
+			name:    "uninitialized client",
+			mockVPC: nil,
+			vpcID:   vpcID,
+			wantErr: true,
+			wantVPC: nil,
 		},
 	}
 
@@ -814,7 +814,7 @@ func TestGetImage(t *testing.T) {
 		wantImage *vpcv1.Image
 	}{
 		{
-			name: "successful image retrieval",
+			name:    "successful image retrieval",
 			mockVPC: &mockVPCClient{
 				// Mock will return Image from GetImageWithContext
 			},
@@ -887,7 +887,7 @@ func TestListInstanceProfiles(t *testing.T) {
 		wantProfiles int
 	}{
 		{
-			name: "successful profile listing",
+			name:    "successful profile listing",
 			mockVPC: &mockVPCClient{
 				// Mock will return empty collection from ListInstanceProfilesWithContext
 			},

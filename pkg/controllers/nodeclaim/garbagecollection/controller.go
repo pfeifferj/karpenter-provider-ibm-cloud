@@ -45,11 +45,11 @@ import (
 )
 
 type Controller struct {
-	kubeClient            client.Client
-	cloudProvider         cloudprovider.CloudProvider
-	successfulCount       uint64 // keeps track of successful reconciles for more aggressive requeueing near the start of the controller
-	terminationTimeout    time.Duration
-	registrationTimeout   time.Duration
+	kubeClient          client.Client
+	cloudProvider       cloudprovider.CloudProvider
+	successfulCount     uint64 // keeps track of successful reconciles for more aggressive requeueing near the start of the controller
+	terminationTimeout  time.Duration
+	registrationTimeout time.Duration
 }
 
 const (
@@ -63,11 +63,11 @@ const (
 
 func NewController(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) *Controller {
 	return &Controller{
-		kubeClient:            kubeClient,
-		cloudProvider:         cloudProvider,
-		successfulCount:       0,
-		terminationTimeout:    DefaultTerminationTimeout,
-		registrationTimeout:   getRegistrationTimeoutFromEnv(),
+		kubeClient:          kubeClient,
+		cloudProvider:       cloudProvider,
+		successfulCount:     0,
+		terminationTimeout:  DefaultTerminationTimeout,
+		registrationTimeout: getRegistrationTimeoutFromEnv(),
 	}
 }
 
@@ -106,7 +106,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 		}
 		return "", false
 	})...)
-	
+
 	nodeList := &corev1.NodeList{}
 	if err = c.kubeClient.List(ctx, nodeList); err != nil {
 		return reconcile.Result{}, err
@@ -137,12 +137,12 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			}
 		}
 	})
-	
+
 	// Handle orphaned Kubernetes nodes (nodes without corresponding cloud instances)
 	if orphanedNodeErr := c.handleOrphanedNodes(ctx, nodeList, cloudNodeClaims); orphanedNodeErr != nil {
 		log.FromContext(ctx).Error(orphanedNodeErr, "failed to handle orphaned kubernetes nodes")
 	}
-	
+
 	// Filter out expected errors
 	filteredErrs := lo.Filter(errs, func(err error, _ int) bool {
 		if err == nil {
@@ -154,7 +154,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 		}
 		return true
 	})
-	
+
 	if err = multierr.Combine(filteredErrs...); err != nil {
 		return reconcile.Result{}, err
 	}
@@ -212,38 +212,38 @@ func (c *Controller) handleOrphanedNodes(ctx context.Context, nodeList *corev1.N
 	}
 
 	var errs []error
-	
+
 	for _, node := range nodeList.Items {
 		// Skip nodes that don't have provider IDs
 		if node.Spec.ProviderID == "" {
 			continue
 		}
-		
+
 		// Skip nodes that aren't managed by Karpenter
 		if !c.isKarpenterManagedNode(&node) {
 			continue
 		}
-		
+
 		// Check if this node has a corresponding cloud instance using normalized IDs
 		normalizedNodeID := c.normalizeProviderID(node.Spec.ProviderID)
 		if _, exists := normalizedCloudProviderIDs[normalizedNodeID]; exists {
 			continue // Node has corresponding cloud instance, skip
 		}
-		
+
 		// This is an orphaned node - Kubernetes node exists but no cloud instance
 		ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
 			"node", node.Name,
 			"provider-id", node.Spec.ProviderID,
 		))
-		
+
 		log.FromContext(ctx).Info("found orphaned kubernetes node (no corresponding cloud instance), cleaning up")
-		
+
 		// Step 1: Remove finalizers to ensure proper cleanup
 		if err := c.removeNodeFinalizers(ctx, &node); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove finalizers from orphaned node %s: %w", node.Name, err))
 			continue
 		}
-		
+
 		// Step 2: Delete the orphaned node with proper grace period
 		if err := c.kubeClient.Delete(ctx, &node, &client.DeleteOptions{
 			GracePeriodSeconds: lo.ToPtr(int64(30)), // 30 second grace period
@@ -251,10 +251,10 @@ func (c *Controller) handleOrphanedNodes(ctx context.Context, nodeList *corev1.N
 			errs = append(errs, fmt.Errorf("failed to delete orphaned node %s: %w", node.Name, err))
 			continue
 		}
-		
+
 		log.FromContext(ctx).Info("successfully cleaned up orphaned kubernetes node")
 	}
-	
+
 	return multierr.Combine(errs...)
 }
 
@@ -264,13 +264,13 @@ func (c *Controller) removeNodeFinalizers(ctx context.Context, node *corev1.Node
 	if len(node.Finalizers) == 0 {
 		return nil
 	}
-	
+
 	// Get fresh copy of the node to avoid conflicts
 	freshNode := &corev1.Node{}
 	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: node.Name}, freshNode); err != nil {
 		return client.IgnoreNotFound(err)
 	}
-	
+
 	// Remove all finalizers
 	if len(freshNode.Finalizers) > 0 {
 		finalizerCount := len(freshNode.Finalizers)
@@ -281,7 +281,7 @@ func (c *Controller) removeNodeFinalizers(ctx context.Context, node *corev1.Node
 		}
 		log.FromContext(ctx).Info("removed finalizers from orphaned node", "finalizer-count", finalizerCount)
 	}
-	
+
 	return nil
 }
 
@@ -291,7 +291,7 @@ func (c *Controller) isKarpenterManagedNode(node *corev1.Node) bool {
 	if _, hasNodePool := node.Labels["karpenter.sh/nodepool"]; hasNodePool {
 		return true
 	}
-	
+
 	// Check for IBM Cloud VPC provider ID pattern (indicates Karpenter-managed IBM node)
 	if node.Spec.ProviderID != "" {
 		ibmPrefixes := []string{"ibm://", "ibm:///eu-", "ibm:///us-", "ibm:///ca-", "ibm:///jp-", "ibm:///au-", "ibm:///br-"}
@@ -301,7 +301,7 @@ func (c *Controller) isKarpenterManagedNode(node *corev1.Node) bool {
 			}
 		}
 	}
-	
+
 	// Default to not managed to be safe
 	return false
 }
@@ -330,7 +330,7 @@ func (c *Controller) handleFailedRegistrationNodeClaims(ctx context.Context, clu
 
 		// Determine if this NodeClaim failed to register
 		failedRegistration := false
-		
+
 		// Check for Unknown ready condition
 		for _, condition := range nc.Status.Conditions {
 			if condition.Type == "Ready" {
@@ -407,7 +407,7 @@ func (c *Controller) forceCleanupStuckNodeClaim(ctx context.Context, nc *karpv1.
 			if err := c.removeNodeFinalizers(ctx, node); err != nil {
 				log.FromContext(ctx).Error(err, "failed to remove finalizers from node", "node", nc.Status.NodeName)
 			}
-			
+
 			if err := c.kubeClient.Delete(ctx, node, &client.DeleteOptions{
 				GracePeriodSeconds: lo.ToPtr(int64(0)),
 			}); err != nil {
@@ -460,7 +460,7 @@ func (c *Controller) forceDeletePodsOnNode(ctx context.Context, nodeName string)
 
 func (c *Controller) garbageCollect(ctx context.Context, nodeClaim *karpv1.NodeClaim, nodeList *corev1.NodeList) error {
 	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("provider-id", nodeClaim.Status.ProviderID))
-	
+
 	// Step 1: Delete the cloud provider instance
 	if err := c.cloudProvider.Delete(ctx, nodeClaim); err != nil {
 		// ignore NodeClaim not found errors
@@ -481,7 +481,7 @@ func (c *Controller) garbageCollect(ctx context.Context, nodeClaim *karpv1.NodeC
 		if err := c.removeNodeFinalizers(ctx, &node); err != nil {
 			log.FromContext(ctx).Error(err, "failed to remove finalizers from node", "node", node.Name)
 		}
-		
+
 		if err := c.kubeClient.Delete(ctx, &node); err != nil {
 			// ignore not found errors
 			if client.IgnoreNotFound(err) != nil {
@@ -492,7 +492,7 @@ func (c *Controller) garbageCollect(ctx context.Context, nodeClaim *karpv1.NodeC
 	} else {
 		log.FromContext(ctx).V(1).Info("no corresponding kubernetes node found for garbage collection")
 	}
-	
+
 	return nil
 }
 
@@ -505,10 +505,10 @@ func (c *Controller) normalizeProviderID(providerID string) string {
 	if len(parts) < 4 {
 		return providerID // Return as-is if format is unexpected
 	}
-	
+
 	region := parts[len(parts)-2]
 	instanceID := parts[len(parts)-1]
-	
+
 	// Remove zone prefix if present (e.g., "02c7_" from "02c7_abc123")
 	// This handles cases where cloud API returns zone-prefixed IDs but node registration doesn't
 	if strings.Contains(instanceID, "_") {
@@ -517,7 +517,7 @@ func (c *Controller) normalizeProviderID(providerID string) string {
 			instanceID = strings.Join(instanceIDParts[1:], "_")
 		}
 	}
-	
+
 	// Return normalized format: ibm:///region/instance-id
 	return fmt.Sprintf("ibm:///%s/%s", region, instanceID)
 }

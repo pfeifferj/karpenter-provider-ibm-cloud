@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -62,7 +62,7 @@ func getValidNodeClass() *v1alpha1.IBMNodeClass {
 			Region:          "us-south",
 			VPC:             vpcID,
 			Image:           "r006-988caa8b-7786-49c9-aea6-9553af2b1969", // Real Ubuntu 20.04 image
-			InstanceProfile: "bx2-2x8", // Add required instanceProfile
+			InstanceProfile: "bx2-2x8",                                   // Add required instanceProfile
 		},
 	}
 }
@@ -398,10 +398,10 @@ func TestControllerReconcile(t *testing.T) {
 		expectedMessages []string
 	}{
 		{
-			name:          "valid NodeClass becomes ready",
-			nodeClass:     getValidNodeClass(),
+			name:           "valid NodeClass becomes ready",
+			nodeClass:      getValidNodeClass(),
 			expectedStatus: "True",
-			expectedReady: true,
+			expectedReady:  true,
 			expectedMessages: []string{
 				"NodeClass is ready",
 			},
@@ -414,7 +414,7 @@ func TestControllerReconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.IBMNodeClassSpec{
-					Region: "", // Missing required field
+					Region: "",               // Missing required field
 					VPC:    "invalid-vpc-id", // Invalid format
 					Image:  "r006-12345678-1234-1234-1234-123456789012",
 				},
@@ -529,7 +529,7 @@ func TestControllerReconcile(t *testing.T) {
 				if err != nil {
 					t.Logf("Warning: Could not create IBM client for real validation: %v", err)
 				}
-				
+
 				// Create subnet provider for validation
 				subnetProvider = subnet.NewProvider(ibmClient)
 			}
@@ -562,7 +562,7 @@ func TestControllerReconcile(t *testing.T) {
 			require.NotEmpty(t, updatedNodeClass.Status.Conditions, "Should have status conditions")
 			readyCondition := updatedNodeClass.Status.Conditions[0]
 			assert.Equal(t, tt.expectedStatus, string(readyCondition.Status), "Ready condition status should match")
-			
+
 			// Check that condition message contains expected content
 			found := false
 			for _, expectedMsg := range tt.expectedMessages {
@@ -750,7 +750,7 @@ func TestControllerWithRealIBMCloud(t *testing.T) {
 
 	vpcID := os.Getenv("VPC_ID")
 	subnetID := os.Getenv("SUBNET_ID_US_SOUTH_1")
-	
+
 	if vpcID == "" {
 		t.Skip("Skipping IBM Cloud integration tests - set VPC_ID to run")
 	}
@@ -834,7 +834,7 @@ func TestControllerWithRealIBMCloud(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Skip subnet tests if no subnet ID provided
-			if (tt.name == "valid subnet should pass validation" && subnetID == "") {
+			if tt.name == "valid subnet should pass validation" && subnetID == "" {
 				t.Skip("Skipping subnet test - no SUBNET_ID_US_SOUTH_1 provided")
 			}
 
@@ -900,7 +900,7 @@ func TestControllerWithRealIBMCloud(t *testing.T) {
 			}
 			assert.True(t, found, "Should find expected message in condition")
 
-			t.Logf("Test %s completed. Status: %s, Message: %s", 
+			t.Logf("Test %s completed. Status: %s, Message: %s",
 				tt.name, readyCondition.Status, readyCondition.Message)
 		})
 	}
@@ -1004,7 +1004,7 @@ func TestControllerPerformance(t *testing.T) {
 	avgDuration := duration / time.Duration(iterations)
 
 	t.Logf("Reconciled %d times in %v (avg: %v per reconciliation)", iterations, duration, avgDuration)
-	
+
 	// Reconciliation should be fast (under 10ms per call)
 	assert.Less(t, avgDuration, 10*time.Millisecond, "Reconciliation should be fast")
 }

@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -58,7 +58,7 @@ func TestNewController(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			controller, err := NewController(tt.getClient())
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Nil(t, controller)
@@ -245,7 +245,7 @@ func TestController_Reconcile(t *testing.T) {
 					var updatedNodeClass v1alpha1.IBMNodeClass
 					err = fakeClient.Get(context.Background(), req.NamespacedName, &updatedNodeClass)
 					require.NoError(t, err)
-					
+
 					assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash], "Hash should be set in annotations")
 					if tt.existingHash != 0 {
 						// Convert existing hash to string for comparison
@@ -274,7 +274,7 @@ func TestController_ReconcileNotFound(t *testing.T) {
 	}
 
 	result, err := controller.Reconcile(context.Background(), req)
-	
+
 	// Should not error on not found
 	assert.NoError(t, err)
 	assert.Equal(t, reconcile.Result{}, result)

@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/awslabs/operatorpkg/singleton"
-	k8stypes "k8s.io/apimachinery/pkg/types"
 	v1 "k8s.io/api/core/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -36,12 +36,12 @@ import (
 )
 
 // Controller reconciles NodeClaim objects to ensure proper tagging of IBM Cloud instances
-//+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;update;patch
-//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
-//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch
 type Controller struct {
-	kubeClient       client.Client
-	ibmClient        *ibm.Client
+	kubeClient client.Client
+	ibmClient  *ibm.Client
 }
 
 // NewController constructs a controller instance
@@ -51,7 +51,7 @@ func NewController(kubeClient client.Client) (*Controller, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating IBM client: %w", err)
 	}
-	
+
 	return &Controller{
 		kubeClient: kubeClient,
 		ibmClient:  ibmClient,
@@ -132,7 +132,7 @@ func (c *Controller) isVPCMode(nodeClass *v1alpha1.IBMNodeClass) bool {
 	if nodeClass.Spec.IKSClusterID != "" {
 		return false
 	}
-	
+
 	// Check bootstrap mode
 	if nodeClass.Spec.BootstrapMode != nil {
 		switch *nodeClass.Spec.BootstrapMode {
@@ -142,7 +142,7 @@ func (c *Controller) isVPCMode(nodeClass *v1alpha1.IBMNodeClass) bool {
 			return true
 		}
 	}
-	
+
 	// Default to VPC mode if VPC is specified
 	return nodeClass.Spec.VPC != ""
 }
@@ -154,7 +154,7 @@ func (c *Controller) updateVPCInstanceTags(ctx context.Context, providerID strin
 	if err != nil {
 		return fmt.Errorf("creating VPC provider: %w", err)
 	}
-	
+
 	// Use the VPC provider to update tags
 	return vpcProvider.UpdateTags(ctx, providerID, tags)
 }

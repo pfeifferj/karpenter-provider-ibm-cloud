@@ -1,3 +1,5 @@
+//go:build integration
+
 /*
 Copyright The Kubernetes Authors.
 
@@ -13,8 +15,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
-//go:build integration
 
 package workerpool
 
@@ -89,7 +89,7 @@ func (p *testIKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *karpv
 	if getErr := p.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); getErr != nil {
 		return nil, fmt.Errorf("getting NodeClass %s: %w", nodeClaim.Spec.NodeClassRef.Name, getErr)
 	}
-	
+
 	// Get cluster ID from NodeClass or environment
 	clusterID := nodeClass.Spec.IKSClusterID
 	if clusterID == "" {
@@ -98,30 +98,30 @@ func (p *testIKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *karpv
 	if clusterID == "" {
 		return nil, fmt.Errorf("IKS cluster ID not found in nodeClass.spec.iksClusterID or IKS_CLUSTER_ID environment variable")
 	}
-	
+
 	// Get IKS client from our interface (which will return the mock)
 	iksClient := p.client.GetIKSClient()
 	if iksClient == nil {
 		return nil, fmt.Errorf("IKS client not available")
 	}
-	
+
 	// For testing, simulate the worker pool selection and resize logic
 	// Create a placeholder node representation
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeClaim.Name,
 			Labels: map[string]string{
-				"karpenter.sh/managed":                     "true",
-				"karpenter.ibm.sh/cluster-id":              clusterID,
-				"karpenter.ibm.sh/worker-pool-id":          "test-pool-id",
-				"karpenter.ibm.sh/zone":                    nodeClass.Spec.Zone,
-				"karpenter.ibm.sh/region":                  nodeClass.Spec.Region,
-				"karpenter.ibm.sh/instance-type":           nodeClass.Spec.InstanceProfile,
-				"node.kubernetes.io/instance-type":         nodeClass.Spec.InstanceProfile,
-				"topology.kubernetes.io/zone":              nodeClass.Spec.Zone,
-				"topology.kubernetes.io/region":            nodeClass.Spec.Region,
-				"karpenter.sh/capacity-type":               "on-demand",
-				"karpenter.sh/nodepool":                    nodeClaim.Labels["karpenter.sh/nodepool"],
+				"karpenter.sh/managed":             "true",
+				"karpenter.ibm.sh/cluster-id":      clusterID,
+				"karpenter.ibm.sh/worker-pool-id":  "test-pool-id",
+				"karpenter.ibm.sh/zone":            nodeClass.Spec.Zone,
+				"karpenter.ibm.sh/region":          nodeClass.Spec.Region,
+				"karpenter.ibm.sh/instance-type":   nodeClass.Spec.InstanceProfile,
+				"node.kubernetes.io/instance-type": nodeClass.Spec.InstanceProfile,
+				"topology.kubernetes.io/zone":      nodeClass.Spec.Zone,
+				"topology.kubernetes.io/region":    nodeClass.Spec.Region,
+				"karpenter.sh/capacity-type":       "on-demand",
+				"karpenter.sh/nodepool":            nodeClaim.Labels["karpenter.sh/nodepool"],
 			},
 		},
 		Spec: corev1.NodeSpec{
@@ -131,7 +131,7 @@ func (p *testIKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *karpv
 			Phase: corev1.NodePending,
 		},
 	}
-	
+
 	return node, nil
 }
 
@@ -139,16 +139,16 @@ func (p *testIKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *karpv
 func (p *testIKSWorkerPoolProvider) Delete(ctx context.Context, node *corev1.Node) error {
 	clusterID := node.Labels["karpenter.ibm.sh/cluster-id"]
 	poolID := node.Labels["karpenter.ibm.sh/worker-pool-id"]
-	
+
 	if clusterID == "" || poolID == "" {
 		return fmt.Errorf("cluster ID or pool ID not found in node labels")
 	}
-	
+
 	iksClient := p.client.GetIKSClient()
 	if iksClient == nil {
 		return fmt.Errorf("IKS client not available")
 	}
-	
+
 	// For testing, just simulate success
 	return nil
 }
@@ -177,7 +177,7 @@ func getTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = corev1.AddToScheme(s)
 	_ = v1alpha1.AddToScheme(s)
-	
+
 	// Register Karpenter v1 types manually
 	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
 	s.AddKnownTypes(gv,
@@ -187,7 +187,7 @@ func getTestScheme() *runtime.Scheme {
 		&karpv1.NodePoolList{},
 	)
 	metav1.AddToGroupVersion(s, gv)
-	
+
 	return s
 }
 
@@ -246,7 +246,7 @@ func getTestWorkerPools() []*ibm.WorkerPool {
 			State:       "normal",
 		},
 		{
-			ID:          "pool-2", 
+			ID:          "pool-2",
 			Name:        "pool-different-flavor",
 			Flavor:      "bx2-8x32",
 			Zone:        "us-south-1",
@@ -302,15 +302,15 @@ func TestIKSWorkerPoolProvider_Create(t *testing.T) {
 			nodeClaim: getTestNodeClaim(),
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				// Mock pool selection - exact match
 				workerPools := getTestWorkerPools()
 				iksClient.On("ListWorkerPools", mock.Anything, "test-cluster-id").Return(workerPools, nil)
-				
+
 				// Mock get pool for resize
 				selectedPool := workerPools[0] // Exact match pool
 				iksClient.On("GetWorkerPool", mock.Anything, "test-cluster-id", "pool-1").Return(selectedPool, nil)
-				
+
 				// Mock resize operation
 				iksClient.On("ResizeWorkerPool", mock.Anything, "test-cluster-id", "pool-1", 2).Return(nil)
 			},
@@ -336,10 +336,10 @@ func TestIKSWorkerPoolProvider_Create(t *testing.T) {
 			envClusterID: "env-cluster-id",
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				workerPools := getTestWorkerPools()
 				iksClient.On("ListWorkerPools", mock.Anything, "env-cluster-id").Return(workerPools, nil)
-				
+
 				selectedPool := workerPools[0]
 				iksClient.On("GetWorkerPool", mock.Anything, "env-cluster-id", "pool-1").Return(selectedPool, nil)
 				iksClient.On("ResizeWorkerPool", mock.Anything, "env-cluster-id", "pool-1", 2).Return(nil)
@@ -394,7 +394,7 @@ func TestIKSWorkerPoolProvider_Create(t *testing.T) {
 			nodeClaim: getTestNodeClaim(),
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				// Mock getting the specific pool
 				specificPool := &ibm.WorkerPool{
 					ID:          "specific-pool-id",
@@ -420,10 +420,10 @@ func TestIKSWorkerPoolProvider_Create(t *testing.T) {
 			nodeClaim: getTestNodeClaim(),
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				workerPools := getTestWorkerPools()
 				iksClient.On("ListWorkerPools", mock.Anything, "test-cluster-id").Return(workerPools, nil)
-				
+
 				selectedPool := workerPools[0]
 				iksClient.On("GetWorkerPool", mock.Anything, "test-cluster-id", "pool-1").Return(selectedPool, nil)
 				iksClient.On("ResizeWorkerPool", mock.Anything, "test-cluster-id", "pool-1", 2).Return(fmt.Errorf("resize failed"))
@@ -436,7 +436,7 @@ func TestIKSWorkerPoolProvider_Create(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			
+
 			// Set up environment variable
 			if tt.envClusterID != "" {
 				os.Setenv("IKS_CLUSTER_ID", tt.envClusterID)
@@ -505,21 +505,21 @@ func TestIKSWorkerPoolProvider_Delete(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
 					Labels: map[string]string{
-						"karpenter.ibm.sh/cluster-id":      "test-cluster-id",
-						"karpenter.ibm.sh/worker-pool-id":  "test-pool-id",
+						"karpenter.ibm.sh/cluster-id":     "test-cluster-id",
+						"karpenter.ibm.sh/worker-pool-id": "test-pool-id",
 					},
 				},
 			},
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				// Mock get pool for current size
 				currentPool := &ibm.WorkerPool{
 					ID:          "test-pool-id",
 					SizePerZone: 3,
 				}
 				iksClient.On("GetWorkerPool", mock.Anything, "test-cluster-id", "test-pool-id").Return(currentPool, nil)
-				
+
 				// Mock resize down
 				iksClient.On("ResizeWorkerPool", mock.Anything, "test-cluster-id", "test-pool-id", 2).Return(nil)
 			},
@@ -531,21 +531,21 @@ func TestIKSWorkerPoolProvider_Delete(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
 					Labels: map[string]string{
-						"karpenter.ibm.sh/cluster-id":      "test-cluster-id",
-						"karpenter.ibm.sh/worker-pool-id":  "test-pool-id",
+						"karpenter.ibm.sh/cluster-id":     "test-cluster-id",
+						"karpenter.ibm.sh/worker-pool-id": "test-pool-id",
 					},
 				},
 			},
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				// Mock get pool with size 1
 				currentPool := &ibm.WorkerPool{
 					ID:          "test-pool-id",
 					SizePerZone: 1,
 				}
 				iksClient.On("GetWorkerPool", mock.Anything, "test-cluster-id", "test-pool-id").Return(currentPool, nil)
-				
+
 				// Mock resize to 0
 				iksClient.On("ResizeWorkerPool", mock.Anything, "test-cluster-id", "test-pool-id", 0).Return(nil)
 			},
@@ -633,7 +633,7 @@ func TestIKSWorkerPoolProvider_Delete(t *testing.T) {
 			},
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				currentPool := &ibm.WorkerPool{
 					ID:          "test-pool-id",
 					SizePerZone: 3,
@@ -685,14 +685,14 @@ func TestIKSWorkerPoolProvider_Delete(t *testing.T) {
 
 func TestIKSWorkerPoolProvider_findOrSelectWorkerPool(t *testing.T) {
 	tests := []struct {
-		name                   string
-		nodeClass              *v1alpha1.IBMNodeClass
-		requestedInstanceType  string
-		workerPools            []*ibm.WorkerPool
-		expectedPoolID         string
-		expectedInstanceType   string
-		expectError            bool
-		errorContains          string
+		name                  string
+		nodeClass             *v1alpha1.IBMNodeClass
+		requestedInstanceType string
+		workerPools           []*ibm.WorkerPool
+		expectedPoolID        string
+		expectedInstanceType  string
+		expectError           bool
+		errorContains         string
 	}{
 		{
 			name: "exact match - same instance type and zone",
@@ -700,10 +700,10 @@ func TestIKSWorkerPoolProvider_findOrSelectWorkerPool(t *testing.T) {
 				Spec: v1alpha1.IBMNodeClassSpec{Zone: "us-south-1"},
 			},
 			requestedInstanceType: "bx2-4x16",
-			workerPools:          getTestWorkerPools(),
-			expectedPoolID:       "pool-1",
-			expectedInstanceType: "bx2-4x16",
-			expectError:          false,
+			workerPools:           getTestWorkerPools(),
+			expectedPoolID:        "pool-1",
+			expectedInstanceType:  "bx2-4x16",
+			expectError:           false,
 		},
 		{
 			name: "same zone different flavor",
@@ -711,10 +711,10 @@ func TestIKSWorkerPoolProvider_findOrSelectWorkerPool(t *testing.T) {
 				Spec: v1alpha1.IBMNodeClassSpec{Zone: "us-south-1"},
 			},
 			requestedInstanceType: "nonexistent-flavor",
-			workerPools:          getTestWorkerPools(),
-			expectedPoolID:       "pool-1", // First pool in same zone
-			expectedInstanceType: "bx2-4x16",
-			expectError:          false,
+			workerPools:           getTestWorkerPools(),
+			expectedPoolID:        "pool-1", // First pool in same zone
+			expectedInstanceType:  "bx2-4x16",
+			expectError:           false,
 		},
 		{
 			name: "matching flavor different zone",
@@ -722,10 +722,10 @@ func TestIKSWorkerPoolProvider_findOrSelectWorkerPool(t *testing.T) {
 				Spec: v1alpha1.IBMNodeClassSpec{Zone: "nonexistent-zone"},
 			},
 			requestedInstanceType: "bx2-4x16",
-			workerPools:          getTestWorkerPools(),
-			expectedPoolID:       "pool-1", // First pool with matching flavor
-			expectedInstanceType: "bx2-4x16",
-			expectError:          false,
+			workerPools:           getTestWorkerPools(),
+			expectedPoolID:        "pool-1", // First pool with matching flavor
+			expectedInstanceType:  "bx2-4x16",
+			expectError:           false,
 		},
 		{
 			name: "fallback to first available pool",
@@ -733,24 +733,24 @@ func TestIKSWorkerPoolProvider_findOrSelectWorkerPool(t *testing.T) {
 				Spec: v1alpha1.IBMNodeClassSpec{Zone: "nonexistent-zone"},
 			},
 			requestedInstanceType: "nonexistent-flavor",
-			workerPools:          getTestWorkerPools(),
-			expectedPoolID:       "pool-1", // First available pool
-			expectedInstanceType: "bx2-4x16",
-			expectError:          false,
+			workerPools:           getTestWorkerPools(),
+			expectedPoolID:        "pool-1", // First available pool
+			expectedInstanceType:  "bx2-4x16",
+			expectError:           false,
 		},
 		{
 			name: "specific worker pool configured",
 			nodeClass: &v1alpha1.IBMNodeClass{
 				Spec: v1alpha1.IBMNodeClassSpec{
-					Zone:              "us-south-1",
-					IKSWorkerPoolID:   "pool-2",
+					Zone:            "us-south-1",
+					IKSWorkerPoolID: "pool-2",
 				},
 			},
 			requestedInstanceType: "bx2-4x16",
-			workerPools:          getTestWorkerPools(),
-			expectedPoolID:       "pool-2",
-			expectedInstanceType: "bx2-8x32", // Flavor from pool-2
-			expectError:          false,
+			workerPools:           getTestWorkerPools(),
+			expectedPoolID:        "pool-2",
+			expectedInstanceType:  "bx2-8x32", // Flavor from pool-2
+			expectError:           false,
 		},
 		{
 			name: "no worker pools available",
@@ -758,9 +758,9 @@ func TestIKSWorkerPoolProvider_findOrSelectWorkerPool(t *testing.T) {
 				Spec: v1alpha1.IBMNodeClassSpec{Zone: "us-south-1"},
 			},
 			requestedInstanceType: "bx2-4x16",
-			workerPools:          []*ibm.WorkerPool{},
-			expectError:          true,
-			errorContains:        "no worker pools found",
+			workerPools:           []*ibm.WorkerPool{},
+			expectError:           true,
+			errorContains:         "no worker pools found",
 		},
 	}
 
@@ -825,7 +825,7 @@ func TestIKSWorkerPoolProvider_GetPool(t *testing.T) {
 			poolID:    "test-pool-id",
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				pool := getTestWorkerPool()
 				iksClient.On("GetWorkerPool", mock.Anything, "test-cluster-id", "test-pool-id").Return(pool, nil)
 			},
@@ -920,7 +920,7 @@ func TestIKSWorkerPoolProvider_ListPools(t *testing.T) {
 			clusterID: "test-cluster-id",
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(&ibm.IKSClient{}, nil)
-				
+
 				pools := getTestWorkerPools()
 				iksClient.On("ListWorkerPools", mock.Anything, "test-cluster-id").Return(pools, nil)
 			},

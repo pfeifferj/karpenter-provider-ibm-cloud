@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -155,7 +155,7 @@ func TestIBMInstanceTypeProvider_Get(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name        string
+		name         string
 		instanceType string
 		expectError  bool
 	}{
@@ -229,8 +229,8 @@ func TestIBMInstanceTypeProvider_FilterInstanceTypes(t *testing.T) {
 		{
 			name: "price requirement",
 			requirements: &v1alpha1.InstanceTypeRequirements{
-				MinimumCPU:        2,
-				MinimumMemory:     4,
+				MinimumCPU:         2,
+				MinimumMemory:      4,
 				MaximumHourlyPrice: "0.50",
 			},
 			expectError: true, // Will fail without real IBM client
@@ -256,8 +256,8 @@ func TestIBMInstanceTypeProvider_FilterInstanceTypes(t *testing.T) {
 
 func TestCalculateInstanceTypeScore(t *testing.T) {
 	tests := []struct {
-		name         string
-		instanceType *ExtendedInstanceType
+		name          string
+		instanceType  *ExtendedInstanceType
 		expectedScore float64
 	}{
 		{
@@ -364,7 +364,7 @@ func TestRankInstanceTypes(t *testing.T) {
 
 	// Should return same number of instance types
 	assert.Len(t, ranked, len(instanceTypes))
-	
+
 	// All instance types should be present
 	names := make([]string, len(ranked))
 	for i, it := range ranked {

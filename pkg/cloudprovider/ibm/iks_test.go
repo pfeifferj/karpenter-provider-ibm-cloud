@@ -33,7 +33,7 @@ import (
 func TestNewIKSClient(t *testing.T) {
 	client := &Client{}
 	iksClient := NewIKSClient(client)
-	
+
 	assert.NotNil(t, iksClient)
 	assert.Equal(t, client, iksClient.client)
 	assert.Equal(t, "https://containers.cloud.ibm.com/v1", iksClient.baseURL)
@@ -42,15 +42,15 @@ func TestNewIKSClient(t *testing.T) {
 
 func TestClient_GetIKSClient(t *testing.T) {
 	client := &Client{}
-	
+
 	iksClient := client.GetIKSClient()
 	assert.NotNil(t, iksClient)
-	
+
 	// Verify it returns an IKS client interface
-	// We can't test private fields on the interface, but we can verify 
+	// We can't test private fields on the interface, but we can verify
 	// it implements the expected interface methods
 	assert.Implements(t, (*IKSClientInterface)(nil), iksClient)
-	
+
 	// Verify multiple calls return different instances (since we create on-demand)
 	iksClient2 := client.GetIKSClient()
 	assert.NotNil(t, iksClient2)
@@ -189,13 +189,13 @@ func TestIKSClient_GetWorkerDetails(t *testing.T) {
 
 func TestIKSClient_GetVPCInstanceIDFromWorker(t *testing.T) {
 	tests := []struct {
-		name              string
-		clusterID         string
-		workerID          string
-		workerResponse    string
-		vpcInstances      []vpcv1.Instance
+		name               string
+		clusterID          string
+		workerID           string
+		workerResponse     string
+		vpcInstances       []vpcv1.Instance
 		expectedInstanceID string
-		expectedError     string
+		expectedError      string
 	}{
 		{
 			name:      "successful VPC instance mapping",
@@ -363,7 +363,6 @@ func (m *MockVPCClient) GetSubnetWithContext(ctx context.Context, options *vpcv1
 	return nil, nil, nil
 }
 
-
 // testIKSClient wraps IKSClient for testing with custom VPC client
 type testIKSClient struct {
 	*IKSClient
@@ -409,18 +408,18 @@ func (t *testIKSClient) GetVPCInstanceIDFromWorker(ctx context.Context, clusterI
 		}
 	}
 
-	return "", fmt.Errorf("VPC instance not found for worker %s (IP: %s, subnet: %s)", 
+	return "", fmt.Errorf("VPC instance not found for worker %s (IP: %s, subnet: %s)",
 		workerID, primaryInterface.IPAddress, primaryInterface.SubnetID)
 }
 
 func TestIKSClient_GetVPCInstanceIDFromWorker_CoverageGaps(t *testing.T) {
 	// This test specifically targets the coverage gaps in GetVPCInstanceIDFromWorker
 	// We'll test the actual method by using a working IKS client with the testIKSClient wrapper
-	
+
 	tests := []struct {
-		name              string
-		workerResponse    string
-		expectedError     string
+		name           string
+		workerResponse string
+		expectedError  string
 	}{
 		{
 			name: "vpc client initialization error",
@@ -472,7 +471,6 @@ func TestIKSClient_GetVPCInstanceIDFromWorker_CoverageGaps(t *testing.T) {
 		})
 	}
 }
-
 
 // Helper function to create string pointers
 func stringPtr(s string) *string {

@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -67,9 +67,9 @@ func TestReconcile(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-node-1",
 						Labels: map[string]string{
-							"node.kubernetes.io/instance-type":   "bx2-2x8",
-							"topology.kubernetes.io/zone":        "us-south-1",
-							"kubernetes.io/hostname":             "test-node-1",
+							"node.kubernetes.io/instance-type": "bx2-2x8",
+							"topology.kubernetes.io/zone":      "us-south-1",
+							"kubernetes.io/hostname":           "test-node-1",
 						},
 					},
 					Spec: v1.NodeSpec{
@@ -113,7 +113,7 @@ func TestReconcile(t *testing.T) {
 				WithScheme(scheme).
 				WithObjects(nodeSliceToObjects(tt.nodes)...).
 				Build()
-			
+
 			recorder := record.NewFakeRecorder(10)
 			unavailableOfferings := cache.NewUnavailableOfferings()
 
@@ -220,7 +220,7 @@ func TestIsCapacityRelated(t *testing.T) {
 func TestRegister(t *testing.T) {
 	// Test that Register doesn't panic and returns no error
 	controller := &Controller{}
-	
+
 	// We can't easily test the full registration without a real manager,
 	// but we can test that the method exists and doesn't panic
 	assert.NotPanics(t, func() {

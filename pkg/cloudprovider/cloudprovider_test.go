@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -49,7 +49,6 @@ type mockEventRecorder struct {
 func (m *mockEventRecorder) Publish(e ...events.Event) {
 	m.events = append(m.events, e...)
 }
-
 
 // Mock Instance Type Provider
 type mockInstanceTypeProvider struct {
@@ -95,11 +94,11 @@ func (m *mockInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovi
 
 // Mock Instance Provider
 type mockInstanceProvider struct {
-	createNode    *corev1.Node
-	createError   error
-	deleteError   error
-	getError      error
-	tagError      error
+	createNode  *corev1.Node
+	createError error
+	deleteError error
+	getError    error
+	tagError    error
 }
 
 func (m *mockInstanceProvider) SetKubeClient(client client.Client) {}
@@ -162,13 +161,12 @@ func (m *mockInstanceProvider) Get(ctx context.Context, providerID string) (*cor
 
 // Duplicate List and UpdateTags methods removed
 
-
 // Test helpers
 func getTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = corev1.AddToScheme(s)
 	_ = v1alpha1.AddToScheme(s)
-	
+
 	// Register Karpenter v1 types manually
 	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
 	s.AddKnownTypes(gv,
@@ -178,7 +176,7 @@ func getTestScheme() *runtime.Scheme {
 		&karpv1.NodePoolList{},
 	)
 	metav1.AddToGroupVersion(s, gv)
-	
+
 	return s
 }
 
@@ -285,21 +283,21 @@ func TestCloudProvider_Create(t *testing.T) {
 		errorContains    string
 	}{
 		{
-			name:      "provider factory error with nil client",
-			nodeClaim: getTestNodeClaim("test-nodeclass"),
-			nodeClass: getTestNodeClass(),
+			name:             "provider factory error with nil client",
+			nodeClaim:        getTestNodeClaim("test-nodeclass"),
+			nodeClass:        getTestNodeClass(),
 			instanceProvider: &mockInstanceProvider{},
-			instanceTypes: []*cloudprovider.InstanceType{getTestInstanceType()},
-			expectError:   true,
-			errorContains: "IBM client cannot be nil",
+			instanceTypes:    []*cloudprovider.InstanceType{getTestInstanceType()},
+			expectError:      true,
+			errorContains:    "IBM client cannot be nil",
 		},
 		{
-			name:      "nodeclass not found",
-			nodeClaim: getTestNodeClaim("non-existent"),
-			nodeClass: nil,
+			name:             "nodeclass not found",
+			nodeClaim:        getTestNodeClaim("non-existent"),
+			nodeClass:        nil,
 			instanceProvider: &mockInstanceProvider{},
-			expectError:   true,
-			errorContains: "not found",
+			expectError:      true,
+			errorContains:    "not found",
 		},
 		{
 			name:      "instance creation failure due to nil client",
@@ -313,13 +311,13 @@ func TestCloudProvider_Create(t *testing.T) {
 			errorContains: "IBM client cannot be nil",
 		},
 		{
-			name:      "no matching instance types",
-			nodeClaim: getTestNodeClaim("test-nodeclass"),
-			nodeClass: getTestNodeClass(),
+			name:             "no matching instance types",
+			nodeClaim:        getTestNodeClaim("test-nodeclass"),
+			nodeClass:        getTestNodeClass(),
 			instanceProvider: &mockInstanceProvider{},
-			instanceTypes: []*cloudprovider.InstanceType{},
-			expectError:   true,
-			errorContains: "all requested instance types were unavailable",
+			instanceTypes:    []*cloudprovider.InstanceType{},
+			expectError:      true,
+			errorContains:    "all requested instance types were unavailable",
 		},
 	}
 
@@ -327,7 +325,7 @@ func TestCloudProvider_Create(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			scheme := getTestScheme()
-			
+
 			// Build fake client with objects
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tt.nodeClass != nil {
@@ -364,9 +362,9 @@ func TestCloudProvider_Create(t *testing.T) {
 }
 
 func TestCloudProvider_Create_NodeClaimLabelPopulation(t *testing.T) {
-	// Test the label population logic by creating a unit test 
+	// Test the label population logic by creating a unit test
 	// that directly tests the label copying functionality
-	
+
 	t.Run("populates NodeClaim labels from instance type requirements", func(t *testing.T) {
 		// Create a NodeClaim with some existing labels
 		nodeClaim := &karpv1.NodeClaim{
@@ -420,19 +418,19 @@ func TestCloudProvider_Create_NodeClaimLabelPopulation(t *testing.T) {
 		if nc.Labels == nil {
 			nc.Labels = make(map[string]string)
 		}
-		
+
 		// Copy essential labels from the created node first
 		for key, value := range node.Labels {
 			switch key {
-			case corev1.LabelInstanceTypeStable,    // TYPE column
-				karpv1.CapacityTypeLabelKey,           // CAPACITY column  
-				corev1.LabelTopologyZone,              // ZONE column
-				corev1.LabelTopologyRegion,            // Region info
-				karpv1.NodePoolLabelKey:               // Preserve nodepool label
+			case corev1.LabelInstanceTypeStable, // TYPE column
+				karpv1.CapacityTypeLabelKey, // CAPACITY column
+				corev1.LabelTopologyZone,    // ZONE column
+				corev1.LabelTopologyRegion,  // Region info
+				karpv1.NodePoolLabelKey:     // Preserve nodepool label
 				nc.Labels[key] = value
 			}
 		}
-		
+
 		// Populate labels from instance type requirements (only single-value requirements)
 		// These take precedence over node labels when available
 		for key, req := range instanceType.Requirements {
@@ -440,22 +438,22 @@ func TestCloudProvider_Create_NodeClaimLabelPopulation(t *testing.T) {
 				nc.Labels[key] = req.Values()[0]
 			}
 		}
-		
+
 		// Set the node name in status for the NODE column
 		nc.Status.NodeName = node.Name
 
 		// Verify the results
 		expectedLabels := map[string]string{
-			"existing-label":               "existing-value",      // Should be preserved
-			corev1.LabelInstanceTypeStable: "test-instance-type", // From instance type requirements (overrides node)
+			"existing-label":               "existing-value",            // Should be preserved
+			corev1.LabelInstanceTypeStable: "test-instance-type",        // From instance type requirements (overrides node)
 			karpv1.CapacityTypeLabelKey:    karpv1.CapacityTypeOnDemand, // From instance type requirements
-			corev1.LabelTopologyZone:       "us-south-1",         // From instance type requirements (overrides node)
-			corev1.LabelTopologyRegion:     "eu-de",              // From node labels
-			karpv1.NodePoolLabelKey:        "test-nodepool",      // From node labels
+			corev1.LabelTopologyZone:       "us-south-1",                // From instance type requirements (overrides node)
+			corev1.LabelTopologyRegion:     "eu-de",                     // From node labels
+			karpv1.NodePoolLabelKey:        "test-nodepool",             // From node labels
 		}
 
 		for expectedKey, expectedValue := range expectedLabels {
-			assert.Equal(t, expectedValue, nc.Labels[expectedKey], 
+			assert.Equal(t, expectedValue, nc.Labels[expectedKey],
 				"Label %s should be %s, got %s", expectedKey, expectedValue, nc.Labels[expectedKey])
 		}
 
@@ -505,9 +503,9 @@ func TestCloudProvider_Create_NodeClaimLabelPopulation(t *testing.T) {
 		if nc.Labels == nil {
 			nc.Labels = make(map[string]string)
 		}
-		
+
 		// No instance type requirements to process (instanceType is nil)
-		
+
 		// Copy essential labels from node
 		for key, value := range node.Labels {
 			switch key {
@@ -519,7 +517,7 @@ func TestCloudProvider_Create_NodeClaimLabelPopulation(t *testing.T) {
 				nc.Labels[key] = value
 			}
 		}
-		
+
 		nc.Status.NodeName = node.Name
 
 		// Verify labels are still copied from node
@@ -607,7 +605,7 @@ func TestCloudProvider_Delete(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			scheme := getTestScheme()
-			
+
 			// Build fake client with objects
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tt.node != nil {
@@ -617,8 +615,8 @@ func TestCloudProvider_Delete(t *testing.T) {
 
 			// Create CloudProvider
 			cp := &CloudProvider{
-				kubeClient: fakeClient,
-				recorder:   &mockEventRecorder{},
+				kubeClient:      fakeClient,
+				recorder:        &mockEventRecorder{},
 				providerFactory: getTestProviderFactory(fakeClient),
 			}
 
@@ -722,7 +720,7 @@ func TestCloudProvider_GetInstanceTypes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			scheme := getTestScheme()
-			
+
 			// Create fake client with NodeClass
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -802,7 +800,7 @@ func TestCloudProvider_IsDrifted(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			scheme := getTestScheme()
-			
+
 			// Create fake client with NodeClass
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -860,9 +858,9 @@ func TestCloudProvider_Get(t *testing.T) {
 			expectedName: "",
 		},
 		{
-			name:       "node not found",
-			providerID: "ibm://non-existent",
-			getError:   fmt.Errorf("instance not found"),
+			name:        "node not found",
+			providerID:  "ibm://non-existent",
+			getError:    fmt.Errorf("instance not found"),
 			expectError: true,
 		},
 		{
@@ -885,7 +883,7 @@ func TestCloudProvider_Get(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			scheme := getTestScheme()
-			
+
 			// Build fake client with objects
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tt.node != nil {
@@ -918,12 +916,12 @@ func TestCloudProvider_Get(t *testing.T) {
 
 func TestCloudProvider_RepairPolicies(t *testing.T) {
 	cp := &CloudProvider{}
-	
+
 	policies := cp.RepairPolicies()
-	
+
 	// Should have at least one repair policy
 	assert.NotEmpty(t, policies)
-	
+
 	// Check first policy
 	assert.Equal(t, corev1.NodeReady, policies[0].ConditionType)
 	assert.Equal(t, corev1.ConditionFalse, policies[0].ConditionStatus)
@@ -937,9 +935,9 @@ func TestCloudProvider_Name(t *testing.T) {
 
 func TestCloudProvider_GetSupportedNodeClasses(t *testing.T) {
 	cp := &CloudProvider{}
-	
+
 	nodeClasses := cp.GetSupportedNodeClasses()
-	
+
 	// Should return IBMNodeClass
 	assert.Len(t, nodeClasses, 1)
 	_, ok := nodeClasses[0].(*v1alpha1.IBMNodeClass)
@@ -1000,7 +998,7 @@ func TestCloudProvider_List(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			scheme := getTestScheme()
-			
+
 			// Build fake client with nodes
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -1009,7 +1007,7 @@ func TestCloudProvider_List(t *testing.T) {
 
 			// Create CloudProvider
 			cp := &CloudProvider{
-				kubeClient: fakeClient,
+				kubeClient:      fakeClient,
 				providerFactory: getTestProviderFactory(fakeClient),
 			}
 

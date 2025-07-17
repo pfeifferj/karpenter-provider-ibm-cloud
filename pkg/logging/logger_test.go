@@ -65,7 +65,7 @@ func TestComponentLoggers(t *testing.T) {
 
 func TestLoggingMethods(t *testing.T) {
 	logger := NewLogger("test")
-	
+
 	// These should not panic
 	logger.Info("test info message", "key", "value")
 	logger.Debug("test debug message", "key", "value")

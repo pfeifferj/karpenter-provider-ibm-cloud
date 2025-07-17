@@ -44,7 +44,7 @@ type ExtendedInstanceType struct {
 }
 
 type IBMInstanceTypeProvider struct {
-	client         *ibm.Client
+	client          *ibm.Client
 	pricingProvider pricing.Provider
 }
 
@@ -100,12 +100,12 @@ func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudp
 	if p.client == nil {
 		return nil, fmt.Errorf("IBM client not initialized")
 	}
-	
+
 	// Try VPC API first - more reliable than catalog
 	vpcClient, err := p.client.GetVPCClient()
 	if err == nil {
 		// List all profiles and find the one we want
-		profiles, _, profilesErr := vpcClient.ListInstanceProfiles(nil)
+		profiles, _, profilesErr := vpcClient.ListInstanceProfiles(&vpcv1.ListInstanceProfilesOptions{})
 		err = profilesErr
 		if err == nil && profiles != nil && profiles.Profiles != nil {
 			for _, profile := range profiles.Profiles {
@@ -115,7 +115,7 @@ func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudp
 			}
 		}
 	}
-	
+
 	// Fallback to Global Catalog if VPC API doesn't work
 	catalogClient, err := p.client.GetGlobalCatalogClient()
 	if err != nil {
@@ -151,7 +151,7 @@ func (p *IBMInstanceTypeProvider) List(ctx context.Context) ([]*cloudprovider.In
 	instanceTypes, err := p.listFromVPC(ctx)
 	if err != nil {
 		logger.Error(err, "Failed to list instance types from VPC API, trying Global Catalog")
-		
+
 		// Fallback to Global Catalog
 		catalogClient, err := p.client.GetGlobalCatalogClient()
 		if err != nil {
@@ -214,15 +214,15 @@ func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requi
 	for _, it := range allTypes {
 		// Get price for this instance type (use default zone for pricing)
 		zone := "us-south-1" // Default zone for pricing
-		
+
 		price, err := p.pricingProvider.GetPrice(ctx, it.Name, zone)
 		if err != nil {
 			// Log warning but continue with 0 price to avoid breaking functionality
-			log.FromContext(ctx).Info("Could not get pricing for instance type, using fallback price", 
+			log.FromContext(ctx).Info("Could not get pricing for instance type, using fallback price",
 				"instance_type", it.Name, "zone", zone, "error", err, "fallback_price", 0.0)
 			price = 0.0
 		}
-		
+
 		ext := &ExtendedInstanceType{
 			InstanceType: it,
 			Architecture: getArchitecture(it),
@@ -318,7 +318,7 @@ func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovid
 			priceVal, err := p.pricingProvider.GetPrice(context.Background(), it.Name, "us-south-1")
 			if err != nil {
 				// Log warning but continue with 0 price - use background context since we don't have the original
-				log.Log.WithName("instancetype").Info("Could not get pricing for instance type ranking, using fallback price", 
+				log.Log.WithName("instancetype").Info("Could not get pricing for instance type ranking, using fallback price",
 					"instance_type", it.Name, "zone", "us-south-1", "error", err, "fallback_price", 0.0)
 				price = 0.0
 			} else {
@@ -327,7 +327,7 @@ func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovid
 		} else {
 			price = 0.0
 		}
-		
+
 		extended[i] = &ExtendedInstanceType{
 			InstanceType: it,
 			Architecture: getArchitecture(it),
@@ -350,7 +350,7 @@ func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovid
 // listFromVPC lists instance types using VPC API
 func (p *IBMInstanceTypeProvider) listFromVPC(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
 	logger := log.FromContext(ctx)
-	
+
 	vpcClient, err := p.client.GetVPCClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting VPC client: %w", err)
@@ -415,7 +415,7 @@ func (p *IBMInstanceTypeProvider) convertVPCProfileToInstanceType(profile vpcv1.
 	cpuResource := resource.NewQuantity(cpuCount, resource.DecimalSI)
 	// Memory is in GB from the profile, convert to bytes using standard GB (not GiB)
 	memoryResource := resource.NewQuantity(memoryGB*1000*1000*1000, resource.DecimalSI) // Convert GB to bytes
-	
+
 	// Calculate pod capacity (rough estimate: 110 pods per node for most instance types)
 	var podCount int64 = 110
 	if cpuCount <= 2 {
