@@ -966,3 +966,50 @@ clusters:
 		})
 	}
 }
+
+func TestVPCBootstrapProvider_detectArchitectureFromInstanceProfile(t *testing.T) {
+	tests := []struct {
+		name             string
+		instanceProfile  string
+		expectedArch     string
+	}{
+		{
+			name:            "standard amd64 instance profile",
+			instanceProfile: "bx2-2x8",
+			expectedArch:    "amd64",
+		},
+		{
+			name:            "arm64 instance profile",
+			instanceProfile: "bx2-arm-2x8",
+			expectedArch:    "arm64",
+		},
+		{
+			name:            "s390x instance profile",
+			instanceProfile: "bz2-2x8",
+			expectedArch:    "s390x",
+		},
+		{
+			name:            "unknown instance profile - defaults to amd64",
+			instanceProfile: "unknown-profile",
+			expectedArch:    "amd64",
+		},
+		{
+			name:            "empty instance profile - defaults to amd64",
+			instanceProfile: "",
+			expectedArch:    "amd64",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create VPC bootstrap provider without client (will use fallback logic)
+			provider := NewVPCBootstrapProvider(nil, nil, nil)
+
+			// Test detectArchitectureFromInstanceProfile method
+			result := provider.detectArchitectureFromInstanceProfile(tt.instanceProfile)
+
+			// Validate result
+			assert.Equal(t, tt.expectedArch, result)
+		})
+	}
+}
