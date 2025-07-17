@@ -84,6 +84,9 @@ type Options struct {
 	// CNIVersion is the detected CNI plugin version
 	CNIVersion string
 	
+	// Architecture is the node architecture (amd64, arm64, etc)
+	Architecture string
+	
 	// DNSClusterIP is the cluster DNS service IP
 	DNSClusterIP string
 	
