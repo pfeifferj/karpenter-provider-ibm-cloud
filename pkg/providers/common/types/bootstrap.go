@@ -22,7 +22,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	
+
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
 
@@ -32,10 +32,10 @@ type BootstrapMode string
 const (
 	// BootstrapModeCloudInit uses cloud-init scripts to bootstrap nodes
 	BootstrapModeCloudInit BootstrapMode = "cloud-init"
-	
+
 	// BootstrapModeIKSAPI uses IKS Worker Pool API to add nodes
 	BootstrapModeIKSAPI BootstrapMode = "iks-api"
-	
+
 	// BootstrapModeAuto automatically selects the best method
 	BootstrapModeAuto BootstrapMode = "auto"
 )
@@ -44,7 +44,7 @@ const (
 type Provider interface {
 	// GetUserData generates the user data for node bootstrapping
 	GetUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error)
-	
+
 	// GetUserDataWithInstanceID generates the user data with a known instance ID
 	GetUserDataWithInstanceID(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID string) (string, error)
 }
@@ -53,58 +53,58 @@ type Provider interface {
 type Options struct {
 	// ClusterName is the name of the Kubernetes cluster
 	ClusterName string
-	
+
 	// NodeName is the name of the node (should match NodeClaim name)
 	NodeName string
-	
+
 	// ProviderID is the provider ID for the node
 	ProviderID string
-	
+
 	// InstanceID is the VPC instance ID (when known)
 	InstanceID string
-	
+
 	// ClusterEndpoint is the API server endpoint
 	ClusterEndpoint string
-	
+
 	// CABundle is the base64-encoded cluster CA certificate
 	CABundle string
-	
+
 	// BootstrapToken is the token used for node bootstrapping
 	BootstrapToken string
-	
+
 	// KubeletConfig contains kubelet configuration
 	KubeletConfig *KubeletConfig
-	
+
 	// ContainerRuntime is the container runtime to use (containerd, cri-o)
 	ContainerRuntime string
-	
+
 	// CNIPlugin is the detected CNI plugin (calico, cilium, etc)
 	CNIPlugin string
-	
+
 	// CNIVersion is the detected CNI plugin version
 	CNIVersion string
-	
+
 	// Architecture is the node architecture (amd64, arm64, etc)
 	Architecture string
-	
+
 	// DNSClusterIP is the cluster DNS service IP
 	DNSClusterIP string
-	
+
 	// ClusterCIDR is the pod network CIDR
 	ClusterCIDR string
-	
+
 	// CustomUserData is any custom user data to merge
 	CustomUserData string
-	
+
 	// Region is the IBM Cloud region
 	Region string
-	
+
 	// Zone is the availability zone
 	Zone string
-	
+
 	// Taints to apply to the node
 	Taints []corev1.Taint
-	
+
 	// Labels to apply to the node
 	Labels map[string]string
 }
@@ -113,13 +113,13 @@ type Options struct {
 type KubeletConfig struct {
 	// ClusterDNS is the list of DNS server IPs
 	ClusterDNS []string
-	
+
 	// MaxPods is the maximum number of pods per node
 	MaxPods *int32
-	
+
 	// ExtraArgs are additional kubelet arguments
 	ExtraArgs map[string]string
-	
+
 	// FeatureGates are kubelet feature gates
 	FeatureGates map[string]bool
 }
@@ -128,13 +128,13 @@ type KubeletConfig struct {
 type IKSWorkerPoolOptions struct {
 	// ClusterID is the IKS cluster ID
 	ClusterID string
-	
+
 	// WorkerPoolID is the worker pool to add nodes to
 	WorkerPoolID string
-	
+
 	// VPCInstanceID is the ID of the VPC instance
 	VPCInstanceID string
-	
+
 	// Zone is the zone where the instance is created
 	Zone string
 }
@@ -143,22 +143,22 @@ type IKSWorkerPoolOptions struct {
 type ClusterInfo struct {
 	// Endpoint is the API server endpoint
 	Endpoint string
-	
+
 	// CAData is the cluster CA certificate data
 	CAData []byte
-	
+
 	// BootstrapToken is the bootstrap token for joining
 	BootstrapToken *corev1.Secret
-	
+
 	// ClusterName is the name of the cluster
 	ClusterName string
-	
+
 	// IKSClusterID is the IKS cluster ID (if applicable)
 	IKSClusterID string
-	
+
 	// IsIKSManaged indicates if this is an IKS-managed cluster
 	IsIKSManaged bool
-	
+
 	// IKSWorkerPoolID is the IKS worker pool ID (if applicable)
 	IKSWorkerPoolID string
 }
@@ -169,7 +169,7 @@ func ParseKubeconfig(kubeconfig string) (string, []byte, error) {
 	lines := strings.Split(kubeconfig, "\n")
 	var endpoint string
 	var caData []byte
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "server:") {
@@ -184,10 +184,10 @@ func ParseKubeconfig(kubeconfig string) (string, []byte, error) {
 			}
 		}
 	}
-	
+
 	if endpoint == "" {
 		return "", nil, fmt.Errorf("endpoint not found in kubeconfig")
 	}
-	
+
 	return endpoint, caData, nil
 }

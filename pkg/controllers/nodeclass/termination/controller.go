@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -31,10 +31,10 @@ import (
 )
 
 // Controller reconciles IBMNodeClass deletion by terminating associated nodes
-//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch;delete
-//+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;delete
-//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;delete
-//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 type Controller struct {
 	kubeClient client.Client
 	recorder   record.EventRecorder

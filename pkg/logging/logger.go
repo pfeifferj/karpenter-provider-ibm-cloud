@@ -87,7 +87,6 @@ func (l *Logger) GetComponent() string {
 	return l.component
 }
 
-
 // Global component loggers for common use cases
 var (
 	// ProviderLogger is the base logger for provider components

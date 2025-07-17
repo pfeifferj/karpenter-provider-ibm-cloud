@@ -24,19 +24,19 @@ import "context"
 type IKSClientInterface interface {
 	// GetClusterConfig retrieves the kubeconfig for the specified cluster
 	GetClusterConfig(ctx context.Context, clusterID string) (string, error)
-	
+
 	// GetWorkerDetails retrieves detailed information about an IKS worker
 	GetWorkerDetails(ctx context.Context, clusterID, workerID string) (*IKSWorkerDetails, error)
-	
+
 	// GetVPCInstanceIDFromWorker extracts the VPC instance ID from worker details
 	GetVPCInstanceIDFromWorker(ctx context.Context, clusterID, workerID string) (string, error)
-	
+
 	// ListWorkerPools retrieves all worker pools for a cluster
 	ListWorkerPools(ctx context.Context, clusterID string) ([]*WorkerPool, error)
-	
+
 	// GetWorkerPool retrieves a specific worker pool
 	GetWorkerPool(ctx context.Context, clusterID, poolID string) (*WorkerPool, error)
-	
+
 	// ResizeWorkerPool resizes a worker pool by adding one node
 	ResizeWorkerPool(ctx context.Context, clusterID, poolID string, newSize int) error
 }

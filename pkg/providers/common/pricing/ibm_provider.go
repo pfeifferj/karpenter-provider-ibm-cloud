@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,13 +29,13 @@ import (
 
 // IBMPricingProvider implements the Provider interface for IBM Cloud pricing
 type IBMPricingProvider struct {
-	client      *ibm.Client
-	pricingMap  map[string]map[string]float64 // instanceType -> zone -> price
-	lastUpdate  time.Time
-	mutex       sync.RWMutex
-	ttl         time.Duration
-	priceCache  *cache.Cache
-	logger      *logging.Logger
+	client     *ibm.Client
+	pricingMap map[string]map[string]float64 // instanceType -> zone -> price
+	lastUpdate time.Time
+	mutex      sync.RWMutex
+	ttl        time.Duration
+	priceCache *cache.Cache
+	logger     *logging.Logger
 }
 
 // NewIBMPricingProvider creates a new IBM Cloud pricing provider
@@ -43,7 +43,7 @@ func NewIBMPricingProvider(client *ibm.Client) *IBMPricingProvider {
 	return &IBMPricingProvider{
 		client:     client,
 		pricingMap: make(map[string]map[string]float64),
-		ttl:        12 * time.Hour, // Cache pricing for 12 hours
+		ttl:        12 * time.Hour,            // Cache pricing for 12 hours
 		priceCache: cache.New(12 * time.Hour), // Use new cache infrastructure
 		logger:     logging.PricingLogger(),
 	}
@@ -52,14 +52,14 @@ func NewIBMPricingProvider(client *ibm.Client) *IBMPricingProvider {
 // GetPrice returns the hourly price for the specified instance type in the given zone
 func (p *IBMPricingProvider) GetPrice(ctx context.Context, instanceType string, zone string) (float64, error) {
 	cacheKey := fmt.Sprintf("price:%s:%s", instanceType, zone)
-	
+
 	// Try to get from cache first
 	if cached, exists := p.priceCache.Get(cacheKey); exists {
 		return cached.(float64), nil
 	}
 
 	p.mutex.RLock()
-	
+
 	// Check if cache needs refresh
 	if time.Since(p.lastUpdate) > p.ttl {
 		p.mutex.RUnlock()
@@ -79,7 +79,7 @@ func (p *IBMPricingProvider) GetPrice(ctx context.Context, instanceType string, 
 		}
 	}
 	p.mutex.RUnlock()
-	
+
 	// No pricing data available - return error instead of fallback
 	return 0, fmt.Errorf("no pricing data available for instance type %s in zone %s", instanceType, zone)
 }
@@ -138,7 +138,6 @@ func (p *IBMPricingProvider) Refresh(ctx context.Context) error {
 	return nil
 }
 
-
 // fetchPricingData fetches pricing from IBM Cloud Global Catalog API
 func (p *IBMPricingProvider) fetchPricingData(ctx context.Context) (map[string]map[string]float64, error) {
 	if p.client == nil {
@@ -158,7 +157,7 @@ func (p *IBMPricingProvider) fetchPricingData(ctx context.Context) (map[string]m
 	}
 
 	pricingMap := make(map[string]map[string]float64)
-	
+
 	// Define IBM Cloud regions and their zones
 	regionZones := map[string][]string{
 		"us-south": {"us-south-1", "us-south-2", "us-south-3"},
@@ -174,9 +173,9 @@ func (p *IBMPricingProvider) fetchPricingData(ctx context.Context) (map[string]m
 		if entry.Name == nil {
 			continue
 		}
-		
+
 		instanceTypeName := *entry.Name
-		
+
 		// Fetch pricing for this instance type
 		price, err := p.fetchInstancePricing(ctx, catalogClient, entry)
 		if err != nil {
@@ -187,7 +186,7 @@ func (p *IBMPricingProvider) fetchPricingData(ctx context.Context) (map[string]m
 
 		// Initialize map for this instance type
 		pricingMap[instanceTypeName] = make(map[string]float64)
-		
+
 		// IBM Cloud pricing is typically uniform across zones in a region
 		// Set the same price for all zones across all regions
 		for _, zones := range regionZones {
@@ -208,14 +207,14 @@ func (p *IBMPricingProvider) fetchInstancePricing(ctx context.Context, catalogCl
 
 	// Use IBM Cloud GetPricing API to fetch pricing data
 	catalogEntryID := *entry.ID
-	
+
 	// Access the underlying global catalog client to use GetPricing
 	// This requires extending our catalog client interface
 	price, err := p.fetchPricingFromAPI(ctx, catalogEntryID)
 	if err != nil {
 		return 0, fmt.Errorf("fetching pricing for %s: %w", *entry.Name, err)
 	}
-	
+
 	return price, nil
 }
 
@@ -254,5 +253,3 @@ func (p *IBMPricingProvider) fetchPricingFromAPI(ctx context.Context, catalogEnt
 
 	return 0, fmt.Errorf("no pricing data found in API response")
 }
-
-

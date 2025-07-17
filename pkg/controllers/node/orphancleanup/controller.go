@@ -41,16 +41,16 @@ import (
 )
 
 type Controller struct {
-	kubeClient       client.Client
-	ibmClient        *ibm.Client
-	orphanTimeout    time.Duration
-	successfulCount  uint64
+	kubeClient      client.Client
+	ibmClient       *ibm.Client
+	orphanTimeout   time.Duration
+	successfulCount uint64
 }
 
 const (
 	// DefaultOrphanTimeout is the time to wait before cleaning up orphaned nodes
 	DefaultOrphanTimeout = 10 * time.Minute
-	// OrphanCheckInterval is how often to check for orphaned nodes  
+	// OrphanCheckInterval is how often to check for orphaned nodes
 	OrphanCheckInterval = 5 * time.Minute
 	// MinimumOrphanTimeout is the minimum time to wait before cleanup (safety)
 	MinimumOrphanTimeout = 5 * time.Minute
@@ -107,7 +107,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 		if !strings.HasPrefix(node.Spec.ProviderID, "ibm://") {
 			return false
 		}
-		
+
 		// Only process nodes that are managed by Karpenter
 		// Check for Karpenter-specific labels
 		if nodeLabels := node.GetLabels(); nodeLabels != nil {
@@ -119,7 +119,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 				return true
 			}
 		}
-		
+
 		return false
 	})
 
@@ -131,7 +131,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	// Extract instance IDs from provider IDs
 	instanceIDs := make([]string, 0, len(ibmNodes))
 	nodeByInstanceID := make(map[string]corev1.Node)
-	
+
 	for _, node := range ibmNodes {
 		instanceID := c.extractInstanceIDFromProviderID(node.Spec.ProviderID)
 		if instanceID != "" {
@@ -190,23 +190,23 @@ func (c *Controller) extractInstanceIDFromProviderID(providerID string) string {
 	if !strings.HasPrefix(providerID, "ibm://") {
 		return ""
 	}
-	
+
 	// Remove "ibm://" prefix
 	remaining := strings.TrimPrefix(providerID, "ibm://")
-	
+
 	// Split by "/" and get the last part (instance ID)
 	parts := strings.Split(remaining, "/")
 	if len(parts) >= 2 {
 		return parts[len(parts)-1] // Return the last part as instance ID
 	}
-	
+
 	return ""
 }
 
 // getExistingVPCInstances checks which VPC instances still exist in IBM Cloud
 func (c *Controller) getExistingVPCInstances(ctx context.Context, instanceIDs []string) ([]string, error) {
 	logger := log.FromContext(ctx)
-	
+
 	if c.ibmClient == nil {
 		logger.V(1).Info("IBM client is not initialized, skipping instance existence check")
 		return instanceIDs, nil // Return all instances as existing to avoid cleanup
@@ -214,19 +214,19 @@ func (c *Controller) getExistingVPCInstances(ctx context.Context, instanceIDs []
 
 	// For VPC instances, we need to list all instances and check which ones exist
 	existingInstances := make([]string, 0)
-	
+
 	for _, instanceID := range instanceIDs {
 		exists, err := c.ibmClient.VPCInstanceExists(ctx, instanceID)
 		if err != nil {
 			logger.Error(err, "failed to check if VPC instance exists", "instance-id", instanceID)
 			continue
 		}
-		
+
 		if exists {
 			existingInstances = append(existingInstances, instanceID)
 		}
 	}
-	
+
 	return existingInstances, nil
 }
 
@@ -262,7 +262,7 @@ func (c *Controller) processOrphanedNode(ctx context.Context, node corev1.Node) 
 		logger.Error(err, "failed to verify instance existence, skipping cleanup for safety")
 		return nil
 	}
-	
+
 	if exists {
 		logger.V(1).Info("instance still exists, node is not orphaned, skipping cleanup")
 		return nil
@@ -308,7 +308,7 @@ func (c *Controller) isNodeManagedByKarpenter(node corev1.Node) bool {
 			return true
 		}
 	}
-	
+
 	// Also check annotations for additional safety
 	if nodeAnnotations := node.GetAnnotations(); nodeAnnotations != nil {
 		// Check for Karpenter-specific annotations
@@ -319,14 +319,14 @@ func (c *Controller) isNodeManagedByKarpenter(node corev1.Node) bool {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
 // isNodeOrphanedLongEnough checks if a node has been in NotReady state long enough to be considered orphaned
 func (c *Controller) isNodeOrphanedLongEnough(node corev1.Node) bool {
 	now := time.Now()
-	
+
 	// Check if node is NotReady
 	for _, condition := range node.Status.Conditions {
 		if condition.Type == corev1.NodeReady {
@@ -339,7 +339,7 @@ func (c *Controller) isNodeOrphanedLongEnough(node corev1.Node) bool {
 			return false
 		}
 	}
-	
+
 	// If we can't determine the ready state, check node age
 	nodeAge := now.Sub(node.CreationTimestamp.Time)
 	return nodeAge >= c.orphanTimeout
@@ -353,14 +353,14 @@ func (c *Controller) cordonNode(ctx context.Context, node *corev1.Node) error {
 
 	patch := client.MergeFrom(node.DeepCopy())
 	node.Spec.Unschedulable = true
-	
+
 	return c.kubeClient.Patch(ctx, node, patch)
 }
 
 // forceDeletePodsOnNode force deletes all pods on a given node
 func (c *Controller) forceDeletePodsOnNode(ctx context.Context, nodeName string) error {
 	logger := log.FromContext(ctx)
-	
+
 	podList := &corev1.PodList{}
 	if err := c.kubeClient.List(ctx, podList, client.MatchingFields{"spec.nodeName": nodeName}); err != nil {
 		return fmt.Errorf("listing pods on node %s: %w", nodeName, err)

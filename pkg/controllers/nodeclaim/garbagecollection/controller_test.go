@@ -67,7 +67,7 @@ func (m *mockCloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeCl
 func (m *mockCloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.deleteError != nil {
 		return m.deleteError
 	}
@@ -79,7 +79,7 @@ func (m *mockCloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeCl
 func (m *mockCloudProvider) Get(ctx context.Context, providerID string) (*karpv1.NodeClaim, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.getError != nil {
 		return nil, m.getError
 	}
@@ -93,7 +93,7 @@ func (m *mockCloudProvider) Get(ctx context.Context, providerID string) (*karpv1
 func (m *mockCloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.listError != nil {
 		return nil, m.listError
 	}
@@ -129,7 +129,7 @@ func testScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = scheme.AddToScheme(s)
 	_ = corev1.AddToScheme(s)
-	
+
 	// Register Karpenter v1 types manually
 	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
 	s.AddKnownTypes(gv,
@@ -139,7 +139,7 @@ func testScheme() *runtime.Scheme {
 		&karpv1.NodePoolList{},
 	)
 	metav1.AddToGroupVersion(s, gv)
-	
+
 	// Register IBM v1alpha1 types
 	ibmGV := schema.GroupVersion{Group: "karpenter.ibm.sh", Version: "v1alpha1"}
 	s.AddKnownTypes(ibmGV,
@@ -147,7 +147,7 @@ func testScheme() *runtime.Scheme {
 		&v1alpha1.IBMNodeClassList{},
 	)
 	metav1.AddToGroupVersion(s, ibmGV)
-	
+
 	return s
 }
 
@@ -186,9 +186,9 @@ func testNode(name, providerID string) *corev1.Node {
 func TestNewController(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(testScheme()).Build()
 	cloudProvider := newMockCloudProvider()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	assert.NotNil(t, controller)
 	assert.Equal(t, kubeClient, controller.kubeClient)
 	assert.Equal(t, cloudProvider, controller.cloudProvider)
@@ -200,22 +200,22 @@ func TestReconcile_NoOrphanedInstances(t *testing.T) {
 	cloudProvider := newMockCloudProvider()
 	cloudProvider.nodeClaims["provider-1"] = testNodeClaim("cloud-1", "provider-1", time.Now().Add(-time.Hour))
 	cloudProvider.nodeClaims["provider-2"] = testNodeClaim("cloud-2", "provider-2", time.Now().Add(-time.Hour))
-	
+
 	// Create matching cluster NodeClaims that have successfully registered (have NodeName)
 	clusterNC1 := testNodeClaim("cluster-1", "provider-1", time.Now().Add(-time.Hour))
 	clusterNC1.Status.NodeName = "node-1" // Indicates successful registration
 	clusterNC2 := testNodeClaim("cluster-2", "provider-2", time.Now().Add(-time.Hour))
 	clusterNC2.Status.NodeName = "node-2" // Indicates successful registration
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(clusterNC1, clusterNC2).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 	assert.Empty(t, cloudProvider.deletedProviderIDs) // No instances should be deleted
@@ -226,19 +226,19 @@ func TestReconcile_GarbageCollectOrphanedInstance(t *testing.T) {
 	// Create cloud provider instance without matching cluster NodeClaim
 	cloudProvider := newMockCloudProvider()
 	cloudProvider.nodeClaims["orphaned-provider-id"] = testNodeClaim("orphaned", "orphaned-provider-id", time.Now().Add(-time.Minute))
-	
+
 	// Create a different NodeClaim in cluster (not matching)
 	clusterNC := testNodeClaim("cluster-1", "different-provider-id", time.Now().Add(-time.Hour))
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(clusterNC).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 	assert.Contains(t, cloudProvider.deletedProviderIDs, "orphaned-provider-id")
@@ -249,15 +249,15 @@ func TestReconcile_SkipRecentlyCreatedInstances(t *testing.T) {
 	// Create cloud provider instance created less than 30 seconds ago
 	cloudProvider := newMockCloudProvider()
 	cloudProvider.nodeClaims["new-provider-id"] = testNodeClaim("new", "new-provider-id", time.Now().Add(-time.Second*10))
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 	assert.Empty(t, cloudProvider.deletedProviderIDs) // Should not delete recent instances
@@ -270,15 +270,15 @@ func TestReconcile_SkipTerminatingInstances(t *testing.T) {
 	terminatingNC := testNodeClaim("terminating", "terminating-provider-id", time.Now().Add(-time.Hour))
 	terminatingNC.DeletionTimestamp = &now
 	cloudProvider.nodeClaims["terminating-provider-id"] = terminatingNC
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 	assert.Empty(t, cloudProvider.deletedProviderIDs) // Should not delete terminating instances
@@ -288,23 +288,23 @@ func TestReconcile_DeleteOrphanedNode(t *testing.T) {
 	// Create orphaned cloud instance and corresponding Node
 	cloudProvider := newMockCloudProvider()
 	cloudProvider.nodeClaims["orphaned-provider-id"] = testNodeClaim("orphaned", "orphaned-provider-id", time.Now().Add(-time.Hour))
-	
+
 	// Create orphaned Node
 	orphanedNode := testNode("orphaned-node", "orphaned-provider-id")
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(orphanedNode).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 	assert.Contains(t, cloudProvider.deletedProviderIDs, "orphaned-provider-id")
-	
+
 	// Verify node was deleted
 	var node corev1.Node
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "orphaned-node"}, &node)
@@ -314,15 +314,15 @@ func TestReconcile_DeleteOrphanedNode(t *testing.T) {
 func TestReconcile_HandleCloudProviderListError(t *testing.T) {
 	cloudProvider := newMockCloudProvider()
 	cloudProvider.listError = errors.New("cloud provider list error")
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "listing cloudprovider nodeclaims")
 	assert.Zero(t, result.RequeueAfter)
@@ -332,15 +332,15 @@ func TestReconcile_HandleCloudProviderDeleteError(t *testing.T) {
 	cloudProvider := newMockCloudProvider()
 	cloudProvider.nodeClaims["orphaned-provider-id"] = testNodeClaim("orphaned", "orphaned-provider-id", time.Now().Add(-time.Hour))
 	cloudProvider.deleteError = errors.New("cloud provider delete error")
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	_, err := controller.Reconcile(context.Background())
-	
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cloud provider delete error")
 }
@@ -349,15 +349,15 @@ func TestReconcile_IgnoreNodeClaimNotFoundError(t *testing.T) {
 	cloudProvider := newMockCloudProvider()
 	cloudProvider.nodeClaims["orphaned-provider-id"] = testNodeClaim("orphaned", "orphaned-provider-id", time.Now().Add(-time.Hour))
 	cloudProvider.deleteError = cloudprovider.NewNodeClaimNotFoundError(errors.New("instance not found"))
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err) // NodeClaimNotFound errors should be ignored
 	assert.NotZero(t, result.RequeueAfter)
 }
@@ -394,19 +394,19 @@ func TestReconcile_RequeueAfterLogic(t *testing.T) {
 			expectedMax:     time.Minute * 2,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cloudProvider := newMockCloudProvider()
 			kubeClient := fake.NewClientBuilder().
 				WithScheme(testScheme()).
 				Build()
-			
+
 			controller := NewController(kubeClient, cloudProvider)
 			controller.successfulCount = tt.successfulCount
-			
+
 			result, err := controller.Reconcile(context.Background())
-			
+
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, result.RequeueAfter, tt.expectedMin)
 			assert.LessOrEqual(t, result.RequeueAfter, tt.expectedMax)
@@ -422,22 +422,22 @@ func TestReconcile_MultipleOrphanedInstances(t *testing.T) {
 		providerID := fmt.Sprintf("orphaned-provider-%d", i)
 		cloudProvider.nodeClaims[providerID] = testNodeClaim(fmt.Sprintf("orphaned-%d", i), providerID, time.Now().Add(-time.Hour))
 	}
-	
+
 	// Create some matching NodeClaims (not orphaned) that have successfully registered
 	clusterNC1 := testNodeClaim("cluster-1", "cluster-provider-1", time.Now().Add(-time.Hour))
 	clusterNC1.Status.NodeName = "node-1" // Indicates successful registration
 	clusterNC2 := testNodeClaim("cluster-2", "cluster-provider-2", time.Now().Add(-time.Hour))
 	clusterNC2.Status.NodeName = "node-2" // Indicates successful registration
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(clusterNC1, clusterNC2).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 	assert.Len(t, cloudProvider.deletedProviderIDs, 5) // All orphaned instances should be deleted
@@ -450,7 +450,7 @@ func TestController_Register(t *testing.T) {
 	// This test verifies the controller can be registered with the manager
 	// Since we're using singleton pattern, we just verify no errors occur
 	controller := &Controller{}
-	
+
 	// We can't easily test the actual registration without a full manager
 	// but we can verify the method exists and returns nil
 	assert.NotNil(t, controller)
@@ -458,48 +458,48 @@ func TestController_Register(t *testing.T) {
 
 func TestGarbageCollect_NodeNotFound(t *testing.T) {
 	cloudProvider := newMockCloudProvider()
-	
+
 	// Create NodeClaim in cloud provider
 	nc := testNodeClaim("test", "test-provider-id", time.Now().Add(-time.Hour))
 	cloudProvider.nodeClaims["test-provider-id"] = nc
-	
+
 	// Create empty node list (no matching node)
 	nodeList := &corev1.NodeList{Items: []corev1.Node{}}
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	err := controller.garbageCollect(context.Background(), nc, nodeList)
-	
+
 	assert.NoError(t, err)
 	assert.Contains(t, cloudProvider.deletedProviderIDs, "test-provider-id")
 }
 
 func TestGarbageCollect_HandleNodeDeleteError(t *testing.T) {
 	cloudProvider := newMockCloudProvider()
-	
+
 	// Create NodeClaim in cloud provider
 	nc := testNodeClaim("test", "test-provider-id", time.Now().Add(-time.Hour))
 	cloudProvider.nodeClaims["test-provider-id"] = nc
-	
+
 	// Create matching node
 	node := testNode("test-node", "test-provider-id")
 	nodeList := &corev1.NodeList{Items: []corev1.Node{*node}}
-	
+
 	// Create a client that will fail on delete
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(node).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	// This should succeed even if node delete has issues (client.IgnoreNotFound)
 	err := controller.garbageCollect(context.Background(), nc, nodeList)
-	
+
 	assert.NoError(t, err)
 	assert.Contains(t, cloudProvider.deletedProviderIDs, "test-provider-id")
 }
@@ -554,7 +554,7 @@ func TestReconcile_HandleStuckTerminatingNodeClaims(t *testing.T) {
 	controller := NewController(kubeClient, cloudProvider)
 
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 
@@ -564,7 +564,7 @@ func TestReconcile_HandleStuckTerminatingNodeClaims(t *testing.T) {
 	if err == nil {
 		assert.Empty(t, updatedNodeClaim.Finalizers, "stuck NodeClaim finalizers should be removed")
 	}
-	
+
 	// Verify cloud provider delete was called for stuck instance
 	assert.Contains(t, cloudProvider.deletedProviderIDs, "ibm:///us-south/stuck-instance")
 }
@@ -599,7 +599,7 @@ func TestReconcile_SkipRecentTerminatingNodeClaims(t *testing.T) {
 	controller := NewController(kubeClient, cloudProvider)
 
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 
@@ -608,7 +608,7 @@ func TestReconcile_SkipRecentTerminatingNodeClaims(t *testing.T) {
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "recent-nodeclaim"}, &updatedNodeClaim)
 	assert.NoError(t, err)
 	assert.Contains(t, updatedNodeClaim.Finalizers, "test-finalizer", "recent NodeClaim finalizers should remain")
-	
+
 	// Should not delete recent instance
 	assert.NotContains(t, cloudProvider.deletedProviderIDs, "ibm:///us-south/recent-instance")
 }
@@ -668,16 +668,16 @@ func TestForceCleanupStuckNodeClaim_WithStuckPods(t *testing.T) {
 	controller := NewController(kubeClient, cloudProvider)
 
 	err := controller.forceCleanupStuckNodeClaim(context.Background(), stuckNodeClaim)
-	
+
 	assert.NoError(t, err)
-	
+
 	// Verify finalizers were removed from NodeClaim
 	var updatedNodeClaim karpv1.NodeClaim
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "stuck-nodeclaim"}, &updatedNodeClaim)
 	if err == nil {
 		assert.Empty(t, updatedNodeClaim.Finalizers)
 	}
-	
+
 	// Verify cloud provider delete was called
 	assert.Contains(t, cloudProvider.deletedProviderIDs, "ibm:///us-south/stuck-instance")
 }
@@ -685,7 +685,7 @@ func TestForceCleanupStuckNodeClaim_WithStuckPods(t *testing.T) {
 func TestHandleOrphanedNodes_WithFinalizers(t *testing.T) {
 	// Create cloud provider with no matching instances
 	cloudProvider := newMockCloudProvider()
-	
+
 	// Create orphaned node with finalizers
 	orphanedNode := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -699,22 +699,22 @@ func TestHandleOrphanedNodes_WithFinalizers(t *testing.T) {
 			ProviderID: "ibm:///eu-de/orphaned-instance",
 		},
 	}
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(orphanedNode).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	// Create empty node list and cloud node claims (no matching instances)
 	nodeList := &corev1.NodeList{Items: []corev1.Node{*orphanedNode}}
 	cloudNodeClaims := []*karpv1.NodeClaim{}
-	
+
 	err := controller.handleOrphanedNodes(context.Background(), nodeList, cloudNodeClaims)
-	
+
 	assert.NoError(t, err)
-	
+
 	// Verify node was deleted (should not exist anymore)
 	var updatedNode corev1.Node
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "orphaned-node"}, &updatedNode)
@@ -724,7 +724,7 @@ func TestHandleOrphanedNodes_WithFinalizers(t *testing.T) {
 func TestHandleOrphanedNodes_SkipNonKarpenterNodes(t *testing.T) {
 	// Create cloud provider with no matching instances
 	cloudProvider := newMockCloudProvider()
-	
+
 	// Create non-Karpenter node (no karpenter.sh/nodepool label and non-IBM provider ID)
 	nonKarpenterNode := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -734,22 +734,22 @@ func TestHandleOrphanedNodes_SkipNonKarpenterNodes(t *testing.T) {
 			ProviderID: "aws:///us-east-1a/i-1234567890abcdef0",
 		},
 	}
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(nonKarpenterNode).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	// Create node list and empty cloud node claims
 	nodeList := &corev1.NodeList{Items: []corev1.Node{*nonKarpenterNode}}
 	cloudNodeClaims := []*karpv1.NodeClaim{}
-	
+
 	err := controller.handleOrphanedNodes(context.Background(), nodeList, cloudNodeClaims)
-	
+
 	assert.NoError(t, err)
-	
+
 	// Verify non-Karpenter node was NOT deleted
 	var updatedNode corev1.Node
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "non-karpenter-node"}, &updatedNode)
@@ -767,18 +767,18 @@ func TestRemoveNodeFinalizers(t *testing.T) {
 			ProviderID: "ibm:///eu-de/test-instance",
 		},
 	}
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(nodeWithFinalizers).
 		Build()
-	
+
 	controller := NewController(kubeClient, newMockCloudProvider())
-	
+
 	err := controller.removeNodeFinalizers(context.Background(), nodeWithFinalizers)
-	
+
 	assert.NoError(t, err)
-	
+
 	// Verify finalizers were removed
 	var updatedNode corev1.Node
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, &updatedNode)
@@ -796,18 +796,18 @@ func TestRemoveNodeFinalizers_NoFinalizers(t *testing.T) {
 			ProviderID: "ibm:///eu-de/test-instance",
 		},
 	}
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(nodeWithoutFinalizers).
 		Build()
-	
+
 	controller := NewController(kubeClient, newMockCloudProvider())
-	
+
 	err := controller.removeNodeFinalizers(context.Background(), nodeWithoutFinalizers)
-	
+
 	assert.NoError(t, err)
-	
+
 	// Verify node is unchanged
 	var updatedNode corev1.Node
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, &updatedNode)
@@ -819,19 +819,19 @@ func TestRemoveNodeFinalizers_NodeNotFound(t *testing.T) {
 	// Create node object but don't add it to the client
 	nonExistentNode := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "non-existent-node",
+			Name:       "non-existent-node",
 			Finalizers: []string{"registration.nodeclaim.ibm.sh/finalizer"},
 		},
 	}
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		Build()
-	
+
 	controller := NewController(kubeClient, newMockCloudProvider())
-	
+
 	err := controller.removeNodeFinalizers(context.Background(), nonExistentNode)
-	
+
 	assert.NoError(t, err, "should ignore NotFound errors")
 }
 
@@ -879,7 +879,7 @@ func TestNormalizeProviderID(t *testing.T) {
 	}
 
 	controller := NewController(nil, nil)
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := controller.normalizeProviderID(tt.input)
@@ -892,20 +892,20 @@ func TestReconcile_NormalizedProviderIDMatching(t *testing.T) {
 	// Create cloud provider instance with zone-prefixed ID
 	cloudProvider := newMockCloudProvider()
 	cloudProvider.nodeClaims["ibm:///eu-de/02c7_7905bd15-f7b7-4812-9c1a-e3a46fe629df"] = testNodeClaim("cloud-1", "ibm:///eu-de/02c7_7905bd15-f7b7-4812-9c1a-e3a46fe629df", time.Now().Add(-time.Hour))
-	
+
 	// Create cluster NodeClaim with non-prefixed ID (as would happen during node registration)
 	clusterNC := testNodeClaim("cluster-1", "ibm:///eu-de/7905bd15-f7b7-4812-9c1a-e3a46fe629df", time.Now().Add(-time.Hour))
 	clusterNC.Status.NodeName = "node-1" // Indicates successful registration
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(clusterNC).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	result, err := controller.Reconcile(context.Background())
-	
+
 	assert.NoError(t, err)
 	assert.NotZero(t, result.RequeueAfter)
 	// Should NOT delete the cloud instance because normalized IDs match
@@ -916,7 +916,7 @@ func TestHandleOrphanedNodes_NormalizedProviderIDMatching(t *testing.T) {
 	// Create cloud provider instance with zone-prefixed ID
 	cloudProvider := newMockCloudProvider()
 	cloudNodeClaim := testNodeClaim("cloud-1", "ibm:///eu-de/02c7_7905bd15-f7b7-4812-9c1a-e3a46fe629df", time.Now().Add(-time.Hour))
-	
+
 	// Create Kubernetes node with non-prefixed ID (as would happen during node registration)
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -929,21 +929,21 @@ func TestHandleOrphanedNodes_NormalizedProviderIDMatching(t *testing.T) {
 			ProviderID: "ibm:///eu-de/7905bd15-f7b7-4812-9c1a-e3a46fe629df",
 		},
 	}
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(node).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	nodeList := &corev1.NodeList{Items: []corev1.Node{*node}}
 	cloudNodeClaims := []*karpv1.NodeClaim{cloudNodeClaim}
-	
+
 	err := controller.handleOrphanedNodes(context.Background(), nodeList, cloudNodeClaims)
-	
+
 	assert.NoError(t, err)
-	
+
 	// Should NOT delete the node because normalized IDs match
 	var updatedNode corev1.Node
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "karpenter-node"}, &updatedNode)
@@ -953,7 +953,7 @@ func TestHandleOrphanedNodes_NormalizedProviderIDMatching(t *testing.T) {
 func TestHandleOrphanedNodes_RealOrphanedNode(t *testing.T) {
 	// Create cloud provider with no matching instances
 	cloudProvider := newMockCloudProvider()
-	
+
 	// Create orphaned Kubernetes node
 	orphanedNode := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -966,21 +966,21 @@ func TestHandleOrphanedNodes_RealOrphanedNode(t *testing.T) {
 			ProviderID: "ibm:///eu-de/orphaned-instance-id",
 		},
 	}
-	
+
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(testScheme()).
 		WithObjects(orphanedNode).
 		Build()
-	
+
 	controller := NewController(kubeClient, cloudProvider)
-	
+
 	nodeList := &corev1.NodeList{Items: []corev1.Node{*orphanedNode}}
 	cloudNodeClaims := []*karpv1.NodeClaim{} // No matching cloud instances
-	
+
 	err := controller.handleOrphanedNodes(context.Background(), nodeList, cloudNodeClaims)
-	
+
 	assert.NoError(t, err)
-	
+
 	// Should delete the orphaned node
 	var updatedNode corev1.Node
 	err = kubeClient.Get(context.Background(), client.ObjectKey{Name: "orphaned-node"}, &updatedNode)

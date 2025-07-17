@@ -35,20 +35,20 @@ import (
 const (
 	// NodeClaimRegistrationFinalizer is added to NodeClaims to ensure proper cleanup
 	NodeClaimRegistrationFinalizer = "registration.nodeclaim.ibm.sh/finalizer"
-	
+
 	// Labels and taints for registered nodes
-	RegisteredLabel     = "karpenter.sh/registered"
-	UnregisteredTaint   = "karpenter.sh/unregistered"
-	NodePoolLabel       = "karpenter.sh/nodepool"
-	NodeClassLabel      = "karpenter.ibm.sh/ibmnodeclass"
-	ProvisionerLabel    = "provisioner"
-	ProvisionedTaint    = "karpenter.ibm.sh/provisioned"
+	RegisteredLabel   = "karpenter.sh/registered"
+	UnregisteredTaint = "karpenter.sh/unregistered"
+	NodePoolLabel     = "karpenter.sh/nodepool"
+	NodeClassLabel    = "karpenter.ibm.sh/ibmnodeclass"
+	ProvisionerLabel  = "provisioner"
+	ProvisionedTaint  = "karpenter.ibm.sh/provisioned"
 )
 
 // Controller reconciles NodeClaim registration with corresponding Nodes
-//+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;update;patch
-//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
-//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch
 type Controller struct {
 	kubeClient client.Client
 }
@@ -63,7 +63,7 @@ func NewController(kubeClient client.Client) (*Controller, error) {
 // Reconcile executes a control loop for NodeClaim registration
 func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithValues("nodeclaim", req.Name)
-	
+
 	// Get the NodeClaim
 	nodeClaim := &karpv1.NodeClaim{}
 	if err := c.kubeClient.Get(ctx, req.NamespacedName, nodeClaim); err != nil {
@@ -120,7 +120,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
-	logger.Info("successfully processed nodeclaim", "node", node.Name, 
+	logger.Info("successfully processed nodeclaim", "node", node.Name,
 		"registered", c.isNodeClaimRegistered(nodeClaim),
 		"initialized", nodeClaim.StatusConditions().Get(karpv1.ConditionTypeInitialized).IsTrue())
 	return reconcile.Result{}, nil
@@ -129,7 +129,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 // handleDeletion handles NodeClaim deletion cleanup
 func (c *Controller) handleDeletion(ctx context.Context, nodeClaim *karpv1.NodeClaim) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithValues("nodeclaim", nodeClaim.Name)
-	
+
 	if !controllerutil.ContainsFinalizer(nodeClaim, NodeClaimRegistrationFinalizer) {
 		return reconcile.Result{}, nil
 	}
@@ -141,7 +141,7 @@ func (c *Controller) handleDeletion(ctx context.Context, nodeClaim *karpv1.NodeC
 	if err := c.kubeClient.Patch(ctx, nodeClaim, patch); err != nil {
 		return reconcile.Result{}, fmt.Errorf("removing finalizer: %w", err)
 	}
-	
+
 	logger.V(1).Info("removed registration finalizer from nodeclaim")
 	return reconcile.Result{}, nil
 }
@@ -160,7 +160,7 @@ func (c *Controller) isNodeClaimFullyInitialized(nodeClaim *karpv1.NodeClaim) bo
 // findNodeForNodeClaim finds the Node corresponding to a NodeClaim
 func (c *Controller) findNodeForNodeClaim(ctx context.Context, nodeClaim *karpv1.NodeClaim) (*corev1.Node, error) {
 	logger := log.FromContext(ctx).WithValues("nodeclaim", nodeClaim.Name)
-	
+
 	// If NodeClaim already has a node name, use it
 	if nodeClaim.Status.NodeName != "" {
 		logger.V(1).Info("looking for node by nodeclaim status node name", "nodeName", nodeClaim.Status.NodeName)
@@ -207,7 +207,7 @@ func (c *Controller) findNodeForNodeClaim(ctx context.Context, nodeClaim *karpv1
 func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.NodeClaim, node *corev1.Node) error {
 	logger := log.FromContext(ctx).WithValues("nodeclaim", nodeClaim.Name, "node", node.Name)
 	logger.Info("syncing nodeclaim properties to node")
-	
+
 	patch := client.MergeFrom(node.DeepCopy())
 	modified := false
 
@@ -288,7 +288,7 @@ func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.
 // syncTaintsToNode syncs taints from NodeClaim to Node
 func (c *Controller) syncTaintsToNode(nodeClaim *karpv1.NodeClaim, node *corev1.Node) bool {
 	modified := false
-	
+
 	for _, ncTaint := range nodeClaim.Spec.Taints {
 		found := false
 		for _, nodeTaint := range node.Spec.Taints {
@@ -297,7 +297,7 @@ func (c *Controller) syncTaintsToNode(nodeClaim *karpv1.NodeClaim, node *corev1.
 				break
 			}
 		}
-		
+
 		if !found {
 			node.Spec.Taints = append(node.Spec.Taints, corev1.Taint{
 				Key:    ncTaint.Key,
@@ -307,7 +307,7 @@ func (c *Controller) syncTaintsToNode(nodeClaim *karpv1.NodeClaim, node *corev1.
 			modified = true
 		}
 	}
-	
+
 	return modified
 }
 
@@ -323,7 +323,7 @@ func (c *Controller) removeTaintFromNode(node *corev1.Node, taintKey string) boo
 // updateNodeClaimStatus updates the NodeClaim status to mark it as registered
 func (c *Controller) updateNodeClaimStatus(ctx context.Context, nodeClaim *karpv1.NodeClaim, node *corev1.Node) error {
 	patch := client.MergeFrom(nodeClaim.DeepCopy())
-	
+
 	// Update node name if not set
 	if nodeClaim.Status.NodeName != node.Name {
 		nodeClaim.Status.NodeName = node.Name
@@ -331,7 +331,7 @@ func (c *Controller) updateNodeClaimStatus(ctx context.Context, nodeClaim *karpv
 
 	// Set registered condition using the proper StatusConditions interface
 	nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeRegistered)
-	
+
 	// Check if the node is ready and set Initialized condition
 	for _, condition := range node.Status.Conditions {
 		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
