@@ -81,6 +81,9 @@ type Options struct {
 	// CNIPlugin is the detected CNI plugin (calico, cilium, etc)
 	CNIPlugin string
 	
+	// CNIVersion is the detected CNI plugin version
+	CNIVersion string
+	
 	// DNSClusterIP is the cluster DNS service IP
 	DNSClusterIP string
 	
