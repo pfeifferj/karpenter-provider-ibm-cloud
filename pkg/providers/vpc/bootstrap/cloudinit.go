@@ -41,6 +41,40 @@ REGION="{{ .Region }}"
 ZONE="{{ .Zone }}"
 NODE_NAME="{{ .NodeName }}"
 
+# Status reporting function
+report_status() {
+    local status="$1"
+    local phase="$2"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    echo "$(date): 📊 Reporting status: $status, phase: $phase"
+    
+    # Use instance ID passed from template
+    if [[ -n "$INSTANCE_ID" && "$INSTANCE_ID" != "unknown" ]]; then
+        echo "$(date): Instance ID: $INSTANCE_ID"
+        echo "$(date): NodeClaim: $NODE_NAME" 
+        echo "$(date): Status: $status, Phase: $phase, Time: $timestamp" >> /var/log/karpenter-status.log
+        
+        # Create structured status for operator polling
+        cat > /var/log/karpenter-bootstrap-status.json << EOF
+{
+    "instanceId": "$INSTANCE_ID",
+    "nodeClaimName": "$NODE_NAME",
+    "status": "$status",
+    "phase": "$phase",
+    "timestamp": "$timestamp",
+    "region": "$REGION",
+    "zone": "$ZONE"
+}
+EOF
+    else
+        echo "$(date): ⚠️ Instance ID not available for status reporting"
+    fi
+    
+    # Always log status locally for debugging
+    echo "$timestamp|$INSTANCE_ID|$NODE_NAME|$status|$phase" >> /var/log/karpenter-bootstrap-status.log
+}
+
 # Instance metadata
 PRIVATE_IP=$(hostname -I | awk '{print $1}')
 {{- if .InstanceID }}
@@ -51,6 +85,9 @@ INSTANCE_ID=$(dmidecode -s system-uuid 2>/dev/null || echo "unknown")
 
 # Use NodeClaim name as hostname for proper Karpenter registration
 HOSTNAME="$NODE_NAME"
+
+# Report bootstrap start
+report_status "starting" "hostname-setup"
 
 # Set hostname
 hostnamectl set-hostname "$HOSTNAME"
@@ -82,12 +119,18 @@ chown -R root:root /var/lib/calico /var/run/calico /var/log/calico
 
 echo "$(date): ✅ System configured"
 
+# Report system configuration complete
+report_status "configuring" "system-setup"
+
 # Install prerequisites
 echo "$(date): Installing prerequisites..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y curl apt-transport-https ca-certificates gnupg lsb-release dmidecode jq
 echo "$(date): ✅ Prerequisites installed"
+
+# Report prerequisites installed
+report_status "configuring" "packages-installed"
 
 # Install container runtime based on configuration
 CONTAINER_RUNTIME="{{ .ContainerRuntime }}"
@@ -230,6 +273,9 @@ case "$CONTAINER_RUNTIME" in
         ;;
 esac
 
+# Report container runtime installed
+report_status "configuring" "container-runtime-ready"
+
 # Install Kubernetes components
 echo "$(date): Installing Kubernetes components..."
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
@@ -238,6 +284,9 @@ apt-get update
 apt-get install -y kubelet kubectl
 apt-mark hold kubelet kubectl
 echo "$(date): ✅ Kubernetes components installed"
+
+# Report kubelet installed
+report_status "configuring" "kubelet-installed"
 
 # Create directories
 mkdir -p /etc/kubernetes/pki /var/lib/kubelet /etc/systemd/system/kubelet.service.d
@@ -492,12 +541,18 @@ echo "$(date): ✅ CNI configuration installed for $CNI_PLUGIN"
 # Start kubelet
 systemctl daemon-reload
 systemctl enable kubelet
+
+# Report kubelet starting
+report_status "starting" "kubelet-startup"
+
 systemctl start kubelet
 
 echo "$(date): Waiting for node to be ready..."
 for i in {1..60}; do
   if systemctl is-active kubelet >/dev/null 2>&1; then
     echo "$(date): ✅ Kubelet is running"
+    # Report kubelet successfully started
+    report_status "running" "kubelet-active"
     break
   fi
   sleep 5
@@ -684,6 +739,9 @@ fi
 echo "$(date): Running custom user data..."
 {{ .CustomUserData }}
 {{ end }}
+
+# Report bootstrap completion
+report_status "completed" "bootstrap-finished"
 
 echo "$(date): ===== Bootstrap completed ====="
 `
