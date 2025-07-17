@@ -120,55 +120,55 @@ func TestProviderFactory_GetInstanceProvider(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name              string
-		nodeClass         *v1alpha1.IBMNodeClass
-		envClusterID      string
-		expectedMode      commonTypes.ProviderMode
-		expectError       bool
-		errorContains     string
-		validateProvider  func(*testing.T, commonTypes.InstanceProvider)
+		name             string
+		nodeClass        *v1alpha1.IBMNodeClass
+		envClusterID     string
+		expectedMode     commonTypes.ProviderMode
+		expectError      bool
+		errorContains    string
+		validateProvider func(*testing.T, commonTypes.InstanceProvider)
 	}{
 		{
-			name:         "VPC mode - no IKS configuration (nil client)",
-			nodeClass:    getVPCNodeClass(),
-			expectedMode: commonTypes.VPCMode,
-			expectError:  true,
+			name:          "VPC mode - no IKS configuration (nil client)",
+			nodeClass:     getVPCNodeClass(),
+			expectedMode:  commonTypes.VPCMode,
+			expectError:   true,
 			errorContains: "IBM client cannot be nil",
 		},
 		{
-			name:         "IKS mode - NodeClass has IKS cluster ID (nil client)",
-			nodeClass:    getIKSNodeClass(),
-			expectedMode: commonTypes.IKSMode,
-			expectError:  true,
+			name:          "IKS mode - NodeClass has IKS cluster ID (nil client)",
+			nodeClass:     getIKSNodeClass(),
+			expectedMode:  commonTypes.IKSMode,
+			expectError:   true,
 			errorContains: "IBM client cannot be nil",
 		},
 		{
-			name: "IKS mode - environment variable (nil client)",
-			nodeClass: getVPCNodeClass(), // VPC NodeClass but env var should override
-			envClusterID: "env-cluster-id",
-			expectedMode: commonTypes.IKSMode,
-			expectError:  true,
+			name:          "IKS mode - environment variable (nil client)",
+			nodeClass:     getVPCNodeClass(), // VPC NodeClass but env var should override
+			envClusterID:  "env-cluster-id",
+			expectedMode:  commonTypes.IKSMode,
+			expectError:   true,
 			errorContains: "IBM client cannot be nil",
 		},
 		{
-			name:         "IKS mode - bootstrap mode set to iks-api (nil client)",
-			nodeClass:    getBootstrapModeNodeClass("iks-api"),
-			expectedMode: commonTypes.IKSMode,
-			expectError:  true,
+			name:          "IKS mode - bootstrap mode set to iks-api (nil client)",
+			nodeClass:     getBootstrapModeNodeClass("iks-api"),
+			expectedMode:  commonTypes.IKSMode,
+			expectError:   true,
 			errorContains: "IBM client cannot be nil",
 		},
 		{
-			name:         "VPC mode - bootstrap mode set to cloud-init (nil client)",
-			nodeClass:    getBootstrapModeNodeClass("cloud-init"),
-			expectedMode: commonTypes.VPCMode,
-			expectError:  true,
+			name:          "VPC mode - bootstrap mode set to cloud-init (nil client)",
+			nodeClass:     getBootstrapModeNodeClass("cloud-init"),
+			expectedMode:  commonTypes.VPCMode,
+			expectError:   true,
 			errorContains: "IBM client cannot be nil",
 		},
 		{
-			name:         "VPC mode - bootstrap mode set to auto (nil client)",
-			nodeClass:    getBootstrapModeNodeClass("auto"),
-			expectedMode: commonTypes.VPCMode, // Should default to VPC when no IKS indicators
-			expectError:  true,
+			name:          "VPC mode - bootstrap mode set to auto (nil client)",
+			nodeClass:     getBootstrapModeNodeClass("auto"),
+			expectedMode:  commonTypes.VPCMode, // Should default to VPC when no IKS indicators
+			expectError:   true,
 			errorContains: "IBM client cannot be nil",
 		},
 	}
@@ -266,9 +266,9 @@ func TestProviderFactory_DetermineProviderMode(t *testing.T) {
 			expectedMode: commonTypes.IKSMode,
 		},
 		{
-			name:             "VPC mode - auto bootstrap mode with no IKS indicators",
-			nodeClass:        getBootstrapModeNodeClass("auto"),
-			expectedMode:     commonTypes.VPCMode,
+			name:         "VPC mode - auto bootstrap mode with no IKS indicators",
+			nodeClass:    getBootstrapModeNodeClass("auto"),
+			expectedMode: commonTypes.VPCMode,
 		},
 		{
 			name:         "IKS mode - auto bootstrap mode with IKS cluster ID",
@@ -371,7 +371,7 @@ func TestProviderFactory_EdgeCases(t *testing.T) {
 
 func TestProviderFactory_ModeSwitching(t *testing.T) {
 	t.Skip("Skipping mode switching test - requires valid IBM client for provider creation")
-	
+
 	// This test would need a mock IBM client to properly test mode switching
 	// since provider constructors now validate client is not nil
 }

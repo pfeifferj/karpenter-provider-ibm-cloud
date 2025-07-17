@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -182,11 +182,11 @@ func TestController_Reconcile(t *testing.T) {
 			scheme := getTestScheme()
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
-			
+
 			if tt.nodeClass != nil {
 				builder = builder.WithRuntimeObjects(tt.nodeClass)
 			}
-			
+
 			for _, node := range tt.nodes {
 				builder = builder.WithRuntimeObjects(node)
 			}
@@ -237,7 +237,7 @@ func TestController_Reconcile(t *testing.T) {
 func TestController_ReconcileWithEventRecording(t *testing.T) {
 	ctx := context.Background()
 	scheme := getTestScheme()
-	
+
 	nodeClass := getTestNodeClassWithDeletion()
 	node := getTestNode("test-nodeclass")
 
@@ -245,9 +245,9 @@ func TestController_ReconcileWithEventRecording(t *testing.T) {
 		WithScheme(scheme).
 		WithRuntimeObjects(nodeClass, node).
 		Build()
-	
+
 	recorder := record.NewFakeRecorder(10)
-	
+
 	controller, err := NewController(fakeClient, recorder)
 	require.NoError(t, err)
 
@@ -262,7 +262,7 @@ func TestController_ReconcileWithEventRecording(t *testing.T) {
 	for event := range recorder.Events {
 		events = append(events, event)
 	}
-	
+
 	require.Len(t, events, 1)
 	assert.Contains(t, events[0], "DeletedNode")
 	assert.Contains(t, events[0], "test-node")
@@ -280,7 +280,7 @@ func TestController_ReconcileEdgeCases(t *testing.T) {
 			WithScheme(scheme).
 			WithRuntimeObjects(nodeClass, node).
 			Build()
-		
+
 		recorder := record.NewFakeRecorder(10)
 		controller, err := NewController(fakeClient, recorder)
 		require.NoError(t, err)
@@ -311,7 +311,7 @@ func TestController_ReconcileEdgeCases(t *testing.T) {
 			WithScheme(scheme).
 			WithRuntimeObjects(nodeClass, node).
 			Build()
-		
+
 		recorder := record.NewFakeRecorder(10)
 		controller, err := NewController(fakeClient, recorder)
 		require.NoError(t, err)

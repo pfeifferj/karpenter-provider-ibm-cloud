@@ -23,10 +23,10 @@ import (
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -52,7 +52,7 @@ func NewVPCInstanceProvider(client *ibm.Client, kubeClient client.Client) (commo
 	if client == nil {
 		return nil, fmt.Errorf("IBM client cannot be nil")
 	}
-	
+
 	return &VPCInstanceProvider{
 		client:            client,
 		kubeClient:        kubeClient,
@@ -66,10 +66,10 @@ func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient c
 	if client == nil {
 		return nil, fmt.Errorf("IBM client cannot be nil")
 	}
-	
+
 	// Create bootstrap provider immediately with proper dependency injection
 	bootstrapProvider := bootstrap.NewVPCBootstrapProvider(client, kubernetesClient, kubeClient)
-	
+
 	return &VPCInstanceProvider{
 		client:            client,
 		kubeClient:        kubeClient,
@@ -81,7 +81,7 @@ func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient c
 // Create provisions a new VPC instance
 func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
 	logger := log.FromContext(ctx)
-	
+
 	if p.kubeClient == nil {
 		return nil, fmt.Errorf("kubernetes client not set")
 	}
@@ -206,7 +206,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	if err != nil {
 		return nil, fmt.Errorf("generating bootstrap user data: %w", err)
 	}
-	
+
 	// Set user data
 	instancePrototype.UserData = &userData
 
@@ -215,8 +215,8 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	if err != nil {
 		// Parse the error for better error information
 		ibmErr := ibm.ParseError(err)
-		logger.Error(err, "Error creating VPC instance", 
-			"status_code", ibmErr.StatusCode, 
+		logger.Error(err, "Error creating VPC instance",
+			"status_code", ibmErr.StatusCode,
 			"error_code", ibmErr.Code,
 			"retryable", ibmErr.Retryable)
 		return nil, fmt.Errorf("creating VPC instance: %w", err)
@@ -229,16 +229,16 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeClaim.Name,
 			Labels: map[string]string{
-				"karpenter.sh/managed":                     "true",
-				"karpenter.ibm.sh/vpc-id":                  nodeClass.Spec.VPC,
-				"karpenter.ibm.sh/zone":                    zone,
-				"karpenter.ibm.sh/region":                  nodeClass.Spec.Region,
-				"karpenter.ibm.sh/instance-type":           instanceProfile,
-				"node.kubernetes.io/instance-type":         instanceProfile,
-				"topology.kubernetes.io/zone":              zone,
-				"topology.kubernetes.io/region":            nodeClass.Spec.Region,
-				"karpenter.sh/capacity-type":               "on-demand",
-				"karpenter.sh/nodepool":                    nodeClaim.Labels["karpenter.sh/nodepool"],
+				"karpenter.sh/managed":             "true",
+				"karpenter.ibm.sh/vpc-id":          nodeClass.Spec.VPC,
+				"karpenter.ibm.sh/zone":            zone,
+				"karpenter.ibm.sh/region":          nodeClass.Spec.Region,
+				"karpenter.ibm.sh/instance-type":   instanceProfile,
+				"node.kubernetes.io/instance-type": instanceProfile,
+				"topology.kubernetes.io/zone":      zone,
+				"topology.kubernetes.io/region":    nodeClass.Spec.Region,
+				"karpenter.sh/capacity-type":       "on-demand",
+				"karpenter.sh/nodepool":            nodeClaim.Labels["karpenter.sh/nodepool"],
 			},
 		},
 		Spec: corev1.NodeSpec{
@@ -265,7 +265,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 // Delete removes a VPC instance
 func (p *VPCInstanceProvider) Delete(ctx context.Context, node *corev1.Node) error {
 	logger := log.FromContext(ctx)
-	
+
 	instanceID := extractInstanceIDFromProviderID(node.Spec.ProviderID)
 	if instanceID == "" {
 		return fmt.Errorf("could not extract instance ID from provider ID: %s", node.Spec.ProviderID)
@@ -287,8 +287,8 @@ func (p *VPCInstanceProvider) Delete(ctx context.Context, node *corev1.Node) err
 		}
 		// Parse the error for better error information
 		ibmErr := ibm.ParseError(err)
-		logger.Error(err, "Error deleting VPC instance", 
-			"instance_id", instanceID, 
+		logger.Error(err, "Error deleting VPC instance",
+			"instance_id", instanceID,
 			"status_code", ibmErr.StatusCode,
 			"error_code", ibmErr.Code,
 			"retryable", ibmErr.Retryable)
@@ -405,13 +405,13 @@ func isIBMInstanceNotFoundError(err error) bool {
 // generateBootstrapUserData generates bootstrap user data using the VPC bootstrap provider
 func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error) {
 	logger := log.FromContext(ctx)
-	
+
 	// If manual userData is provided, use it as-is (fallback behavior)
 	if nodeClass.Spec.UserData != "" {
 		logger.Info("Using manual userData from IBMNodeClass")
 		return nodeClass.Spec.UserData, nil
 	}
-	
+
 	// Initialize bootstrap provider if not already done
 	if p.bootstrapProvider == nil {
 		if p.k8sClient != nil {
@@ -424,12 +424,12 @@ func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nod
 				logger.Error(err, "Failed to create kubernetes client, falling back to basic bootstrap")
 				return p.getBasicBootstrapScript(nodeClass), nil
 			}
-			
+
 			p.k8sClient = k8sClient
 			p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, k8sClient, p.kubeClient)
 		}
 	}
-	
+
 	// Generate dynamic bootstrap script
 	logger.Info("Generating dynamic bootstrap script with automatic cluster discovery")
 	userData, err := p.bootstrapProvider.GetUserData(ctx, nodeClass, nodeClaim)
@@ -437,7 +437,7 @@ func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nod
 		logger.Error(err, "Failed to generate bootstrap user data, falling back to basic bootstrap")
 		return p.getBasicBootstrapScript(nodeClass), nil
 	}
-	
+
 	logger.Info("Successfully generated dynamic bootstrap script")
 	return userData, nil
 }
@@ -450,13 +450,13 @@ func (p *VPCInstanceProvider) createKubernetesClient(ctx context.Context) (kuber
 	if err != nil {
 		return nil, fmt.Errorf("creating in-cluster config: %w", err)
 	}
-	
+
 	// Create kubernetes clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("creating kubernetes clientset: %w", err)
 	}
-	
+
 	return clientset, nil
 }
 

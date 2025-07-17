@@ -24,10 +24,10 @@ import (
 type WorkerPoolState string
 
 const (
-	WorkerPoolStateNormal     WorkerPoolState = "normal"
-	WorkerPoolStateResizing   WorkerPoolState = "resizing"
+	WorkerPoolStateNormal      WorkerPoolState = "normal"
+	WorkerPoolStateResizing    WorkerPoolState = "resizing"
 	WorkerPoolStateRebalancing WorkerPoolState = "rebalancing"
-	WorkerPoolStateDeleting   WorkerPoolState = "deleting"
+	WorkerPoolStateDeleting    WorkerPoolState = "deleting"
 )
 
 // WorkerPool represents an IKS worker pool for testing
@@ -51,32 +51,32 @@ type WorkerPool struct {
 
 // WorkerPoolZone represents a zone in a worker pool
 type WorkerPoolZone struct {
-	ID                 string `json:"id"`
-	PrivateVLAN        string `json:"privateVLAN,omitempty"`
-	PublicVLAN         string `json:"publicVLAN,omitempty"`
-	PrivateSubnet      string `json:"privateSubnet,omitempty"`
-	PublicSubnet       string `json:"publicSubnet,omitempty"`
-	WorkerCount        int    `json:"workerCount"`
-	PrivateServiceEndpoint bool `json:"privateServiceEndpoint"`
-	PublicServiceEndpoint  bool `json:"publicServiceEndpoint"`
+	ID                     string `json:"id"`
+	PrivateVLAN            string `json:"privateVLAN,omitempty"`
+	PublicVLAN             string `json:"publicVLAN,omitempty"`
+	PrivateSubnet          string `json:"privateSubnet,omitempty"`
+	PublicSubnet           string `json:"publicSubnet,omitempty"`
+	WorkerCount            int    `json:"workerCount"`
+	PrivateServiceEndpoint bool   `json:"privateServiceEndpoint"`
+	PublicServiceEndpoint  bool   `json:"publicServiceEndpoint"`
 }
 
 // Worker represents an IKS worker node
 type Worker struct {
-	ID                string                `json:"id"`
-	Provider          string                `json:"provider"`
-	Flavor            string                `json:"flavor"`
-	Location          string                `json:"location"`
-	PoolID            string                `json:"poolID"`
-	PoolName          string                `json:"poolName"`
+	ID                string                   `json:"id"`
+	Provider          string                   `json:"provider"`
+	Flavor            string                   `json:"flavor"`
+	Location          string                   `json:"location"`
+	PoolID            string                   `json:"poolID"`
+	PoolName          string                   `json:"poolName"`
 	NetworkInterfaces []WorkerNetworkInterface `json:"networkInterfaces"`
-	Health            WorkerHealthStatus    `json:"health"`
-	Lifecycle         WorkerLifecycleStatus `json:"lifecycle"`
-	KubernetesVersion string                `json:"kubernetesVersion"`
-	State             string                `json:"state"`
-	StateMessage      string                `json:"stateMessage"`
-	PrivateIP         string                `json:"privateIP"`
-	PublicIP          string                `json:"publicIP"`
+	Health            WorkerHealthStatus       `json:"health"`
+	Lifecycle         WorkerLifecycleStatus    `json:"lifecycle"`
+	KubernetesVersion string                   `json:"kubernetesVersion"`
+	State             string                   `json:"state"`
+	StateMessage      string                   `json:"stateMessage"`
+	PrivateIP         string                   `json:"privateIP"`
+	PublicIP          string                   `json:"publicIP"`
 }
 
 // WorkerNetworkInterface represents a worker's network interface
@@ -89,7 +89,7 @@ type WorkerNetworkInterface struct {
 
 // WorkerHealthStatus represents worker health information
 type WorkerHealthStatus struct {
-	State   string `json:"state"`   // normal, warning, critical
+	State   string `json:"state"` // normal, warning, critical
 	Message string `json:"message"`
 }
 
@@ -102,35 +102,35 @@ type WorkerLifecycleStatus struct {
 
 // ResizeWorkerPoolRequest represents a request to resize a worker pool
 type ResizeWorkerPoolRequest struct {
-	Cluster     string `json:"cluster"`
-	WorkerPool  string `json:"workerpool"`
-	Size        int    `json:"size"`
+	Cluster    string `json:"cluster"`
+	WorkerPool string `json:"workerpool"`
+	Size       int    `json:"size"`
 }
 
 // WorkerPoolPatchRequest represents a request to patch a worker pool
 type WorkerPoolPatchRequest struct {
-	State            string            `json:"state,omitempty"`           // resizing, rebalancing, labels
-	SizePerZone      int               `json:"sizePerZone,omitempty"`
-	ReasonForResize  string            `json:"reasonForResize,omitempty"`
-	Labels           map[string]string `json:"labels,omitempty"`
+	State           string            `json:"state,omitempty"` // resizing, rebalancing, labels
+	SizePerZone     int               `json:"sizePerZone,omitempty"`
+	ReasonForResize string            `json:"reasonForResize,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
 }
 
 // VPCInstance represents a VPC instance for testing
 type VPCInstance struct {
-	ID                      string                     `json:"id"`
-	Name                    string                     `json:"name"`
-	Status                  string                     `json:"status"`
-	Profile                 VPCInstanceProfile         `json:"profile"`
-	Image                   VPCImage                   `json:"image"`
-	Zone                    VPCZone                    `json:"zone"`
-	VPC                     VPCReference               `json:"vpc"`
-	PrimaryNetworkInterface VPCNetworkInterface        `json:"primary_network_interface"`
-	NetworkInterfaces       []VPCNetworkInterface      `json:"network_interfaces"`
-	BootVolumeAttachment    VPCVolumeAttachment        `json:"boot_volume_attachment"`
-	VolumeAttachments       []VPCVolumeAttachment      `json:"volume_attachments"`
-	CreatedAt               time.Time                  `json:"created_at"`
-	UserData                string                     `json:"user_data,omitempty"`
-	Tags                    []VPCTag                   `json:"tags"`
+	ID                      string                `json:"id"`
+	Name                    string                `json:"name"`
+	Status                  string                `json:"status"`
+	Profile                 VPCInstanceProfile    `json:"profile"`
+	Image                   VPCImage              `json:"image"`
+	Zone                    VPCZone               `json:"zone"`
+	VPC                     VPCReference          `json:"vpc"`
+	PrimaryNetworkInterface VPCNetworkInterface   `json:"primary_network_interface"`
+	NetworkInterfaces       []VPCNetworkInterface `json:"network_interfaces"`
+	BootVolumeAttachment    VPCVolumeAttachment   `json:"boot_volume_attachment"`
+	VolumeAttachments       []VPCVolumeAttachment `json:"volume_attachments"`
+	CreatedAt               time.Time             `json:"created_at"`
+	UserData                string                `json:"user_data,omitempty"`
+	Tags                    []VPCTag              `json:"tags"`
 }
 
 // VPCInstanceProfile represents an instance profile
@@ -159,11 +159,11 @@ type VPCReference struct {
 
 // VPCNetworkInterface represents a VPC network interface
 type VPCNetworkInterface struct {
-	ID              string       `json:"id"`
-	Name            string       `json:"name"`
-	PrimaryIPV4Address string    `json:"primary_ipv4_address"`
-	Subnet          VPCReference `json:"subnet"`
-	SecurityGroups  []VPCReference `json:"security_groups"`
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	PrimaryIPV4Address string         `json:"primary_ipv4_address"`
+	Subnet             VPCReference   `json:"subnet"`
+	SecurityGroups     []VPCReference `json:"security_groups"`
 }
 
 // VPCVolumeAttachment represents a volume attachment
@@ -181,13 +181,13 @@ type VPCTag struct {
 
 // VPCSubnet represents a VPC subnet
 type VPCSubnet struct {
-	ID               string       `json:"id"`
-	Name             string       `json:"name"`
-	CIDR             string       `json:"ipv4_cidr_block"`
-	AvailableIPv4AddressCount int `json:"available_ipv4_address_count"`
-	TotalIPv4AddressCount     int `json:"total_ipv4_address_count"`
-	Zone             VPCZone      `json:"zone"`
-	VPC              VPCReference `json:"vpc"`
-	Status           string       `json:"status"`
-	CreatedAt        time.Time    `json:"created_at"`
+	ID                        string       `json:"id"`
+	Name                      string       `json:"name"`
+	CIDR                      string       `json:"ipv4_cidr_block"`
+	AvailableIPv4AddressCount int          `json:"available_ipv4_address_count"`
+	TotalIPv4AddressCount     int          `json:"total_ipv4_address_count"`
+	Zone                      VPCZone      `json:"zone"`
+	VPC                       VPCReference `json:"vpc"`
+	Status                    string       `json:"status"`
+	CreatedAt                 time.Time    `json:"created_at"`
 }

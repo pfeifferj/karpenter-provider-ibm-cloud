@@ -224,7 +224,7 @@ func TestParseError_SDKProblem(t *testing.T) {
 	// Skip this test for now - core.SDKProblem requires complex initialization
 	// and we can't create a valid instance without internal IBM SDK knowledge
 	t.Skip("Skipping SDK problem test - requires internal SDK structures")
-	
+
 	// This test would require mocking internal SDK structures which is not
 	// feasible without access to the internal implementation details
 }

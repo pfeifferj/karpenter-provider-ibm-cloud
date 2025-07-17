@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
-	
+
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
@@ -78,7 +78,6 @@ func (m *MockPricingProvider) GetPrice(ctx context.Context, instanceType string,
 func (m *MockPricingProvider) Refresh(ctx context.Context) error {
 	return nil
 }
-
 
 // Test calculateInstanceTypeScoreNew to avoid name conflict
 func TestCalculateInstanceTypeScoreNew(t *testing.T) {
@@ -187,7 +186,7 @@ func TestNewProvider(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping test that requires IBM Cloud credentials")
 	}
-	
+
 	// Check if required environment variables are set
 	if os.Getenv("IBM_API_KEY") == "" || os.Getenv("VPC_API_KEY") == "" || os.Getenv("IBM_REGION") == "" {
 		t.Skip("Skipping test that requires IBM Cloud credentials (IBM_API_KEY, VPC_API_KEY, IBM_REGION)")
@@ -223,7 +222,7 @@ func TestConvertVPCProfileToInstanceType(t *testing.T) {
 	archValue := "amd64"
 	family := "balanced"
 	gpuCount := int64(0)
-	
+
 	tests := []struct {
 		name    string
 		profile vpcv1.InstanceProfile
@@ -300,13 +299,13 @@ func TestConvertVPCProfileToInstanceType(t *testing.T) {
 // Test IBMInstanceTypeProvider.Get
 func TestIBMInstanceTypeProvider_GetWithMocks(t *testing.T) {
 	ctx := context.Background()
-	
+
 	tests := []struct {
-		name        string
-		provider    *IBMInstanceTypeProvider
+		name         string
+		provider     *IBMInstanceTypeProvider
 		instanceName string
-		wantErr     bool
-		errContains string
+		wantErr      bool
+		errContains  string
 	}{
 		{
 			name: "nil client",
@@ -314,8 +313,8 @@ func TestIBMInstanceTypeProvider_GetWithMocks(t *testing.T) {
 				client: nil,
 			},
 			instanceName: "bx2-4x16",
-			wantErr:     true,
-			errContains: "IBM client not initialized",
+			wantErr:      true,
+			errContains:  "IBM client not initialized",
 		},
 	}
 
@@ -331,7 +330,6 @@ func TestIBMInstanceTypeProvider_GetWithMocks(t *testing.T) {
 		})
 	}
 }
-
 
 // Helper function
 func contains(s, substr string) bool {

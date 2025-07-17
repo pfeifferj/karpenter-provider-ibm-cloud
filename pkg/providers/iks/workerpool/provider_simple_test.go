@@ -53,14 +53,14 @@ func TestIKSWorkerPoolProvider_NewProvider_NilClient(t *testing.T) {
 
 func TestFindOrSelectWorkerPool_Strategies(t *testing.T) {
 	tests := []struct {
-		name                   string
-		nodeClass              *v1alpha1.IBMNodeClass
-		requestedInstanceType  string
-		workerPools            []*ibm.WorkerPool
-		expectedPoolID         string
-		expectedInstanceType   string
-		expectError            bool
-		errorContains          string
+		name                  string
+		nodeClass             *v1alpha1.IBMNodeClass
+		requestedInstanceType string
+		workerPools           []*ibm.WorkerPool
+		expectedPoolID        string
+		expectedInstanceType  string
+		expectError           bool
+		errorContains         string
 	}{
 		{
 			name: "exact match - same instance type and zone",
@@ -122,8 +122,8 @@ func TestFindOrSelectWorkerPool_Strategies(t *testing.T) {
 			name: "specific worker pool configured",
 			nodeClass: &v1alpha1.IBMNodeClass{
 				Spec: v1alpha1.IBMNodeClassSpec{
-					Zone:              "us-south-1",
-					IKSWorkerPoolID:   "pool-2",
+					Zone:            "us-south-1",
+					IKSWorkerPoolID: "pool-2",
 				},
 			},
 			requestedInstanceType: "bx2-4x16",
@@ -141,9 +141,9 @@ func TestFindOrSelectWorkerPool_Strategies(t *testing.T) {
 				Spec: v1alpha1.IBMNodeClassSpec{Zone: "us-south-1"},
 			},
 			requestedInstanceType: "bx2-4x16",
-			workerPools:          []*ibm.WorkerPool{},
-			expectError:          true,
-			errorContains:        "no worker pools found",
+			workerPools:           []*ibm.WorkerPool{},
+			expectError:           true,
+			errorContains:         "no worker pools found",
 		},
 	}
 
@@ -278,17 +278,17 @@ func TestNodeLabelGeneration(t *testing.T) {
 
 	// Test the expected labels that would be generated
 	expectedLabels := map[string]string{
-		"karpenter.sh/managed":                     "true",
-		"karpenter.ibm.sh/cluster-id":              "test-cluster",
-		"karpenter.ibm.sh/worker-pool-id":          "test-pool-id",
-		"karpenter.ibm.sh/zone":                    "us-south-1",
-		"karpenter.ibm.sh/region":                  "us-south",
-		"karpenter.ibm.sh/instance-type":           "bx2-4x16",
-		"node.kubernetes.io/instance-type":         "bx2-4x16",
-		"topology.kubernetes.io/zone":              "us-south-1",
-		"topology.kubernetes.io/region":            "us-south",
-		"karpenter.sh/capacity-type":               "on-demand",
-		"karpenter.sh/nodepool":                    "test-nodepool",
+		"karpenter.sh/managed":             "true",
+		"karpenter.ibm.sh/cluster-id":      "test-cluster",
+		"karpenter.ibm.sh/worker-pool-id":  "test-pool-id",
+		"karpenter.ibm.sh/zone":            "us-south-1",
+		"karpenter.ibm.sh/region":          "us-south",
+		"karpenter.ibm.sh/instance-type":   "bx2-4x16",
+		"node.kubernetes.io/instance-type": "bx2-4x16",
+		"topology.kubernetes.io/zone":      "us-south-1",
+		"topology.kubernetes.io/region":    "us-south",
+		"karpenter.sh/capacity-type":       "on-demand",
+		"karpenter.sh/nodepool":            "test-nodepool",
 	}
 
 	// Create the node that would be generated

@@ -86,29 +86,29 @@ func NewEnvironment(ctx context.Context, kubeClient client.Client) *Environment 
 	// Create providers - use nil clients for test environment
 	pricingProvider := pricing.NewIBMPricingProvider(nil)
 	instanceTypesProvider := instancetype.NewProvider(nil, pricingProvider)
-	
+
 	// For VPC instance provider, we'll create a test wrapper that uses the fake API
 	vpcInstanceProvider := NewTestVPCInstanceProvider(vpcAPI, kubeClient)
-	
+
 	// For subnet provider, create a test wrapper
 	subnetProvider := NewTestSubnetProvider(vpcAPI)
-	
+
 	// For worker pool provider, create a test wrapper
 	workerPoolProvider := NewTestWorkerPoolProvider(iksAPI)
 
 	return &Environment{
-		Clock:         clock,
-		EventRecorder: eventRecorder,
-		VPCAPI:        vpcAPI,
-		IKSAPI:        iksAPI,
+		Clock:                 clock,
+		EventRecorder:         eventRecorder,
+		VPCAPI:                vpcAPI,
+		IKSAPI:                iksAPI,
 		InstanceTypeCache:     instanceTypeCache,
-		SubnetCache:          subnetCache,
-		ImageCache:           imageCache,
-		WorkerPoolCache:      workerPoolCache,
+		SubnetCache:           subnetCache,
+		ImageCache:            imageCache,
+		WorkerPoolCache:       workerPoolCache,
 		InstanceTypesProvider: instanceTypesProvider,
 		VPCInstanceProvider:   vpcInstanceProvider,
-		SubnetProvider:       subnetProvider,
-		WorkerPoolProvider:   workerPoolProvider,
+		SubnetProvider:        subnetProvider,
+		WorkerPoolProvider:    workerPoolProvider,
 	}
 }
 
