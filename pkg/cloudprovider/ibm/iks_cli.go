@@ -69,30 +69,30 @@ func (c *IKSCLIClient) IsAvailable() bool {
 func (c *IKSCLIClient) authenticate(ctx context.Context) error {
 	// Set API key environment variable for CLI
 	env := append(os.Environ(), fmt.Sprintf("IBMCLOUD_API_KEY=%s", c.apiKey))
-	
+
 	// Login to IBM Cloud
 	cmd := exec.CommandContext(ctx, "ibmcloud", "login", "--apikey", c.apiKey, "-r", c.region, "-q")
 	cmd.Env = env
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("CLI login failed: %w, output: %s", err, string(output))
 	}
-	
+
 	// Target container service plugin
 	cmd = exec.CommandContext(ctx, "ibmcloud", "plugin", "list")
 	cmd.Env = env
-	
+
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("checking plugins failed: %w, output: %s", err, string(output))
 	}
-	
+
 	// Check if kubernetes-service plugin is installed
 	if !strings.Contains(string(output), "kubernetes-service") {
 		return fmt.Errorf("kubernetes-service plugin not installed, please run: ibmcloud plugin install kubernetes-service")
 	}
-	
+
 	return nil
 }
 
@@ -101,24 +101,24 @@ func (c *IKSCLIClient) ListWorkerPools(ctx context.Context, clusterID string) ([
 	if err := c.authenticate(ctx); err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
-	
+
 	env := append(os.Environ(), fmt.Sprintf("IBMCLOUD_API_KEY=%s", c.apiKey))
-	
+
 	// Execute CLI command
 	cmd := exec.CommandContext(ctx, "ibmcloud", "ks", "worker-pools", "-c", clusterID, "--output", "json")
 	cmd.Env = env
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("CLI command failed: %w, output: %s", err, string(output))
 	}
-	
+
 	// Parse CLI output
 	var cliPools []CLIWorkerPool
 	if err := json.Unmarshal(output, &cliPools); err != nil {
 		return nil, fmt.Errorf("parsing CLI output: %w", err)
 	}
-	
+
 	// Convert to standard WorkerPool format
 	var workerPools []*WorkerPool
 	for _, cliPool := range cliPools {
@@ -131,7 +131,7 @@ func (c *IKSCLIClient) ListWorkerPools(ctx context.Context, clusterID string) ([
 				zone = z.ID
 			}
 		}
-		
+
 		pool := &WorkerPool{
 			ID:          cliPool.ID,
 			Name:        cliPool.PoolName,
@@ -146,7 +146,7 @@ func (c *IKSCLIClient) ListWorkerPools(ctx context.Context, clusterID string) ([
 		}
 		workerPools = append(workerPools, pool)
 	}
-	
+
 	return workerPools, nil
 }
 
@@ -156,13 +156,13 @@ func (c *IKSCLIClient) GetWorkerPool(ctx context.Context, clusterID, poolID stri
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for _, pool := range pools {
 		if pool.ID == poolID {
 			return pool, nil
 		}
 	}
-	
+
 	return nil, fmt.Errorf("worker pool %s not found", poolID)
 }
 
@@ -171,21 +171,21 @@ func (c *IKSCLIClient) ResizeWorkerPool(ctx context.Context, clusterID, poolID s
 	if err := c.authenticate(ctx); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
-	
+
 	env := append(os.Environ(), fmt.Sprintf("IBMCLOUD_API_KEY=%s", c.apiKey))
-	
+
 	// Execute CLI resize command
-	cmd := exec.CommandContext(ctx, "ibmcloud", "ks", "worker-pool", "resize", 
-		"-c", clusterID, 
-		"--worker-pool", poolID, 
+	cmd := exec.CommandContext(ctx, "ibmcloud", "ks", "worker-pool", "resize",
+		"-c", clusterID,
+		"--worker-pool", poolID,
 		"--size-per-zone", strconv.Itoa(newSize))
 	cmd.Env = env
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("CLI resize failed: %w, output: %s", err, string(output))
 	}
-	
+
 	return nil
 }
 
@@ -203,7 +203,7 @@ func NewHybridIKSClient(client *Client) *HybridIKSClient {
 		ctx := context.Background()
 		ibmAPIKey, _ = client.credStore.GetIBMAPIKey(ctx)
 	}
-	
+
 	return &HybridIKSClient{
 		apiClient: NewIKSClient(client),
 		cliClient: NewIKSCLIClient(ibmAPIKey, client.region),
@@ -216,7 +216,7 @@ func (h *HybridIKSClient) ListWorkerPools(ctx context.Context, clusterID string)
 	if h.useCLI {
 		return h.cliClient.ListWorkerPools(ctx, clusterID)
 	}
-	
+
 	// Try API first
 	pools, err := h.apiClient.ListWorkerPools(ctx, clusterID)
 	if err != nil {
@@ -224,18 +224,18 @@ func (h *HybridIKSClient) ListWorkerPools(ctx context.Context, clusterID string)
 		if strings.Contains(err.Error(), "E3917") {
 			// Switch to CLI mode permanently for this client
 			h.useCLI = true
-			
+
 			// Check if CLI is available
 			if !h.cliClient.IsAvailable() {
 				return nil, fmt.Errorf("API failed with E3917 and CLI not available: %w", err)
 			}
-			
+
 			// Retry with CLI
 			return h.cliClient.ListWorkerPools(ctx, clusterID)
 		}
 		return nil, err
 	}
-	
+
 	return pools, nil
 }
 
@@ -244,7 +244,7 @@ func (h *HybridIKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID s
 	if h.useCLI {
 		return h.cliClient.GetWorkerPool(ctx, clusterID, poolID)
 	}
-	
+
 	// Try API first
 	pool, err := h.apiClient.GetWorkerPool(ctx, clusterID, poolID)
 	if err != nil {
@@ -252,18 +252,18 @@ func (h *HybridIKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID s
 		if strings.Contains(err.Error(), "E3917") {
 			// Switch to CLI mode permanently for this client
 			h.useCLI = true
-			
+
 			// Check if CLI is available
 			if !h.cliClient.IsAvailable() {
 				return nil, fmt.Errorf("API failed with E3917 and CLI not available: %w", err)
 			}
-			
+
 			// Retry with CLI
 			return h.cliClient.GetWorkerPool(ctx, clusterID, poolID)
 		}
 		return nil, err
 	}
-	
+
 	return pool, nil
 }
 
@@ -272,7 +272,7 @@ func (h *HybridIKSClient) ResizeWorkerPool(ctx context.Context, clusterID, poolI
 	if h.useCLI {
 		return h.cliClient.ResizeWorkerPool(ctx, clusterID, poolID, newSize)
 	}
-	
+
 	// Try API first
 	err := h.apiClient.ResizeWorkerPool(ctx, clusterID, poolID, newSize)
 	if err != nil {
@@ -280,18 +280,18 @@ func (h *HybridIKSClient) ResizeWorkerPool(ctx context.Context, clusterID, poolI
 		if strings.Contains(err.Error(), "E3917") {
 			// Switch to CLI mode permanently for this client
 			h.useCLI = true
-			
+
 			// Check if CLI is available
 			if !h.cliClient.IsAvailable() {
 				return fmt.Errorf("API failed with E3917 and CLI not available: %w", err)
 			}
-			
+
 			// Retry with CLI
 			return h.cliClient.ResizeWorkerPool(ctx, clusterID, poolID, newSize)
 		}
 		return err
 	}
-	
+
 	return nil
 }
 

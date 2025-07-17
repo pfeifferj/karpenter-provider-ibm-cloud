@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -35,7 +35,7 @@ import (
 
 func TestHashControllerIntegration(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Create scheme and add our types
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
@@ -102,7 +102,7 @@ func TestHashControllerIntegration(t *testing.T) {
 
 func TestStatusControllerIntegration(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Create scheme and add our types
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
@@ -175,7 +175,7 @@ func TestStatusControllerIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Len(t, updatedNodeClass.Status.Conditions, tt.expectedConditions)
-			
+
 			if len(updatedNodeClass.Status.Conditions) > 0 {
 				readyCondition := updatedNodeClass.Status.Conditions[0]
 				if tt.expectedReady {
@@ -190,7 +190,7 @@ func TestStatusControllerIntegration(t *testing.T) {
 
 func TestControllerErrorHandling(t *testing.T) {
 	ctx := context.Background()
-	
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -216,7 +216,7 @@ func TestControllerErrorHandling(t *testing.T) {
 
 func TestControllerConcurrency(t *testing.T) {
 	ctx := context.Background()
-	
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -302,7 +302,7 @@ func TestControllerConcurrency(t *testing.T) {
 // Test controller lifecycle and cleanup
 func TestControllerLifecycle(t *testing.T) {
 	ctx := context.Background()
-	
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -346,7 +346,7 @@ func TestControllerLifecycle(t *testing.T) {
 // Integration test for multiple controllers working together
 func TestMultiControllerIntegration(t *testing.T) {
 	ctx := context.Background()
-	
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 
@@ -356,7 +356,7 @@ func TestMultiControllerIntegration(t *testing.T) {
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
 			Region:          "us-south",
-			Zone:            "us-south-1", 
+			Zone:            "us-south-1",
 			InstanceProfile: "bx2-4x16",
 			Image:           "r006-test-image-id",
 			VPC:             "r006-test-vpc-id",
@@ -397,7 +397,7 @@ func TestMultiControllerIntegration(t *testing.T) {
 
 	// Hash should be set
 	assert.NotEmpty(t, updatedNodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash])
-	
+
 	// Status condition should be set
 	assert.NotEmpty(t, updatedNodeClass.Status.Conditions)
 	if len(updatedNodeClass.Status.Conditions) > 0 {

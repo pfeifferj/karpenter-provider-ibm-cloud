@@ -1,3 +1,5 @@
+//go:build tools
+
 /*
 Copyright The Kubernetes Authors.
 
@@ -14,10 +16,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-//go:build tools
-
 package tools
 
 import (
-    _ "sigs.k8s.io/controller-tools/cmd/controller-gen"
+	_ "sigs.k8s.io/controller-tools/cmd/controller-gen"
 )

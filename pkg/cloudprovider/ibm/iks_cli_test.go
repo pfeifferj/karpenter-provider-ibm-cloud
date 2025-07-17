@@ -51,7 +51,7 @@ var _ = Describe("IKSCLIClient", func() {
 		It("should detect if IBM Cloud CLI is available", func() {
 			// This test checks if the CLI is available in the system
 			available := cliClient.IsAvailable()
-			
+
 			// In a container with IBM Cloud CLI, this should be true
 			// In a test environment without CLI, this might be false
 			// We test both scenarios
@@ -75,7 +75,7 @@ var _ = Describe("IKSCLIClient", func() {
 
 				// Test authentication - this will fail with invalid API key but should not panic
 				err := cliClient.authenticate(ctx)
-				
+
 				// With a test API key, this should fail but gracefully
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("CLI login failed"))
@@ -91,7 +91,7 @@ var _ = Describe("IKSCLIClient", func() {
 
 				emptyCLI := NewIKSCLIClient("", region)
 				err := emptyCLI.authenticate(ctx)
-				
+
 				Expect(err).To(HaveOccurred())
 			})
 		})
@@ -113,7 +113,7 @@ var _ = Describe("IKSCLIClient", func() {
 
 				// This will fail with authentication error, but tests the command structure
 				_, err := cliClient.ListWorkerPools(ctx, testClusterID)
-				
+
 				// Should get an authentication error, not a command structure error
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("authentication failed"))
@@ -142,7 +142,7 @@ var _ = Describe("IKSCLIClient", func() {
 				var cliPools []CLIWorkerPool
 				err := json.Unmarshal([]byte(mockOutput), &cliPools)
 				Expect(err).ToNot(HaveOccurred())
-				
+
 				Expect(cliPools).To(HaveLen(1))
 				Expect(cliPools[0].ID).To(Equal("test-pool-id"))
 				Expect(cliPools[0].PoolName).To(Equal("default"))
@@ -162,7 +162,7 @@ var _ = Describe("IKSCLIClient", func() {
 
 				// This will fail with authentication error, but tests the method structure
 				_, err := cliClient.GetWorkerPool(ctx, testClusterID, "test-pool-id")
-				
+
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("authentication failed"))
 			})
@@ -177,7 +177,7 @@ var _ = Describe("IKSCLIClient", func() {
 
 				// This will fail with authentication error, but tests the command structure
 				err := cliClient.ResizeWorkerPool(ctx, testClusterID, "test-pool-id", 5)
-				
+
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("authentication failed"))
 			})
@@ -234,9 +234,9 @@ var _ = Describe("HybridIKSClient", func() {
 		It("should switch to CLI mode on E3917 error", func() {
 			// This test verifies the error detection logic
 			// The actual switching happens in the real methods
-			
+
 			testError := "IKS API error: status 400, body: {\"code\":\"E3917\",\"description\":\"Cluster provider not permitted for given operation.\"}"
-			
+
 			// Simulate E3917 error detection
 			isE3917 := containsE3917Error(testError)
 			Expect(isE3917).To(BeTrue())
@@ -244,7 +244,7 @@ var _ = Describe("HybridIKSClient", func() {
 
 		It("should not switch to CLI mode on other errors", func() {
 			testError := "IKS API error: status 401, body: {\"code\":\"E0001\",\"description\":\"Unauthorized\"}"
-			
+
 			isE3917 := containsE3917Error(testError)
 			Expect(isE3917).To(BeFalse())
 		})
@@ -254,8 +254,8 @@ var _ = Describe("HybridIKSClient", func() {
 var _ = Describe("Integration Tests", func() {
 	Context("with real credentials", func() {
 		var (
-			realAPIKey string
-			realRegion string
+			realAPIKey    string
+			realRegion    string
 			realClusterID string
 		)
 
@@ -264,7 +264,7 @@ var _ = Describe("Integration Tests", func() {
 			realAPIKey = os.Getenv("IBM_API_KEY")
 			realRegion = os.Getenv("IBM_REGION")
 			realClusterID = os.Getenv("TEST_CLUSTER_ID")
-			
+
 			if realAPIKey == "" || realRegion == "" || realClusterID == "" {
 				Skip("Real IBM Cloud credentials not provided - skipping integration tests")
 			}
@@ -272,18 +272,18 @@ var _ = Describe("Integration Tests", func() {
 
 		It("should successfully list worker pools with real credentials", func() {
 			cliClient := NewIKSCLIClient(realAPIKey, realRegion)
-			
+
 			// Skip if CLI not available
 			if !cliClient.IsAvailable() {
 				Skip("IBM Cloud CLI not available")
 			}
 
 			pools, err := cliClient.ListWorkerPools(context.Background(), realClusterID)
-			
+
 			// With real credentials, this should succeed
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pools).ToNot(BeEmpty())
-			
+
 			GinkgoWriter.Printf("Found %d worker pools\n", len(pools))
 			for _, pool := range pools {
 				GinkgoWriter.Printf("  - Pool: %s (%s) - Size: %d\n", pool.Name, pool.Flavor, pool.SizePerZone)
@@ -292,7 +292,7 @@ var _ = Describe("Integration Tests", func() {
 
 		It("should successfully get specific worker pool with real credentials", func() {
 			cliClient := NewIKSCLIClient(realAPIKey, realRegion)
-			
+
 			// Skip if CLI not available
 			if !cliClient.IsAvailable() {
 				Skip("IBM Cloud CLI not available")
@@ -302,7 +302,7 @@ var _ = Describe("Integration Tests", func() {
 			pools, err := cliClient.ListWorkerPools(context.Background(), realClusterID)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(pools).ToNot(BeEmpty())
-			
+
 			// Test getting the first pool
 			pool, err := cliClient.GetWorkerPool(context.Background(), realClusterID, pools[0].ID)
 			Expect(err).ToNot(HaveOccurred())
@@ -315,8 +315,8 @@ var _ = Describe("Integration Tests", func() {
 // Helper function to test E3917 error detection
 func containsE3917Error(errorMsg string) bool {
 	return errorMsg != "" && (
-		// Check for E3917 error code in various formats
-		containsString(errorMsg, "E3917") ||
+	// Check for E3917 error code in various formats
+	containsString(errorMsg, "E3917") ||
 		containsString(errorMsg, "Cluster provider not permitted"))
 }
 

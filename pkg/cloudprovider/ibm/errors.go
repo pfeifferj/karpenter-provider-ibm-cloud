@@ -143,7 +143,7 @@ func ParseError(err error) *IBMError {
 
 	// Skip DetailedResponse as it's not an error type - it's a response wrapper
 
-	// Check for standard HTTP response errors  
+	// Check for standard HTTP response errors
 	if httpErr, ok := err.(*core.SDKProblem); ok {
 		return parseSDKProblem(httpErr)
 	}
@@ -156,12 +156,12 @@ func ParseError(err error) *IBMError {
 
 // parseSDKProblem parses an IBM SDK problem
 func parseSDKProblem(problem *core.SDKProblem) *IBMError {
-	// Extract status code and details from the problem  
+	// Extract status code and details from the problem
 	statusCode := 0
 	errorCode := ""
 	message := ""
 	moreInfo := ""
-	
+
 	// Try to extract HTTP status from problem context if available
 	if problem != nil {
 		message = problem.Error()
@@ -181,7 +181,7 @@ func parseSDKProblem(problem *core.SDKProblem) *IBMError {
 			statusCode = http.StatusInternalServerError // Default to server error
 		}
 	}
-	
+
 	ibmErr := &IBMError{
 		StatusCode: statusCode,
 		Code:       errorCode,
@@ -276,8 +276,8 @@ func parseErrorString(err error) *IBMError {
 		ibmErr.StatusCode = http.StatusTooManyRequests
 		ibmErr.Type = ErrorTypeRateLimit
 		ibmErr.Retryable = true
-	} else if strings.Contains(errStr, "500") || strings.Contains(errStr, "502") || 
-			  strings.Contains(errStr, "503") || strings.Contains(errStr, "504") {
+	} else if strings.Contains(errStr, "500") || strings.Contains(errStr, "502") ||
+		strings.Contains(errStr, "503") || strings.Contains(errStr, "504") {
 		ibmErr.Type = ErrorTypeServerError
 		ibmErr.Retryable = true
 		if strings.Contains(errStr, "502") {

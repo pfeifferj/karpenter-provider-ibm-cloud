@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -45,7 +45,7 @@ func TestController_Register(t *testing.T) {
 	// Create a proper scheme
 	s := runtime.NewScheme()
 	require.NoError(t, scheme.AddToScheme(s))
-	
+
 	// Register Karpenter v1 types manually
 	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
 	s.AddKnownTypes(gv,
@@ -55,14 +55,14 @@ func TestController_Register(t *testing.T) {
 		&karpenterv1.NodePoolList{},
 	)
 	metav1.AddToGroupVersion(s, gv)
-	
+
 	fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
 	controller, err := NewController(fakeClient)
 	if err != nil {
 		t.Skipf("Skipping test due to missing IBM credentials: %v", err)
 		return
 	}
-	
+
 	// Test that Register method exists and can be called
 	// (will fail with nil manager but that's expected)
 	var mgr manager.Manager
@@ -74,7 +74,7 @@ func TestController_Reconcile(t *testing.T) {
 	// Create a proper scheme
 	s := runtime.NewScheme()
 	require.NoError(t, scheme.AddToScheme(s))
-	
+
 	// Register Karpenter v1 types manually
 	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
 	s.AddKnownTypes(gv,
@@ -214,9 +214,9 @@ func TestController_Reconcile(t *testing.T) {
 
 func TestGetProviderIDFromNodeClaim(t *testing.T) {
 	tests := []struct {
-		name       string
-		nodeClaim  *karpenterv1.NodeClaim
-		expected   string
+		name      string
+		nodeClaim *karpenterv1.NodeClaim
+		expected  string
 	}{
 		{
 			name: "valid provider ID",

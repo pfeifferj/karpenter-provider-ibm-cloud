@@ -28,20 +28,20 @@ import (
 
 func TestBootstrapIntegration(t *testing.T) {
 	tests := []struct {
-		name         string
-		nodeClass    *v1alpha1.IBMNodeClass
-		expectManual bool
+		name          string
+		nodeClass     *v1alpha1.IBMNodeClass
+		expectManual  bool
 		expectDynamic bool
 	}{
 		{
 			name: "Manual userData provided - should use as-is",
 			nodeClass: &v1alpha1.IBMNodeClass{
 				Spec: v1alpha1.IBMNodeClassSpec{
-					Region: "us-south",
+					Region:   "us-south",
 					UserData: "#!/bin/bash\necho 'Manual bootstrap script'",
 				},
 			},
-			expectManual: true,
+			expectManual:  true,
 			expectDynamic: false,
 		},
 		{
@@ -52,7 +52,7 @@ func TestBootstrapIntegration(t *testing.T) {
 					// UserData is empty - should trigger automatic bootstrap
 				},
 			},
-			expectManual: false,
+			expectManual:  false,
 			expectDynamic: true,
 		},
 	}
@@ -126,7 +126,7 @@ func TestBootstrapBehavior(t *testing.T) {
 	t.Run("Manual userData takes precedence", func(t *testing.T) {
 		nodeClass := &v1alpha1.IBMNodeClass{
 			Spec: v1alpha1.IBMNodeClassSpec{
-				Region: "us-south",
+				Region:   "us-south",
 				UserData: "#!/bin/bash\necho 'Custom bootstrap'",
 			},
 		}
@@ -156,7 +156,7 @@ func TestBootstrapProviderLazyInitialization(t *testing.T) {
 	assert.Nil(t, vpcProvider.bootstrapProvider)
 	assert.Nil(t, vpcProvider.k8sClient)
 
-	// After calling generateBootstrapUserData with empty userData, 
+	// After calling generateBootstrapUserData with empty userData,
 	// it should attempt to initialize (but fail in test environment)
 	nodeClass := &v1alpha1.IBMNodeClass{
 		Spec: v1alpha1.IBMNodeClassSpec{

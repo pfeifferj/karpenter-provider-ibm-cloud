@@ -51,7 +51,7 @@ func (p *IKSBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 	// For IKS mode, we don't need complex bootstrap scripts since IKS handles most of the setup
 	// The worker pool resize API will add nodes that are automatically configured
 	// Return minimal user data or empty string
-	
+
 	// If there's custom user data specified, include it
 	if strings.TrimSpace(nodeClass.Spec.UserData) != "" {
 		logger.Info("Including custom user data for IKS node")
@@ -69,36 +69,36 @@ echo "Node provisioned via IKS worker pool resize API"
 // GetClusterConfig retrieves cluster configuration from IKS API
 func (p *IKSBootstrapProvider) GetClusterConfig(ctx context.Context, clusterID string) (*commonTypes.ClusterInfo, error) {
 	logger := log.FromContext(ctx)
-	
+
 	if p.client == nil {
 		return nil, fmt.Errorf("IBM client not initialized")
 	}
-	
+
 	iksClient := p.client.GetIKSClient()
 	if iksClient == nil {
 		return nil, fmt.Errorf("IKS client not available")
 	}
-	
+
 	logger.Info("Retrieving cluster config from IKS API", "cluster_id", clusterID)
-	
+
 	// Get kubeconfig from IKS API
 	kubeconfig, err := iksClient.GetClusterConfig(ctx, clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("getting cluster config from IKS API: %w", err)
 	}
-	
+
 	// Parse kubeconfig to extract cluster information
 	endpoint, caData, err := commonTypes.ParseKubeconfig(kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("parsing kubeconfig from IKS API: %w", err)
 	}
-	
+
 	return &commonTypes.ClusterInfo{
-		Endpoint:        endpoint,
-		CAData:          caData,
-		ClusterName:     p.getClusterName(),
-		IsIKSManaged:    true,
-		IKSClusterID:    clusterID,
+		Endpoint:     endpoint,
+		CAData:       caData,
+		ClusterName:  p.getClusterName(),
+		IsIKSManaged: true,
+		IKSClusterID: clusterID,
 	}, nil
 }
 

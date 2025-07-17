@@ -28,13 +28,13 @@ import (
 type InstanceProvider interface {
 	// Create provisions a new compute instance based on the NodeClaim
 	Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error)
-	
+
 	// Delete removes an existing compute instance
 	Delete(ctx context.Context, node *corev1.Node) error
-	
+
 	// Get retrieves information about an existing compute instance
 	Get(ctx context.Context, providerID string) (*corev1.Node, error)
-	
+
 	// List returns all compute instances managed by this provider
 	List(ctx context.Context) ([]*corev1.Node, error)
 }
@@ -42,7 +42,7 @@ type InstanceProvider interface {
 // VPCInstanceProvider extends InstanceProvider with VPC-specific operations
 type VPCInstanceProvider interface {
 	InstanceProvider
-	
+
 	// UpdateTags updates tags on a VPC instance
 	UpdateTags(ctx context.Context, providerID string, tags map[string]string) error
 }
@@ -50,27 +50,27 @@ type VPCInstanceProvider interface {
 // IKSWorkerPoolProvider extends InstanceProvider with IKS-specific operations
 type IKSWorkerPoolProvider interface {
 	InstanceProvider
-	
+
 	// ResizePool resizes a worker pool by the specified amount
 	ResizePool(ctx context.Context, clusterID, poolID string, newSize int) error
-	
+
 	// GetPool retrieves information about a worker pool
 	GetPool(ctx context.Context, clusterID, poolID string) (*WorkerPool, error)
-	
+
 	// ListPools returns all worker pools for a cluster
 	ListPools(ctx context.Context, clusterID string) ([]*WorkerPool, error)
 }
 
 // WorkerPool represents an IKS worker pool
 type WorkerPool struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Flavor       string            `json:"flavor"`
-	Zone         string            `json:"zone"`
-	SizePerZone  int               `json:"sizePerZone"`
-	ActualSize   int               `json:"actualSize"`
-	State        string            `json:"state"`
-	Labels       map[string]string `json:"labels"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Flavor      string            `json:"flavor"`
+	Zone        string            `json:"zone"`
+	SizePerZone int               `json:"sizePerZone"`
+	ActualSize  int               `json:"actualSize"`
+	State       string            `json:"state"`
+	Labels      map[string]string `json:"labels"`
 }
 
 // ProviderMode represents the provisioning mode
@@ -79,7 +79,7 @@ type ProviderMode string
 const (
 	// VPCMode provisions instances directly via VPC API
 	VPCMode ProviderMode = "vpc"
-	
+
 	// IKSMode provisions instances via IKS worker pool resize API
 	IKSMode ProviderMode = "iks"
 )

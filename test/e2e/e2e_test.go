@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -43,7 +43,7 @@ import (
 )
 
 const (
-	testTimeout = 10 * time.Minute
+	testTimeout  = 10 * time.Minute
 	pollInterval = 10 * time.Second
 )
 
@@ -52,13 +52,13 @@ type E2ETestSuite struct {
 	kubeClient    client.Client
 	ibmClient     *ibm.Client
 	cloudProvider *ibmcloud.CloudProvider
-	
+
 	// Test IBM Cloud resources
-	testVPC       string
-	testSubnet    string
-	testImage     string
-	testRegion    string
-	testZone      string
+	testVPC    string
+	testSubnet string
+	testImage  string
+	testRegion string
+	testZone   string
 }
 
 // SetupE2ETestSuite initializes the test environment
@@ -71,7 +71,7 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 	// Verify required environment variables
 	requiredEnvVars := []string{
 		"IBM_API_KEY",
-		"VPC_API_KEY", 
+		"VPC_API_KEY",
 		"IBM_REGION",
 		"TEST_VPC_ID",
 		"TEST_SUBNET_ID",
@@ -190,9 +190,9 @@ func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alp
 			VPC:             s.testVPC,
 			Subnet:          s.testSubnet,
 			Tags: map[string]string{
-				"test":        "e2e",
-				"test-name":   testName,
-				"created-by":  "karpenter-e2e",
+				"test":       "e2e",
+				"test-name":  testName,
+				"created-by": "karpenter-e2e",
 			},
 		},
 	}
@@ -354,9 +354,9 @@ func (s *E2ETestSuite) cleanupTestResources(t *testing.T, testName string) {
 
 	// List of resources to clean up
 	resources := []struct {
-		name     string
-		obj      client.Object
-		listObj  client.ObjectList
+		name    string
+		obj     client.Object
+		listObj client.ObjectList
 	}{
 		{
 			name:    "NodeClaim",
@@ -364,7 +364,7 @@ func (s *E2ETestSuite) cleanupTestResources(t *testing.T, testName string) {
 			listObj: &karpv1.NodeClaimList{},
 		},
 		{
-			name:    "NodePool", 
+			name:    "NodePool",
 			obj:     &karpv1.NodePool{},
 			listObj: &karpv1.NodePoolList{},
 		},
@@ -460,7 +460,7 @@ func TestE2ENodeClassValidation(t *testing.T) {
 // TestE2EInstanceTypeSelection tests automatic instance type selection
 func TestE2EInstanceTypeSelection(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
-	
+
 	testName := fmt.Sprintf("instancetype-test-%d", time.Now().Unix())
 	defer suite.cleanupTestResources(t, testName)
 
@@ -508,21 +508,21 @@ func BenchmarkE2EInstanceCreation(b *testing.B) {
 	}
 
 	suite := SetupE2ETestSuite(&testing.T{})
-	
+
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			testName := fmt.Sprintf("bench-%d-%d", time.Now().UnixNano(), b.N)
-			
+
 			// Create NodeClass
 			nodeClass := suite.createTestNodeClass(&testing.T{}, testName)
-			
+
 			// Create NodeClaim
 			nodeClaim := suite.createTestNodeClaim(&testing.T{}, testName, nodeClass.Name)
-			
+
 			// Wait for creation (this is what we're benchmarking)
 			suite.waitForInstanceCreation(&testing.T{}, nodeClaim.Name)
-			
+
 			// Clean up
 			suite.deleteNodeClaim(&testing.T{}, nodeClaim.Name)
 			suite.waitForInstanceDeletion(&testing.T{}, nodeClaim.Name)

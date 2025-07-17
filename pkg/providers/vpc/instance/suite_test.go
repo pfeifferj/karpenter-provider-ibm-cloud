@@ -31,7 +31,7 @@ func TestVPCInstanceProvider(t *testing.T) {
 var _ = Describe("VPC Instance Provider", func() {
 	// The test suite is temporarily disabled while we refactor the test infrastructure
 	// These tests require proper mock setup for the IBM Cloud APIs
-	
+
 	It("should skip tests until proper mocks are implemented", func() {
 		Skip("VPC instance provider tests need refactoring to use proper mocks")
 	})

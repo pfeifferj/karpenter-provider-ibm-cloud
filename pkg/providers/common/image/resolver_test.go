@@ -49,7 +49,7 @@ func (m *MockVPCClient) ListImages(ctx context.Context, options *vpcv1.ListImage
 	if m.listImagesFunc != nil {
 		return m.listImagesFunc(ctx, options)
 	}
-	
+
 	var images []vpcv1.Image
 	for _, image := range m.images {
 		// Filter by visibility if specified
@@ -60,7 +60,7 @@ func (m *MockVPCClient) ListImages(ctx context.Context, options *vpcv1.ListImage
 		}
 		images = append(images, *image)
 	}
-	
+
 	return &vpcv1.ImageCollection{Images: images}, nil
 }
 
@@ -213,19 +213,19 @@ func createTestImage(id, name, visibility string, createdAt time.Time) *vpcv1.Im
 
 func TestResolver_ResolveImage(t *testing.T) {
 	ctx := context.Background()
-	
+
 	tests := []struct {
-		name           string
+		name            string
 		imageIdentifier string
-		mockImages     map[string]*vpcv1.Image
-		mockListFunc   func(ctx context.Context, options *vpcv1.ListImagesOptions) (*vpcv1.ImageCollection, error)
-		mockGetFunc    func(ctx context.Context, imageID string) (*vpcv1.Image, error)
-		expectedID     string
-		expectError    bool
-		errorContains  string
+		mockImages      map[string]*vpcv1.Image
+		mockListFunc    func(ctx context.Context, options *vpcv1.ListImagesOptions) (*vpcv1.ImageCollection, error)
+		mockGetFunc     func(ctx context.Context, imageID string) (*vpcv1.Image, error)
+		expectedID      string
+		expectError     bool
+		errorContains   string
 	}{
 		{
-			name:           "resolve valid image ID",
+			name:            "resolve valid image ID",
 			imageIdentifier: "r006-12345678-1234-1234-1234-123456789abc",
 			mockImages: map[string]*vpcv1.Image{
 				"r006-12345678-1234-1234-1234-123456789abc": createTestImage(
@@ -239,7 +239,7 @@ func TestResolver_ResolveImage(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:           "resolve image name to ID",
+			name:            "resolve image name to ID",
 			imageIdentifier: "ubuntu-20-04",
 			mockImages: map[string]*vpcv1.Image{
 				"r006-12345678-1234-1234-1234-123456789abc": createTestImage(
@@ -253,7 +253,7 @@ func TestResolver_ResolveImage(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:           "resolve partial image name",
+			name:            "resolve partial image name",
 			imageIdentifier: "ubuntu",
 			mockImages: map[string]*vpcv1.Image{
 				"r006-12345678-1234-1234-1234-123456789abc": createTestImage(
@@ -267,7 +267,7 @@ func TestResolver_ResolveImage(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:           "select newest image when multiple matches",
+			name:            "select newest image when multiple matches",
 			imageIdentifier: "ubuntu-20-04",
 			mockImages: map[string]*vpcv1.Image{
 				"r006-older": createTestImage(
@@ -287,15 +287,15 @@ func TestResolver_ResolveImage(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:           "image ID not found",
+			name:            "image ID not found",
 			imageIdentifier: "r006-12345678-1234-1234-1234-nonexistent123",
-			mockImages:     map[string]*vpcv1.Image{},
-			expectedID:     "",
-			expectError:    true,
-			errorContains:  "not found",
+			mockImages:      map[string]*vpcv1.Image{},
+			expectedID:      "",
+			expectError:     true,
+			errorContains:   "not found",
 		},
 		{
-			name:           "image name not found",
+			name:            "image name not found",
 			imageIdentifier: "nonexistent-image",
 			mockImages: map[string]*vpcv1.Image{
 				"r006-12345678-1234-1234-1234-123456789abc": createTestImage(
@@ -310,15 +310,15 @@ func TestResolver_ResolveImage(t *testing.T) {
 			errorContains: "no image found matching name",
 		},
 		{
-			name:           "empty image identifier",
+			name:            "empty image identifier",
 			imageIdentifier: "",
-			mockImages:     map[string]*vpcv1.Image{},
-			expectedID:     "",
-			expectError:    true,
-			errorContains:  "cannot be empty",
+			mockImages:      map[string]*vpcv1.Image{},
+			expectedID:      "",
+			expectError:     true,
+			errorContains:   "cannot be empty",
 		},
 		{
-			name:           "check private images when public not found",
+			name:            "check private images when public not found",
 			imageIdentifier: "private-ubuntu",
 			mockListFunc: func(ctx context.Context, options *vpcv1.ListImagesOptions) (*vpcv1.ImageCollection, error) {
 				if options.Visibility != nil && *options.Visibility == "public" {
@@ -350,7 +350,7 @@ func TestResolver_ResolveImage(t *testing.T) {
 				listImagesFunc: tt.mockListFunc,
 				getImageFunc:   tt.mockGetFunc,
 			}
-			
+
 			resolver := &MockResolver{
 				mockClient: mockClient,
 			}
@@ -373,7 +373,7 @@ func TestResolver_ResolveImage(t *testing.T) {
 
 func TestResolver_ListAvailableImages(t *testing.T) {
 	ctx := context.Background()
-	
+
 	now := time.Now()
 	images := map[string]*vpcv1.Image{
 		"r006-ubuntu": createTestImage(
@@ -397,32 +397,32 @@ func TestResolver_ListAvailableImages(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		nameFilter   string
+		name          string
+		nameFilter    string
 		expectedCount int
 		expectedFirst string
 	}{
 		{
-			name:         "list all images",
-			nameFilter:   "",
+			name:          "list all images",
+			nameFilter:    "",
 			expectedCount: 3,
 			expectedFirst: "r006-ubuntu", // Newest first
 		},
 		{
-			name:         "filter by ubuntu",
-			nameFilter:   "ubuntu",
+			name:          "filter by ubuntu",
+			nameFilter:    "ubuntu",
 			expectedCount: 1,
 			expectedFirst: "r006-ubuntu",
 		},
 		{
-			name:         "filter by minimal",
-			nameFilter:   "minimal",
+			name:          "filter by minimal",
+			nameFilter:    "minimal",
 			expectedCount: 2,
 			expectedFirst: "r006-ubuntu", // Newest first
 		},
 		{
-			name:         "filter with no matches",
-			nameFilter:   "nonexistent",
+			name:          "filter with no matches",
+			nameFilter:    "nonexistent",
 			expectedCount: 0,
 		},
 	}
@@ -432,7 +432,7 @@ func TestResolver_ListAvailableImages(t *testing.T) {
 			mockClient := &MockVPCClient{
 				images: images,
 			}
-			
+
 			resolver := &MockResolver{
 				mockClient: mockClient,
 			}
@@ -441,7 +441,7 @@ func TestResolver_ListAvailableImages(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Len(t, result, tt.expectedCount)
-			
+
 			if tt.expectedCount > 0 {
 				assert.Equal(t, tt.expectedFirst, result[0].ID)
 				// Verify sorting (newest first)
