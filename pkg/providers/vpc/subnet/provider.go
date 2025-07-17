@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -191,7 +191,7 @@ func (p *provider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1
 // ListSubnets returns all subnets in the VPC
 func (p *provider) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error) {
 	cacheKey := fmt.Sprintf("vpc-subnets:%s", vpcID)
-	
+
 	// Try to get from cache first
 	if cached, exists := p.subnetCache.Get(cacheKey); exists {
 		return cached.([]SubnetInfo), nil
@@ -224,7 +224,7 @@ func (p *provider) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo,
 // GetSubnet retrieves information about a specific subnet
 func (p *provider) GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo, error) {
 	cacheKey := fmt.Sprintf("subnet:%s", subnetID)
-	
+
 	// Try to get from cache first
 	if cached, exists := p.subnetCache.Get(cacheKey); exists {
 		result := cached.(SubnetInfo)
@@ -243,10 +243,10 @@ func (p *provider) GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo,
 	}
 
 	subnetInfo := convertVPCSubnetToSubnetInfo(*subnet)
-	
+
 	// Cache the result with shorter TTL for individual subnets (may change more frequently)
 	p.subnetCache.SetWithTTL(cacheKey, subnetInfo, 2*time.Minute)
-	
+
 	return &subnetInfo, nil
 }
 
@@ -267,7 +267,7 @@ func convertVPCSubnetToSubnetInfo(vpcSubnet vpcv1.Subnet) SubnetInfo {
 	if vpcSubnet.AvailableIpv4AddressCount != nil {
 		subnetInfo.AvailableIPs = int32(*vpcSubnet.AvailableIpv4AddressCount)
 	}
-	
+
 	// Calculate used IPs
 	subnetInfo.UsedIPCount = subnetInfo.TotalIPCount - subnetInfo.AvailableIPs
 

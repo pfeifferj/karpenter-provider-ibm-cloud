@@ -72,7 +72,7 @@ func TestTokenController_ensureBootstrapRBAC(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create fake kubernetes client
 			client := fake.NewSimpleClientset(tt.existingRBAC...)
-			
+
 			controller := &TokenController{
 				client: client,
 			}
@@ -90,7 +90,7 @@ func TestTokenController_ensureBootstrapRBAC(t *testing.T) {
 			// Verify ClusterRoleBindings exist
 			expectedBindings := []string{
 				"karpenter-ibm-bootstrap-nodes",
-				"karpenter-ibm-auto-approve-csrs", 
+				"karpenter-ibm-auto-approve-csrs",
 				"karpenter-ibm-auto-approve-renewals",
 			}
 
@@ -137,7 +137,7 @@ func TestTokenController_CreateBootstrapToken(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.NotEmpty(t, token)
-			
+
 			// Token should have format: tokenID.tokenSecret
 			assert.Contains(t, token, ".")
 			parts := strings.Split(token, ".")
@@ -224,7 +224,7 @@ func TestTokenController_cleanupExpiredTokens(t *testing.T) {
 				LabelSelector: "karpenter.sh/bootstrap-token=true",
 			})
 			require.NoError(t, err)
-			
+
 			expectedRemaining := len(tt.existingSecrets) - tt.expectDeleted
 			assert.Len(t, secrets.Items, expectedRemaining)
 		})
@@ -262,7 +262,7 @@ func TestGenerateRandomString(t *testing.T) {
 			expected: 6,
 		},
 		{
-			name:     "generates 16 character string", 
+			name:     "generates 16 character string",
 			length:   16,
 			expected: 16,
 		},
@@ -277,7 +277,7 @@ func TestGenerateRandomString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := generateRandomString(tt.length)
 			assert.Len(t, result, tt.expected)
-			
+
 			if tt.length > 0 {
 				// Should be hex characters only
 				for _, char := range result {
@@ -288,4 +288,3 @@ func TestGenerateRandomString(t *testing.T) {
 		})
 	}
 }
-

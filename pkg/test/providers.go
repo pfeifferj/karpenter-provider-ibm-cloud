@@ -305,7 +305,7 @@ func (p *TestWorkerPoolProvider) Create(ctx context.Context, nodeClaim *karpv1.N
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeClaim.Name,
 			Labels: map[string]string{
-				"node.kubernetes.io/instance-type": "bx2-4x16", // mock instance type
+				"node.kubernetes.io/instance-type": "bx2-4x16",   // mock instance type
 				"topology.kubernetes.io/zone":      "us-south-1", // mock zone
 			},
 		},
@@ -330,7 +330,7 @@ func (p *TestWorkerPoolProvider) Get(ctx context.Context, providerID string) (*c
 	if workerID == "" {
 		return nil, fmt.Errorf("invalid provider ID: %s", providerID)
 	}
-	
+
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: workerID,
@@ -358,7 +358,7 @@ func (p *TestWorkerPoolProvider) ListPools(ctx context.Context, clusterID string
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Convert slice of values to slice of pointers
 	result := make([]*commonTypes.WorkerPool, len(pools))
 	for i := range pools {
@@ -367,7 +367,7 @@ func (p *TestWorkerPoolProvider) ListPools(ctx context.Context, clusterID string
 	return result, nil
 }
 
-// ResizePool resizes a worker pool by the specified amount (implements IKSWorkerPoolProvider interface) 
+// ResizePool resizes a worker pool by the specified amount (implements IKSWorkerPoolProvider interface)
 func (p *TestWorkerPoolProvider) ResizePool(ctx context.Context, clusterID, poolID string, newSize int) error {
 	return p.ResizeWorkerPool(ctx, clusterID, poolID, newSize)
 }
@@ -381,4 +381,3 @@ func extractInstanceIDFromProviderID(providerID string) string {
 	}
 	return ""
 }
-

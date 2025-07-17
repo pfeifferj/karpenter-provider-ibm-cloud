@@ -30,23 +30,23 @@ import (
 
 // VPCBehavior controls the fake VPC API behavior for testing
 type VPCBehavior struct {
-	CreateInstanceBehavior   MockedFunction[CreateInstanceInput, vpcv1.Instance]
-	DeleteInstanceBehavior   MockedFunction[DeleteInstanceInput, struct{}]
-	GetInstanceBehavior      MockedFunction[GetInstanceInput, vpcv1.Instance]
-	ListInstancesBehavior    MockedFunction[ListInstancesInput, vpcv1.InstanceCollection]
-	
-	GetSubnetBehavior        MockedFunction[GetSubnetInput, vpcv1.Subnet]
-	ListSubnetsBehavior      MockedFunction[ListSubnetsInput, vpcv1.SubnetCollection]
-	
-	GetImageBehavior         MockedFunction[GetImageInput, vpcv1.Image]
-	ListImagesBehavior       MockedFunction[ListImagesInput, vpcv1.ImageCollection]
-	
-	GetVPCBehavior           MockedFunction[GetVPCInput, vpcv1.VPC]
-	ListVPCsBehavior         MockedFunction[ListVPCsInput, vpcv1.VPCCollection]
-	
-	GetInstanceProfileBehavior MockedFunction[GetInstanceProfileInput, vpcv1.InstanceProfile]
+	CreateInstanceBehavior MockedFunction[CreateInstanceInput, vpcv1.Instance]
+	DeleteInstanceBehavior MockedFunction[DeleteInstanceInput, struct{}]
+	GetInstanceBehavior    MockedFunction[GetInstanceInput, vpcv1.Instance]
+	ListInstancesBehavior  MockedFunction[ListInstancesInput, vpcv1.InstanceCollection]
+
+	GetSubnetBehavior   MockedFunction[GetSubnetInput, vpcv1.Subnet]
+	ListSubnetsBehavior MockedFunction[ListSubnetsInput, vpcv1.SubnetCollection]
+
+	GetImageBehavior   MockedFunction[GetImageInput, vpcv1.Image]
+	ListImagesBehavior MockedFunction[ListImagesInput, vpcv1.ImageCollection]
+
+	GetVPCBehavior   MockedFunction[GetVPCInput, vpcv1.VPC]
+	ListVPCsBehavior MockedFunction[ListVPCsInput, vpcv1.VPCCollection]
+
+	GetInstanceProfileBehavior   MockedFunction[GetInstanceProfileInput, vpcv1.InstanceProfile]
 	ListInstanceProfilesBehavior MockedFunction[ListInstanceProfilesInput, vpcv1.InstanceProfileCollection]
-	
+
 	Instances        atomic.Slice[*vpcv1.Instance]
 	Subnets          atomic.Slice[*vpcv1.Subnet]
 	Images           atomic.Slice[*vpcv1.Image]
@@ -73,7 +73,6 @@ type ListInstancesInput struct {
 	Name string
 }
 
-
 type GetSubnetInput struct {
 	ID string
 }
@@ -81,7 +80,6 @@ type GetSubnetInput struct {
 type ListSubnetsInput struct {
 	VPC string
 }
-
 
 type GetImageInput struct {
 	ID string
@@ -147,15 +145,15 @@ func (f *VPCAPI) CreateInstance(ctx context.Context, prototype vpcv1.InstancePro
 	imageID := "image-test"
 	profileName := "bx2-2x8"
 	status := "running"
-	
+
 	instance := &vpcv1.Instance{
-		ID:   &instanceID,
-		Name: &instanceName,
-		Zone: &vpcv1.ZoneReference{Name: &zoneName},
-		VPC:  &vpcv1.VPCReference{ID: &vpcID},
-		Image: &vpcv1.ImageReference{ID: &imageID},
+		ID:      &instanceID,
+		Name:    &instanceName,
+		Zone:    &vpcv1.ZoneReference{Name: &zoneName},
+		VPC:     &vpcv1.VPCReference{ID: &vpcID},
+		Image:   &vpcv1.ImageReference{ID: &imageID},
 		Profile: &vpcv1.InstanceProfileReference{Name: &profileName},
-		Status: &status,
+		Status:  &status,
 		PrimaryNetworkInterface: &vpcv1.NetworkInterfaceInstanceContextReference{
 			ID:     lo.ToPtr("eni-" + instanceID),
 			Subnet: &vpcv1.SubnetReference{ID: &subnetID},
@@ -463,14 +461,14 @@ func (f *VPCAPI) GetInstanceProfile(ctx context.Context, name string) (*vpcv1.In
 func (f *VPCAPI) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	
+
 	f.Instances.Reset()
 	f.Subnets.Reset()
 	f.Images.Reset()
 	f.VPCs.Reset()
 	f.InstanceProfiles.Reset()
 	f.NextError.Store(nil)
-	
+
 	// Reset all behavior mocks
 	f.CreateInstanceBehavior.Reset()
 	f.DeleteInstanceBehavior.Reset()

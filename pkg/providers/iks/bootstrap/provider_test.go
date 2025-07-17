@@ -121,36 +121,36 @@ func NewTestableIKSBootstrapProvider(ibmClient IBMClientInterface, k8sClient kub
 
 func (p *TestableIKSBootstrapProvider) GetClusterConfig(ctx context.Context, clusterID string) (*commonTypes.ClusterInfo, error) {
 	logger := log.FromContext(ctx)
-	
+
 	if p.ibmClient == nil {
 		return nil, fmt.Errorf("IBM client not initialized")
 	}
-	
+
 	iksClient := p.ibmClient.GetIKSClient()
 	if iksClient == nil {
 		return nil, fmt.Errorf("IKS client not available")
 	}
-	
+
 	logger.Info("Retrieving cluster config from IKS API", "cluster_id", clusterID)
-	
+
 	// Get kubeconfig from IKS API
 	kubeconfig, err := iksClient.GetClusterConfig(ctx, clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("getting cluster config from IKS API: %w", err)
 	}
-	
+
 	// Parse kubeconfig to extract cluster information
 	endpoint, caData, err := commonTypes.ParseKubeconfig(kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("parsing kubeconfig from IKS API: %w", err)
 	}
-	
+
 	return &commonTypes.ClusterInfo{
-		Endpoint:        endpoint,
-		CAData:          caData,
-		ClusterName:     p.getClusterName(),
-		IsIKSManaged:    true,
-		IKSClusterID:    clusterID,
+		Endpoint:     endpoint,
+		CAData:       caData,
+		ClusterName:  p.getClusterName(),
+		IsIKSManaged: true,
+		IKSClusterID: clusterID,
 	}, nil
 }
 
@@ -161,7 +161,7 @@ func (p *TestableIKSBootstrapProvider) GetUserData(ctx context.Context, nodeClas
 	// For IKS mode, we don't need complex bootstrap scripts since IKS handles most of the setup
 	// The worker pool resize API will add nodes that are automatically configured
 	// Return minimal user data or empty string
-	
+
 	// If there's custom user data specified, include it
 	if strings.TrimSpace(nodeClass.Spec.UserData) != "" {
 		logger.Info("Including custom user data for IKS node")
@@ -241,23 +241,23 @@ func TestIKSBootstrapProvider_GetUserData(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name            string
-		nodeClass       *v1alpha1.IBMNodeClass
-		nodeClaim       types.NamespacedName
-		envClusterName  string
-		envClusterID    string
-		expectError     bool
-		errorContains   string
+		name             string
+		nodeClass        *v1alpha1.IBMNodeClass
+		nodeClaim        types.NamespacedName
+		envClusterName   string
+		envClusterID     string
+		expectError      bool
+		errorContains    string
 		validateUserData func(*testing.T, string)
 	}{
 		{
-			name:      "minimal user data with default message",
+			name: "minimal user data with default message",
 			nodeClass: func() *v1alpha1.IBMNodeClass {
 				nc := getTestNodeClass()
 				nc.Spec.UserData = "" // Remove custom user data
 				return nc
 			}(),
-			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
+			nodeClaim:   types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			expectError: false,
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
@@ -269,9 +269,9 @@ func TestIKSBootstrapProvider_GetUserData(t *testing.T) {
 			},
 		},
 		{
-			name:      "custom user data from NodeClass",
-			nodeClass: getTestNodeClass(),
-			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
+			name:        "custom user data from NodeClass",
+			nodeClass:   getTestNodeClass(),
+			nodeClaim:   types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			expectError: false,
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
@@ -287,7 +287,7 @@ func TestIKSBootstrapProvider_GetUserData(t *testing.T) {
 				nc.Spec.UserData = "   " // Whitespace only
 				return nc
 			}(),
-			nodeClaim: types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
+			nodeClaim:   types.NamespacedName{Name: "test-nodeclaim", Namespace: "default"},
 			expectError: false,
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
@@ -354,7 +354,7 @@ func TestIKSBootstrapProvider_GetClusterConfig(t *testing.T) {
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				// Return the mock IKS client, not a real one
 				ibmClient.On("GetIKSClient").Return(iksClient)
-				
+
 				kubeconfig := getTestKubeconfig()
 				iksClient.On("GetClusterConfig", mock.Anything, "test-cluster-id").Return(kubeconfig, nil)
 			},
@@ -402,7 +402,7 @@ func TestIKSBootstrapProvider_GetClusterConfig(t *testing.T) {
 			clusterID: "test-cluster-id",
 			setupMocks: func(ibmClient *MockIBMClient, iksClient *MockIKSClient) {
 				ibmClient.On("GetIKSClient").Return(iksClient)
-				
+
 				// Return invalid kubeconfig
 				invalidKubeconfig := `invalid: yaml content without server`
 				iksClient.On("GetClusterConfig", mock.Anything, "test-cluster-id").Return(invalidKubeconfig, nil)

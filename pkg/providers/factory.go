@@ -35,11 +35,11 @@ import (
 
 // ProviderFactory creates the appropriate instance provider based on the NodeClass configuration
 type ProviderFactory struct {
-	client          *ibm.Client
-	kubeClient      client.Client
-	kubernetesClient kubernetes.Interface
-	pricingProvider pricing.Provider
-	subnetProvider  subnet.Provider
+	client               *ibm.Client
+	kubeClient           client.Client
+	kubernetesClient     kubernetes.Interface
+	pricingProvider      pricing.Provider
+	subnetProvider       subnet.Provider
 	instanceTypeProvider instancetype.Provider
 }
 
@@ -49,7 +49,7 @@ func NewProviderFactory(client *ibm.Client, kubeClient client.Client, kubernetes
 	pricingProvider := pricing.NewIBMPricingProvider(client)
 	subnetProvider := subnet.NewProvider(client)
 	instanceTypeProvider := instancetype.NewProvider(client, pricingProvider)
-	
+
 	return &ProviderFactory{
 		client:               client,
 		kubeClient:           kubeClient,
@@ -65,9 +65,9 @@ func (f *ProviderFactory) GetInstanceProvider(nodeClass *v1alpha1.IBMNodeClass) 
 	if nodeClass == nil {
 		return nil, fmt.Errorf("nodeClass cannot be nil")
 	}
-	
+
 	mode := f.determineProviderMode(nodeClass)
-	
+
 	switch mode {
 	case commonTypes.IKSMode:
 		return iksProvider.NewIKSWorkerPoolProvider(f.client, f.kubeClient)
@@ -88,12 +88,12 @@ func (f *ProviderFactory) GetVPCProvider(nodeClass *v1alpha1.IBMNodeClass) (comm
 	if nodeClass == nil {
 		return nil, fmt.Errorf("nodeClass cannot be nil")
 	}
-	
+
 	mode := f.determineProviderMode(nodeClass)
 	if mode != commonTypes.VPCMode {
 		return nil, fmt.Errorf("VPC provider requested but NodeClass is configured for %s mode", mode)
 	}
-	
+
 	if f.kubernetesClient != nil {
 		return vpcProvider.NewVPCInstanceProviderWithKubernetesClient(f.client, f.kubeClient, f.kubernetesClient)
 	} else {
@@ -107,12 +107,12 @@ func (f *ProviderFactory) GetIKSProvider(nodeClass *v1alpha1.IBMNodeClass) (comm
 	if nodeClass == nil {
 		return nil, fmt.Errorf("nodeClass cannot be nil")
 	}
-	
+
 	mode := f.determineProviderMode(nodeClass)
 	if mode != commonTypes.IKSMode {
 		return nil, fmt.Errorf("IKS provider requested but NodeClass is configured for %s mode", mode)
 	}
-	
+
 	return iksProvider.NewIKSWorkerPoolProvider(f.client, f.kubeClient)
 }
 
@@ -126,7 +126,7 @@ func (f *ProviderFactory) determineProviderMode(nodeClass *v1alpha1.IBMNodeClass
 		}
 		return commonTypes.VPCMode
 	}
-	
+
 	// Check if bootstrap mode is explicitly set
 	if nodeClass.Spec.BootstrapMode != nil {
 		switch *nodeClass.Spec.BootstrapMode {
@@ -138,17 +138,17 @@ func (f *ProviderFactory) determineProviderMode(nodeClass *v1alpha1.IBMNodeClass
 			// Continue with automatic detection based on other indicators
 		}
 	}
-	
+
 	// Check if IKS cluster ID is provided (implies IKS mode)
 	if nodeClass.Spec.IKSClusterID != "" {
 		return commonTypes.IKSMode
 	}
-	
+
 	// Check environment variable
 	if os.Getenv("IKS_CLUSTER_ID") != "" {
 		return commonTypes.IKSMode
 	}
-	
+
 	// Default to VPC mode
 	return commonTypes.VPCMode
 }

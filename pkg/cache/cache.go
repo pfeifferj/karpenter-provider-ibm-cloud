@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -41,10 +41,10 @@ func New(ttl time.Duration) *Cache {
 		ttl:      ttl,
 		stopChan: make(chan struct{}),
 	}
-	
+
 	// Start cleanup goroutine
 	go c.cleanup()
-	
+
 	return c
 }
 
@@ -52,17 +52,17 @@ func New(ttl time.Duration) *Cache {
 func (c *Cache) Get(key string) (interface{}, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	entry, exists := c.items[key]
 	if !exists {
 		return nil, false
 	}
-	
+
 	if time.Now().After(entry.Expiration) {
 		delete(c.items, key)
 		return nil, false
 	}
-	
+
 	return entry.Value, true
 }
 
@@ -75,7 +75,7 @@ func (c *Cache) Set(key string, value interface{}) {
 func (c *Cache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	c.items[key] = &Entry{
 		Value:      value,
 		Expiration: time.Now().Add(ttl),
@@ -124,7 +124,7 @@ func (c *Cache) Stop() {
 func (c *Cache) cleanup() {
 	ticker := time.NewTicker(c.ttl / 2) // Cleanup every half TTL period
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -139,7 +139,7 @@ func (c *Cache) cleanup() {
 func (c *Cache) removeExpired() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	now := time.Now()
 	for key, entry := range c.items {
 		if now.After(entry.Expiration) {
@@ -154,13 +154,13 @@ func (c *Cache) GetOrSet(key string, fetchFunc func() (interface{}, error)) (int
 	if value, exists := c.Get(key); exists {
 		return value, nil
 	}
-	
+
 	// Not in cache, fetch the value
 	value, err := fetchFunc()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Store in cache
 	c.Set(key, value)
 	return value, nil
@@ -172,13 +172,13 @@ func (c *Cache) GetOrSetWithTTL(key string, ttl time.Duration, fetchFunc func() 
 	if value, exists := c.Get(key); exists {
 		return value, nil
 	}
-	
+
 	// Not in cache, fetch the value
 	value, err := fetchFunc()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Store in cache with custom TTL
 	c.SetWithTTL(key, value, ttl)
 	return value, nil

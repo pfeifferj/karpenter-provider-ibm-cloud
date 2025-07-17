@@ -56,11 +56,11 @@ func GenerateBootstrapToken(ctx context.Context, client kubernetes.Interface, tt
 		},
 		Type: "bootstrap.kubernetes.io/token",
 		Data: map[string][]byte{
-			"token-id":     []byte(tokenID),
-			"token-secret": []byte(tokenSecret[7:]), // Remove the "tokenID." prefix
+			"token-id":                       []byte(tokenID),
+			"token-secret":                   []byte(tokenSecret[7:]), // Remove the "tokenID." prefix
 			"usage-bootstrap-authentication": []byte("true"),
-			"usage-bootstrap-signing":         []byte("true"),
-			"auth-extra-groups":               []byte("system:bootstrappers:karpenter:ibm-cloud"),
+			"usage-bootstrap-signing":        []byte("true"),
+			"auth-extra-groups":              []byte("system:bootstrappers:karpenter:ibm-cloud"),
 		},
 	}
 
@@ -110,7 +110,7 @@ func FindOrCreateBootstrapToken(ctx context.Context, client kubernetes.Interface
 
 // GetInternalAPIServerEndpoint discovers the API server endpoint for node bootstrapping
 func GetInternalAPIServerEndpoint(ctx context.Context, client kubernetes.Interface) (string, error) {
-	// First try to get from kubeadm-config ConfigMap 
+	// First try to get from kubeadm-config ConfigMap
 	kubeadmConfig, err := client.CoreV1().ConfigMaps("kube-system").Get(ctx, "kubeadm-config", metav1.GetOptions{})
 	if err == nil {
 		if endpoint, parseErr := parseKubeadmConfigEndpoint(kubeadmConfig.Data["ClusterConfiguration"]); parseErr == nil {
@@ -118,7 +118,7 @@ func GetInternalAPIServerEndpoint(ctx context.Context, client kubernetes.Interfa
 		}
 	}
 
-	// Fallback: Get from cluster-info ConfigMap 
+	// Fallback: Get from cluster-info ConfigMap
 	clusterInfo, err := client.CoreV1().ConfigMaps("kube-public").Get(ctx, "cluster-info", metav1.GetOptions{})
 	if err == nil {
 		if endpoint, parseErr := parseClusterInfoEndpoint(clusterInfo.Data["kubeconfig"]); parseErr == nil {

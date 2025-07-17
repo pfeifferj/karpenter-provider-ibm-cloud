@@ -17,10 +17,10 @@ func TestMainWithEnvironment(t *testing.T) {
 	// Set some environment variables that main() would use
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
-	
+
 	// Override args to prevent actual execution
 	os.Args = []string{"test", "--help"}
-	
+
 	// Test that main doesn't panic with help flag
 	// Note: This will exit the program, so we can't easily test it
 	// without more sophisticated mocking

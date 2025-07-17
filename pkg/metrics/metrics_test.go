@@ -53,7 +53,7 @@ func TestRecordInstanceProvisioningDuration(t *testing.T) {
 		# TYPE karpenter_ibm_instance_provisioning_duration_seconds histogram
 		karpenter_ibm_instance_provisioning_duration_seconds_count{instance_type="bx2.2x8",result="success",zone="us-south-1"} 1
 	`
-	
+
 	err := testutil.CollectAndCompare(InstanceProvisioningDuration, strings.NewReader(metricString), "karpenter_ibm_instance_provisioning_duration_seconds_count")
 	assert.NoError(t, err)
 }

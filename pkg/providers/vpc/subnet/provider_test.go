@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,8 +19,8 @@ import (
 	"testing"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
-	"github.com/stretchr/testify/assert"
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSubnetProviderStructure(t *testing.T) {
@@ -39,23 +39,23 @@ func TestConvertVPCSubnetToSubnetInfo(t *testing.T) {
 	availableIPs := int64(200)
 
 	vpcSubnet := vpcv1.Subnet{
-		ID:   &subnetID,
-		Zone: &vpcv1.ZoneReference{Name: &zoneName},
-		Ipv4CIDRBlock:              &cidr,
-		Status:                     &status,
-		TotalIpv4AddressCount:      &totalIPs,
-		AvailableIpv4AddressCount:  &availableIPs,
+		ID:                        &subnetID,
+		Zone:                      &vpcv1.ZoneReference{Name: &zoneName},
+		Ipv4CIDRBlock:             &cidr,
+		Status:                    &status,
+		TotalIpv4AddressCount:     &totalIPs,
+		AvailableIpv4AddressCount: &availableIPs,
 	}
 
 	expected := SubnetInfo{
-		ID:              subnetID,
-		Zone:            zoneName,
-		CIDR:            cidr,
-		State:           status,
-		TotalIPCount:    int32(totalIPs),
-		AvailableIPs:    int32(availableIPs),
-		UsedIPCount:     int32(totalIPs - availableIPs),
-		Tags:            make(map[string]string),
+		ID:           subnetID,
+		Zone:         zoneName,
+		CIDR:         cidr,
+		State:        status,
+		TotalIPCount: int32(totalIPs),
+		AvailableIPs: int32(availableIPs),
+		UsedIPCount:  int32(totalIPs - availableIPs),
+		Tags:         make(map[string]string),
 	}
 
 	result := convertVPCSubnetToSubnetInfo(vpcSubnet)
@@ -160,12 +160,12 @@ func TestConvertVPCSubnetToSubnetInfo_EdgeCases(t *testing.T) {
 		status := "available"
 
 		vpcSubnet := vpcv1.Subnet{
-			ID:                          &subnetID,
-			Zone:                        &vpcv1.ZoneReference{Name: &zoneName},
-			Ipv4CIDRBlock:               &cidr,
-			Status:                      &status,
-			TotalIpv4AddressCount:       nil, // Test nil pointer
-			AvailableIpv4AddressCount:   nil, // Test nil pointer
+			ID:                        &subnetID,
+			Zone:                      &vpcv1.ZoneReference{Name: &zoneName},
+			Ipv4CIDRBlock:             &cidr,
+			Status:                    &status,
+			TotalIpv4AddressCount:     nil, // Test nil pointer
+			AvailableIpv4AddressCount: nil, // Test nil pointer
 		}
 
 		result := convertVPCSubnetToSubnetInfo(vpcSubnet)
@@ -189,12 +189,12 @@ func TestConvertVPCSubnetToSubnetInfo_EdgeCases(t *testing.T) {
 		availableIPs := int64(200)
 
 		vpcSubnet := vpcv1.Subnet{
-			ID:                          &subnetID,
-			Zone:                        &vpcv1.ZoneReference{Name: &zoneName},
-			Ipv4CIDRBlock:               &cidr,
-			Status:                      &status,
-			TotalIpv4AddressCount:       &totalIPs,
-			AvailableIpv4AddressCount:   &availableIPs,
+			ID:                        &subnetID,
+			Zone:                      &vpcv1.ZoneReference{Name: &zoneName},
+			Ipv4CIDRBlock:             &cidr,
+			Status:                    &status,
+			TotalIpv4AddressCount:     &totalIPs,
+			AvailableIpv4AddressCount: &availableIPs,
 		}
 
 		result := convertVPCSubnetToSubnetInfo(vpcSubnet)
@@ -227,8 +227,8 @@ func TestSubnetFiltering_Logic(t *testing.T) {
 	// Test the filtering logic used in SelectSubnets
 	subnets := []SubnetInfo{
 		{ID: "subnet-1", State: "available", AvailableIPs: 100},
-		{ID: "subnet-2", State: "pending", AvailableIPs: 200},    // Should be filtered out
-		{ID: "subnet-3", State: "available", AvailableIPs: 50},   // May be filtered by MinimumAvailableIPs
+		{ID: "subnet-2", State: "pending", AvailableIPs: 200},  // Should be filtered out
+		{ID: "subnet-3", State: "available", AvailableIPs: 50}, // May be filtered by MinimumAvailableIPs
 		{ID: "subnet-4", State: "available", AvailableIPs: 300},
 	}
 

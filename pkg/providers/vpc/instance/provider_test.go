@@ -172,11 +172,11 @@ func (p *testVPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.
 	if nodeClass.Spec.InstanceProfile == "" {
 		return nil, fmt.Errorf("instance profile not specified in NodeClass")
 	}
-	
+
 	if nodeClass.Spec.Zone == "" {
 		return nil, fmt.Errorf("zone not specified in NodeClass")
 	}
-	
+
 	if nodeClass.Spec.Subnet == "" {
 		return nil, fmt.Errorf("subnet not specified in NodeClass")
 	}
@@ -322,7 +322,7 @@ func (m *MockIBMClient) GetVPCClient() (*ibm.VPCClient, error) {
 	if m.mockVPCSDKClient == nil {
 		return nil, fmt.Errorf("mock VPC SDK client not initialized")
 	}
-	
+
 	// Create a VPC client with the mock SDK client
 	vpcClient := ibm.NewVPCClientWithMock(m.mockVPCSDKClient)
 	return vpcClient, nil
@@ -409,7 +409,7 @@ func TestVPCInstanceProvider_Create(t *testing.T) {
 				}
 				testResponse := &core.DetailedResponse{StatusCode: 200}
 				vpcSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(testImage, testResponse, nil)
-				
+
 				// Mock instance creation
 				expectedInstance := getTestVPCInstance()
 				vpcSDKClient.On("CreateInstanceWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.CreateInstanceOptions")).Return(expectedInstance, testResponse, nil)
@@ -498,7 +498,7 @@ func TestVPCInstanceProvider_Create(t *testing.T) {
 				}
 				testResponse := &core.DetailedResponse{StatusCode: 200}
 				vpcSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(testImage, testResponse, nil)
-				
+
 				// Mock instance creation failure
 				vpcSDKClient.On("CreateInstanceWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.CreateInstanceOptions")).Return(nil, nil, fmt.Errorf("instance creation failed"))
 			},
@@ -510,7 +510,7 @@ func TestVPCInstanceProvider_Create(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			
+
 			// Create fake Kubernetes client
 			scheme := getTestScheme()
 			builder := fake.NewClientBuilder().WithScheme(scheme)
@@ -595,7 +595,7 @@ func TestVPCInstanceProvider_Delete(t *testing.T) {
 			setupMocks: func(ibmClient *MockIBMClient, vpcSDKClient *MockVPCSDKClient) {
 				vpcSDKClient.On("DeleteInstanceWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.DeleteInstanceOptions")).Return(nil, fmt.Errorf("instance not found"))
 			},
-			expectError: true,
+			expectError:   true,
 			errorContains: "instance not found",
 		},
 		{

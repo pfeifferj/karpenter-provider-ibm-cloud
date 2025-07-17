@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -85,7 +85,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	if err := c.validateNodeClass(ctx, nc); err != nil {
 		nc.Status.LastValidationTime = metav1.Now()
 		nc.Status.ValidationError = err.Error()
-		
+
 		// Set Ready condition to False with validation error
 		nc.Status.Conditions = []metav1.Condition{
 			{
@@ -96,7 +96,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 				Message:            err.Error(),
 			},
 		}
-		
+
 		if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
 			return reconcile.Result{}, err
 		}
@@ -106,7 +106,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	// Validation passed - clear any previous validation error and set Ready condition
 	nc.Status.LastValidationTime = metav1.Now()
 	nc.Status.ValidationError = ""
-	
+
 	// Set Ready condition to True
 	nc.Status.Conditions = []metav1.Condition{
 		{
@@ -117,7 +117,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			Message:            "NodeClass is ready",
 		},
 	}
-	
+
 	if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
 		return reconcile.Result{}, err
 	}
@@ -273,17 +273,17 @@ func (c *Controller) validateBusinessLogic(nc *v1alpha1.IBMNodeClass) error {
 	// Validate instanceProfile and instanceRequirements mutual exclusivity
 	hasInstanceProfile := strings.TrimSpace(nc.Spec.InstanceProfile) != ""
 	hasInstanceRequirements := nc.Spec.InstanceRequirements != nil
-	
+
 	if !hasInstanceProfile && !hasInstanceRequirements {
 		return fmt.Errorf("either instanceProfile or instanceRequirements must be specified")
 	}
-	
+
 	if hasInstanceProfile && hasInstanceRequirements {
 		return fmt.Errorf("instanceProfile and instanceRequirements are mutually exclusive")
 	}
 
 	// If both zone and subnet are specified, ensure they are compatible
-	// For now, we skip zone-subnet compatibility checks since we validate 
+	// For now, we skip zone-subnet compatibility checks since we validate
 	// actual subnet resources via API calls in validateIBMCloudResources
 	// TODO: Add zone-subnet compatibility validation
 
@@ -392,7 +392,7 @@ func (c *Controller) validatePlacementStrategy(strategy *v1alpha1.PlacementStrat
 		}
 	}
 	if !isValidZoneBalance {
-		return fmt.Errorf("invalid ZoneBalance: %s, must be one of: %s", 
+		return fmt.Errorf("invalid ZoneBalance: %s, must be one of: %s",
 			strategy.ZoneBalance, strings.Join(validZoneBalances, ", "))
 	}
 

@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -146,14 +146,14 @@ func (c *GlobalCatalogClient) GetPricing(ctx context.Context, catalogEntryID str
 		pricingOptions := &globalcatalogv1.GetPricingOptions{
 			ID: &catalogEntryID,
 		}
-		
+
 		pricingData, _, err := sdkClient.GetPricing(pricingOptions)
 		if err != nil {
 			return nil, fmt.Errorf("calling GetPricing API: %w", err)
 		}
-		
+
 		return pricingData, nil
 	}
-	
+
 	return nil, fmt.Errorf("invalid client type for GetPricing")
 }
