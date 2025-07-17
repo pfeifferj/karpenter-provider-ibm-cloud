@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -175,6 +176,14 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 		"cni", cniPlugin,
 		"cniVersion", cniVersion,
 		"runtime", containerRuntime)
+
+	// Report initial bootstrap status if instanceID is provided
+	if instanceID != "" {
+		if err := p.ReportBootstrapStatus(ctx, instanceID, nodeClaim.Name, "generating", "user-data-creation"); err != nil {
+			logger.Error(err, "Failed to report initial bootstrap status", "instanceID", instanceID)
+			// Don't fail bootstrap generation due to status reporting failure
+		}
+	}
 
 	// Generate cloud-init script for direct kubelet
 	return p.generateCloudInitScript(ctx, options)
@@ -529,4 +538,144 @@ func (p *VPCBootstrapProvider) detectArchitectureFromInstanceProfile(instancePro
 	}
 
 	return "", fmt.Errorf("instance profile %s not found or has no architecture information", instanceProfile)
+}
+
+// ReportBootstrapStatus stores bootstrap progress in a ConfigMap (since IBM Cloud VPC doesn't support instance tags)
+func (p *VPCBootstrapProvider) ReportBootstrapStatus(ctx context.Context, instanceID, nodeClaimName, status, phase string) error {
+	logger := log.FromContext(ctx)
+	
+	if instanceID == "" {
+		return fmt.Errorf("instance ID is required for status reporting")
+	}
+
+	if p.k8sClient == nil {
+		return fmt.Errorf("kubernetes client is required for status reporting")
+	}
+
+	// Create status data
+	statusData := map[string]string{
+		"status":     status,
+		"phase":      phase,
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"nodeclaim":  nodeClaimName,
+		"version":    "v0.3.44",
+		"instanceId": instanceID,
+	}
+
+	// Store status in ConfigMap
+	configMapName := fmt.Sprintf("bootstrap-status-%s", instanceID)
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      configMapName,
+			Namespace: "karpenter",
+		},
+		Data: statusData,
+	}
+
+	// Try to update existing ConfigMap, create if not exists
+	_, err := p.k8sClient.CoreV1().ConfigMaps("karpenter").Update(ctx, cm, metav1.UpdateOptions{})
+	if err != nil {
+		// If update failed, try to create
+		_, createErr := p.k8sClient.CoreV1().ConfigMaps("karpenter").Create(ctx, cm, metav1.CreateOptions{})
+		if createErr != nil {
+			logger.Error(createErr, "Failed to create bootstrap status ConfigMap",
+				"instanceID", instanceID,
+				"status", status,
+				"phase", phase)
+			return fmt.Errorf("creating bootstrap status ConfigMap: %w", createErr)
+		}
+	}
+
+	logger.Info("Updated instance bootstrap status in ConfigMap", 
+		"instanceID", instanceID,
+		"status", status,
+		"phase", phase,
+		"nodeClaim", nodeClaimName,
+		"configMap", configMapName)
+
+	return nil
+}
+
+// GetBootstrapStatus retrieves current bootstrap status from ConfigMap
+func (p *VPCBootstrapProvider) GetBootstrapStatus(ctx context.Context, instanceID string) (map[string]string, error) {
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance ID is required for status retrieval")
+	}
+
+	if p.k8sClient == nil {
+		return nil, fmt.Errorf("kubernetes client is required for status retrieval")
+	}
+
+	// Get status from ConfigMap
+	configMapName := fmt.Sprintf("bootstrap-status-%s", instanceID)
+	cm, err := p.k8sClient.CoreV1().ConfigMaps("karpenter").Get(ctx, configMapName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting bootstrap status ConfigMap: %w", err)
+	}
+
+	// Return the status data
+	return cm.Data, nil
+}
+
+// PollInstanceBootstrapStatus polls the instance console output for bootstrap status
+func (p *VPCBootstrapProvider) PollInstanceBootstrapStatus(ctx context.Context, instanceID string) (map[string]string, error) {
+	logger := log.FromContext(ctx)
+	
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance ID is required for status polling")
+	}
+
+	vpcClient, err := p.client.GetVPCClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get VPC client for status polling: %w", err)
+	}
+
+	// Get instance console output (this would require IBM Cloud API support for console output)
+	// For now, we'll return a placeholder - IBM Cloud VPC doesn't currently support console output API
+	// The status will be available in the instance logs via SSH or through other monitoring
+	
+	logger.Info("Checking instance bootstrap status", "instanceID", instanceID)
+	
+	// Try to get instance details to check if it's running
+	instance, err := vpcClient.GetInstance(ctx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("getting instance details for status polling: %w", err)
+	}
+
+	status := map[string]string{
+		"instance_status": *instance.Status,
+		"last_checked":    time.Now().Format(time.RFC3339),
+	}
+
+	// Try to get bootstrap status from ConfigMap
+	bootstrapStatus, err := p.GetBootstrapStatus(ctx, instanceID)
+	if err == nil {
+		// Merge bootstrap status into response
+		for k, v := range bootstrapStatus {
+			status[k] = v
+		}
+	}
+
+	return status, nil
+}
+
+// GetInstanceBootstrapLogs attempts to get bootstrap logs from the instance
+// Note: This is a placeholder as IBM Cloud VPC doesn't provide direct console output API
+// Real implementation would require SSH access or log forwarding
+func (p *VPCBootstrapProvider) GetInstanceBootstrapLogs(ctx context.Context, instanceID string) (string, error) {
+	logger := log.FromContext(ctx)
+	
+	logger.Info("Bootstrap logs would be available via SSH or log forwarding", 
+		"instanceID", instanceID,
+		"logFiles", []string{
+			"/var/log/karpenter-bootstrap.log",
+			"/var/log/karpenter-bootstrap-status.log", 
+			"/var/log/karpenter-bootstrap-status.json",
+		})
+	
+	return "Bootstrap logs available on instance at:\n" +
+		"- /var/log/karpenter-bootstrap.log (detailed log)\n" +
+		"- /var/log/karpenter-bootstrap-status.log (status timeline)\n" +
+		"- /var/log/karpenter-bootstrap-status.json (current status)\n" +
+		"Use SSH or log forwarding to access these files.", nil
 }

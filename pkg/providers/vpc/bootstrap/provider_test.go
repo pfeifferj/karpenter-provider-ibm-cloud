@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +26,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 )
 
@@ -57,6 +59,36 @@ func (m *MockCoreV1) Services(namespace string) typedcorev1.ServiceInterface {
 func (m *MockCoreV1) Nodes() typedcorev1.NodeInterface {
 	args := m.Called()
 	return args.Get(0).(typedcorev1.NodeInterface)
+}
+
+// MockVPCClient provides a mock implementation for VPC client operations
+type MockVPCClient struct {
+	mock.Mock
+}
+
+func (m *MockVPCClient) GetInstance(ctx context.Context, instanceID string) (*vpcv1.Instance, error) {
+	args := m.Called(ctx, instanceID)
+	return args.Get(0).(*vpcv1.Instance), args.Error(1)
+}
+
+// MockIBMClient provides a mock implementation for IBM client operations
+type MockIBMClient struct {
+	mock.Mock
+	vpcClient *MockVPCClient
+}
+
+func (m *MockIBMClient) GetVPCClient() (*ibm.VPCClient, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ibm.VPCClient), args.Error(1)
+}
+
+func NewMockIBMClient(vpcClient *MockVPCClient) *MockIBMClient {
+	return &MockIBMClient{
+		vpcClient: vpcClient,
+	}
 }
 
 // Test helpers
@@ -951,4 +983,241 @@ func TestVPCBootstrapProvider_detectArchitectureFromInstanceProfile(t *testing.T
 			}
 		})
 	}
+}
+
+// Status Reporting Tests
+
+func TestVPCBootstrapProvider_ReportBootstrapStatus(t *testing.T) {
+	tests := []struct {
+		name          string
+		instanceID    string
+		nodeClaimName string
+		status        string
+		phase         string
+		setupMocks    func(*MockIBMClient, *MockVPCClient)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:          "successful status reporting",
+			instanceID:    "instance-123",
+			nodeClaimName: "test-nodeclaim",
+			status:        "configuring",
+			phase:         "kubelet-installed",
+			setupMocks: func(ibmClient *MockIBMClient, vpcClient *MockVPCClient) {
+				// No mocks needed for configmap approach
+			},
+			expectError: false,
+		},
+		{
+			name:          "empty instance ID - should error",
+			instanceID:    "",
+			nodeClaimName: "test-nodeclaim",
+			status:        "configuring",
+			phase:         "kubelet-installed",
+			setupMocks:    func(ibmClient *MockIBMClient, vpcClient *MockVPCClient) {},
+			expectError:   true,
+			errorContains: "instance ID is required for status reporting",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create mocks
+			mockVPCClient := &MockVPCClient{}
+			mockIBMClient := NewMockIBMClient(mockVPCClient)
+
+			// Setup mocks
+			tt.setupMocks(mockIBMClient, mockVPCClient)
+
+			// Create fake Kubernetes client
+			fakeClient := fake.NewSimpleClientset()
+
+			// Create VPC bootstrap provider (nil IBM client is fine for ConfigMap tests)
+			provider := NewVPCBootstrapProvider(nil, fakeClient, nil)
+
+			// Test ReportBootstrapStatus method
+			err := provider.ReportBootstrapStatus(ctx, tt.instanceID, tt.nodeClaimName, tt.status, tt.phase)
+
+			// Validate results
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				
+				// For successful tests, verify ConfigMap was created
+				if tt.instanceID != "" {
+					configMapName := "bootstrap-status-" + tt.instanceID
+					cm, getErr := fakeClient.CoreV1().ConfigMaps("karpenter").Get(ctx, configMapName, metav1.GetOptions{})
+					assert.NoError(t, getErr)
+					assert.Equal(t, tt.status, cm.Data["status"])
+					assert.Equal(t, tt.phase, cm.Data["phase"])
+					assert.Equal(t, tt.nodeClaimName, cm.Data["nodeclaim"])
+				}
+			}
+
+			// Verify all expectations were met
+			mockIBMClient.AssertExpectations(t)
+			mockVPCClient.AssertExpectations(t)
+		})
+	}
+}
+
+func TestVPCBootstrapProvider_GetBootstrapStatus(t *testing.T) {
+	tests := []struct {
+		name           string
+		instanceID     string
+		setupMocks     func(*MockIBMClient, *MockVPCClient)
+		expectError    bool
+		errorContains  string
+		validateResult func(*testing.T, map[string]string)
+	}{
+		{
+			name:       "successful status retrieval with bootstrap data",
+			instanceID: "instance-123",
+			setupMocks: func(ibmClient *MockIBMClient, vpcClient *MockVPCClient) {
+				// No mocks needed for ConfigMap approach
+			},
+			expectError: false,
+			validateResult: func(t *testing.T, status map[string]string) {
+				assert.Equal(t, "running", status["status"])
+				assert.Equal(t, "kubelet-active", status["phase"])
+				assert.Equal(t, "2025-01-17T10:30:00Z", status["timestamp"])
+				assert.Equal(t, "test-nodeclaim", status["nodeclaim"])
+			},
+		},
+		{
+			name:       "configmap not found",
+			instanceID: "instance-456",
+			setupMocks: func(ibmClient *MockIBMClient, vpcClient *MockVPCClient) {
+				// No mocks needed - we'll test with a non-existent ConfigMap
+			},
+			expectError:   true,
+			errorContains: "getting bootstrap status ConfigMap",
+		},
+		{
+			name:       "empty instance ID - should error",
+			instanceID: "",
+			setupMocks: func(ibmClient *MockIBMClient, vpcClient *MockVPCClient) {},
+			expectError: true,
+			errorContains: "instance ID is required for status retrieval",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create mocks
+			mockVPCClient := &MockVPCClient{}
+			mockIBMClient := NewMockIBMClient(mockVPCClient)
+
+			// Setup mocks
+			tt.setupMocks(mockIBMClient, mockVPCClient)
+
+			// Create fake Kubernetes client
+			fakeClient := fake.NewSimpleClientset()
+
+			// For successful test case, create the ConfigMap
+			if !tt.expectError && tt.instanceID == "instance-123" {
+				configMapName := "bootstrap-status-" + tt.instanceID
+				cm := &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      configMapName,
+						Namespace: "karpenter",
+					},
+					Data: map[string]string{
+						"status":     "running",
+						"phase":      "kubelet-active",
+						"timestamp":  "2025-01-17T10:30:00Z",
+						"nodeclaim":  "test-nodeclaim",
+						"instanceId": tt.instanceID,
+					},
+				}
+				_, _ = fakeClient.CoreV1().ConfigMaps("karpenter").Create(ctx, cm, metav1.CreateOptions{})
+			}
+
+			// Create VPC bootstrap provider (nil IBM client is fine for ConfigMap tests)
+			provider := NewVPCBootstrapProvider(nil, fakeClient, nil)
+
+			// Test GetBootstrapStatus method
+			result, err := provider.GetBootstrapStatus(ctx, tt.instanceID)
+
+			// Validate results
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				if tt.validateResult != nil {
+					tt.validateResult(t, result)
+				}
+			}
+
+			// Verify all expectations were met
+			mockIBMClient.AssertExpectations(t)
+			mockVPCClient.AssertExpectations(t)
+		})
+	}
+}
+
+func TestCloudInitStatusReporting(t *testing.T) {
+	// Test that the cloud-init template contains status reporting calls
+	t.Run("cloud-init template includes status reporting", func(t *testing.T) {
+		ctx := context.Background()
+		
+		// Create test options
+		options := commonTypes.Options{
+			ClusterEndpoint: "https://test-cluster:6443",
+			BootstrapToken:  "test-token",
+			NodeName:       "test-node",
+			InstanceID:     "test-instance-123",
+			Region:         "us-south",
+			Zone:           "us-south-1",
+		}
+		
+		// Create VPC bootstrap provider
+		provider := NewVPCBootstrapProvider(nil, nil, nil)
+		
+		// Generate cloud-init script
+		script, err := provider.generateCloudInitScript(ctx, options)
+		
+		// Validate results
+		assert.NoError(t, err)
+		assert.NotEmpty(t, script)
+		
+		// Verify status reporting function is included
+		assert.Contains(t, script, "report_status() {")
+		assert.Contains(t, script, "karpenter-bootstrap-status.json")
+		assert.Contains(t, script, "karpenter-bootstrap-status.log")
+		
+		// Verify status reporting calls are included at key points
+		assert.Contains(t, script, `report_status "starting" "hostname-setup"`)
+		assert.Contains(t, script, `report_status "configuring" "system-setup"`)
+		assert.Contains(t, script, `report_status "configuring" "packages-installed"`)
+		assert.Contains(t, script, `report_status "configuring" "container-runtime-ready"`)
+		assert.Contains(t, script, `report_status "configuring" "kubelet-installed"`)
+		assert.Contains(t, script, `report_status "starting" "kubelet-startup"`)
+		assert.Contains(t, script, `report_status "running" "kubelet-active"`)
+		assert.Contains(t, script, `report_status "completed" "bootstrap-finished"`)
+		
+		// Verify instance ID and node name are properly templated
+		assert.Contains(t, script, "INSTANCE_ID=\"test-instance-123\"")
+		assert.Contains(t, script, "NODE_NAME=\"test-node\"")
+		
+		// Verify structured JSON status creation
+		assert.Contains(t, script, `"instanceId": "$INSTANCE_ID"`)
+		assert.Contains(t, script, `"nodeClaimName": "$NODE_NAME"`)
+		assert.Contains(t, script, `"region": "$REGION"`)
+		assert.Contains(t, script, `"zone": "$ZONE"`)
+	})
 }
