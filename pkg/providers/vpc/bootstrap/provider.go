@@ -97,8 +97,8 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 	// Detect container runtime from existing nodes
 	containerRuntime := p.detectContainerRuntime(ctx)
 	
-	// Detect CNI plugin from cluster configuration
-	cniPlugin := p.detectCNIPlugin(ctx)
+	// Detect CNI plugin and version from cluster configuration
+	cniPlugin, cniVersion := p.detectCNIPluginAndVersion(ctx)
 	
 	// Get NodeClaim to extract labels and taints
 	nodeClaimObj, err := p.getNodeClaim(ctx, nodeClaim)
@@ -113,6 +113,7 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 		CustomUserData:   nodeClass.Spec.UserData,
 		ContainerRuntime: containerRuntime,
 		CNIPlugin:        cniPlugin,
+		CNIVersion:       cniVersion,
 		Region:           nodeClass.Spec.Region,
 		Zone:             nodeClass.Spec.Zone,
 		CABundle:         caCert,
@@ -158,6 +159,7 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 		"region", nodeClass.Spec.Region,
 		"dns", clusterDNS,
 		"cni", cniPlugin,
+		"cniVersion", cniVersion,
 		"runtime", containerRuntime)
 
 	// Generate cloud-init script for direct kubelet
@@ -221,44 +223,62 @@ func (p *VPCBootstrapProvider) detectContainerRuntime(ctx context.Context) strin
 	return "containerd" // Default
 }
 
-// detectCNIPlugin detects the CNI plugin being used in the cluster
-func (p *VPCBootstrapProvider) detectCNIPlugin(ctx context.Context) string {
+// detectCNIPluginAndVersion detects the CNI plugin and version being used in the cluster
+func (p *VPCBootstrapProvider) detectCNIPluginAndVersion(ctx context.Context) (string, string) {
 	logger := log.FromContext(ctx)
 	
 	// Check for Calico
-	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "calico-node", metav1.GetOptions{}); err == nil {
-		logger.Info("Detected Calico CNI plugin")
-		return "calico"
+	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "calico-node", metav1.GetOptions{}); err == nil {
+		version := p.extractVersionFromImage(ds.Spec.Template.Spec.Containers[0].Image)
+		logger.Info("Detected Calico CNI plugin", "version", version)
+		return "calico", version
 	}
 	
 	// Check for Cilium
-	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "cilium", metav1.GetOptions{}); err == nil {
-		logger.Info("Detected Cilium CNI plugin")
-		return "cilium"
+	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "cilium", metav1.GetOptions{}); err == nil {
+		version := p.extractVersionFromImage(ds.Spec.Template.Spec.Containers[0].Image)
+		logger.Info("Detected Cilium CNI plugin", "version", version)
+		return "cilium", version
 	}
 	
 	// Check for Flannel
-	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
-		logger.Info("Detected Flannel CNI plugin")
-		return "flannel"
+	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
+		version := p.extractVersionFromImage(ds.Spec.Template.Spec.Containers[0].Image)
+		logger.Info("Detected Flannel CNI plugin", "version", version)
+		return "flannel", version
 	}
 	
 	// Check for Weave Net
-	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "weave-net", metav1.GetOptions{}); err == nil {
-		logger.Info("Detected Weave Net CNI plugin")
-		return "weave"
+	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "weave-net", metav1.GetOptions{}); err == nil {
+		version := p.extractVersionFromImage(ds.Spec.Template.Spec.Containers[0].Image)
+		logger.Info("Detected Weave Net CNI plugin", "version", version)
+		return "weave", version
 	}
 	
 	// Check for CNI configuration files in ConfigMaps
 	if cm, err := p.k8sClient.CoreV1().ConfigMaps("kube-system").Get(ctx, "calico-config", metav1.GetOptions{}); err == nil {
 		if _, exists := cm.Data["cni_network_config"]; exists {
 			logger.Info("Detected Calico CNI plugin from ConfigMap")
-			return "calico"
+			return "calico", "v3.26.4" // Default version if we can't extract it
 		}
 	}
 	
 	logger.Info("CNI plugin not detected, defaulting to calico")
-	return "calico" // Default for IBM Cloud VPC
+	return "calico", "v3.26.4" // Default for IBM Cloud VPC
+}
+
+// extractVersionFromImage extracts version from container image
+func (p *VPCBootstrapProvider) extractVersionFromImage(image string) string {
+	parts := strings.Split(image, ":")
+	if len(parts) >= 2 {
+		tag := parts[len(parts)-1]
+		// If tag doesn't start with 'v', add it
+		if !strings.HasPrefix(tag, "v") && tag != "latest" {
+			return "v" + tag
+		}
+		return tag
+	}
+	return "latest"
 }
 
 // buildKubeletConfig builds kubelet configuration for VPC mode
