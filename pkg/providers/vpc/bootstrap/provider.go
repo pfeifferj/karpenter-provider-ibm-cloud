@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IBM/vpc-go-sdk/vpcv1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -514,7 +515,7 @@ func (p *VPCBootstrapProvider) detectArchitectureFromInstanceProfile(instancePro
 		return "", fmt.Errorf("failed to get VPC client: %w", err)
 	}
 
-	profileCollection, _, err := vpcClient.ListInstanceProfiles(nil)
+	profileCollection, _, err := vpcClient.ListInstanceProfiles(&vpcv1.ListInstanceProfilesOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to list instance profiles: %w", err)
 	}

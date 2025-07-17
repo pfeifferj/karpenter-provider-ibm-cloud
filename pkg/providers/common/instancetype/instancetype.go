@@ -105,7 +105,7 @@ func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudp
 	vpcClient, err := p.client.GetVPCClient()
 	if err == nil {
 		// List all profiles and find the one we want
-		profiles, _, profilesErr := vpcClient.ListInstanceProfiles(nil)
+		profiles, _, profilesErr := vpcClient.ListInstanceProfiles(&vpcv1.ListInstanceProfilesOptions{})
 		err = profilesErr
 		if err == nil && profiles != nil && profiles.Profiles != nil {
 			for _, profile := range profiles.Profiles {
