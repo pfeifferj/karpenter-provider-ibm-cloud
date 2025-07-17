@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -113,7 +113,7 @@ func (c *Client) VPCInstanceExists(ctx context.Context, instanceID string) (bool
 	if err != nil {
 		return false, fmt.Errorf("getting VPC client: %w", err)
 	}
-	
+
 	_, err = vpcClient.GetInstance(ctx, instanceID)
 	if err != nil {
 		// If the error indicates the instance doesn't exist, return false
@@ -123,7 +123,7 @@ func (c *Client) VPCInstanceExists(ctx context.Context, instanceID string) (bool
 		// For other errors, return the error
 		return false, fmt.Errorf("checking VPC instance existence: %w", err)
 	}
-	
+
 	return true, nil
 }
 
@@ -132,7 +132,7 @@ func containsNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	errStr := err.Error()
 	// Check for common "not found" error patterns from IBM Cloud VPC API
 	return containsAnyString(errStr, []string{

@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
-	
+
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 )
 
@@ -711,7 +711,7 @@ func (p *VPCBootstrapProvider) generateCloudInitScript(ctx context.Context, opti
 		return "", fmt.Errorf("executing cloud-init template: %w", err)
 	}
 
-	// Return the script as plain text 
+	// Return the script as plain text
 	script := buf.String()
 	return script, nil
 }

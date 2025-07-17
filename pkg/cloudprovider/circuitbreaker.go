@@ -64,7 +64,7 @@ type CircuitBreaker struct {
 	mu       sync.RWMutex
 	state    CircuitBreakerState
 	failures []FailureRecord
-	
+
 	// State tracking
 	lastStateChange     time.Time
 	halfOpenRequests    int
@@ -78,7 +78,7 @@ func NewCircuitBreaker(config *CircuitBreakerConfig, logger logr.Logger) *Circui
 	if config == nil {
 		config = DefaultCircuitBreakerConfig()
 	}
-	
+
 	return &CircuitBreaker{
 		config:          config,
 		logger:          logger,
@@ -93,10 +93,10 @@ func NewCircuitBreaker(config *CircuitBreakerConfig, logger logr.Logger) *Circui
 func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region string, _ float64) error {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	
+
 	// Reset time-based counters
 	cb.resetCountersIfNeeded()
-	
+
 	// Check circuit breaker state
 	switch cb.state {
 	case CircuitBreakerOpen:
@@ -109,7 +109,7 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 				TimeToWait: cb.config.RecoveryTimeout - time.Since(cb.lastStateChange),
 			}
 		}
-		
+
 	case CircuitBreakerHalfOpen:
 		if cb.halfOpenRequests >= cb.config.HalfOpenMaxRequests {
 			return &CircuitBreakerError{
@@ -118,7 +118,7 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 			}
 		}
 	}
-	
+
 	// Check rate limiting
 	if cb.instancesThisMinute >= cb.config.RateLimitPerMinute {
 		return &RateLimitError{
@@ -127,7 +127,7 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 			TimeToReset: time.Minute - time.Since(cb.lastMinuteReset),
 		}
 	}
-	
+
 	// Check concurrent instance limit
 	if cb.concurrentInstances >= cb.config.MaxConcurrentInstances {
 		return &ConcurrencyLimitError{
@@ -135,22 +135,22 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 			Current: cb.concurrentInstances,
 		}
 	}
-	
+
 	// All checks passed - increment counters
 	cb.instancesThisMinute++
 	cb.concurrentInstances++
-	
+
 	if cb.state == CircuitBreakerHalfOpen {
 		cb.halfOpenRequests++
 	}
-	
+
 	cb.logger.Info("Provisioning allowed",
 		"nodeClass", nodeClass,
 		"region", region,
 		"state", cb.state,
 		"instancesThisMinute", cb.instancesThisMinute,
 		"concurrentInstances", cb.concurrentInstances)
-	
+
 	return nil
 }
 
@@ -158,18 +158,18 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 func (cb *CircuitBreaker) RecordSuccess(nodeClass, region string) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	
+
 	if cb.concurrentInstances > 0 {
 		cb.concurrentInstances--
 	}
-	
+
 	if cb.state == CircuitBreakerHalfOpen {
 		// Successful operation in half-open state - close the circuit
 		cb.transitionToClosed()
 		cb.logger.Info("Circuit breaker transitioned to CLOSED after successful operation",
 			"nodeClass", nodeClass, "region", region)
 	}
-	
+
 	cb.logger.Info("Provisioning success recorded",
 		"nodeClass", nodeClass,
 		"region", region,
@@ -181,11 +181,11 @@ func (cb *CircuitBreaker) RecordSuccess(nodeClass, region string) {
 func (cb *CircuitBreaker) RecordFailure(nodeClass, region string, err error) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	
+
 	if cb.concurrentInstances > 0 {
 		cb.concurrentInstances--
 	}
-	
+
 	// Add failure record
 	failure := FailureRecord{
 		Timestamp: time.Now(),
@@ -194,13 +194,13 @@ func (cb *CircuitBreaker) RecordFailure(nodeClass, region string, err error) {
 		Region:    region,
 	}
 	cb.failures = append(cb.failures, failure)
-	
+
 	// Clean old failures outside the window
 	cb.cleanOldFailures()
-	
+
 	// Check if we should open the circuit
 	recentFailures := cb.countRecentFailures()
-	
+
 	cb.logger.Info("Provisioning failure recorded",
 		"nodeClass", nodeClass,
 		"region", region,
@@ -208,7 +208,7 @@ func (cb *CircuitBreaker) RecordFailure(nodeClass, region string, err error) {
 		"recentFailures", recentFailures,
 		"threshold", cb.config.FailureThreshold,
 		"state", cb.state)
-	
+
 	if recentFailures >= cb.config.FailureThreshold {
 		if cb.state != CircuitBreakerOpen {
 			cb.transitionToOpen()
@@ -229,7 +229,7 @@ func (cb *CircuitBreaker) RecordFailure(nodeClass, region string, err error) {
 func (cb *CircuitBreaker) GetState() (*CircuitBreakerStatus, error) {
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
-	
+
 	return &CircuitBreakerStatus{
 		State:               cb.state,
 		RecentFailures:      cb.countRecentFailures(),
@@ -247,7 +247,7 @@ func (cb *CircuitBreaker) GetState() (*CircuitBreakerStatus, error) {
 
 func (cb *CircuitBreaker) resetCountersIfNeeded() {
 	now := time.Now()
-	
+
 	// Reset minute counter
 	if now.Sub(cb.lastMinuteReset) >= time.Minute {
 		cb.instancesThisMinute = 0
@@ -277,13 +277,13 @@ func (cb *CircuitBreaker) transitionToHalfOpen() {
 func (cb *CircuitBreaker) cleanOldFailures() {
 	cutoff := time.Now().Add(-cb.config.FailureWindow)
 	validFailures := make([]FailureRecord, 0, len(cb.failures))
-	
+
 	for _, failure := range cb.failures {
 		if failure.Timestamp.After(cutoff) {
 			validFailures = append(validFailures, failure)
 		}
 	}
-	
+
 	cb.failures = validFailures
 }
 
@@ -333,7 +333,7 @@ type RateLimitError struct {
 }
 
 func (e *RateLimitError) Error() string {
-	return fmt.Sprintf("rate limit exceeded: %d/%d instances this minute (reset in %v)", 
+	return fmt.Sprintf("rate limit exceeded: %d/%d instances this minute (reset in %v)",
 		e.Current, e.Limit, e.TimeToReset)
 }
 
@@ -346,7 +346,6 @@ type ConcurrencyLimitError struct {
 func (e *ConcurrencyLimitError) Error() string {
 	return fmt.Sprintf("concurrency limit exceeded: %d/%d concurrent instances", e.Current, e.Limit)
 }
-
 
 // CircuitBreakerStatus holds the current status of the circuit breaker
 type CircuitBreakerStatus struct {

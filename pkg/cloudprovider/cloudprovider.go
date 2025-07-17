@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -37,11 +37,11 @@ import (
 	"sigs.k8s.io/karpenter/pkg/utils/resources"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
-	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	ibmevents "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/events"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
-	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
+	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
@@ -71,11 +71,11 @@ func New(kubeClient client.Client,
 	if os.Getenv("IKS_CLUSTER_ID") != "" {
 		defaultMode = commonTypes.IKSMode
 	}
-	
+
 	// Initialize circuit breaker with default config
 	logger := log.FromContext(context.Background()).WithName("circuit-breaker")
 	circuitBreaker := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logger)
-	
+
 	return &CloudProvider{
 		kubeClient: kubeClient,
 		recorder:   recorder,
@@ -99,21 +99,21 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 		// Set IKS cluster ID from environment to trigger IKS mode
 		nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
 	}
-	
+
 	// Get the appropriate instance provider
 	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 	if err != nil {
 		log.Error(err, "Failed to get instance provider")
 		return nil, fmt.Errorf("getting instance provider, %w", err)
 	}
-	
+
 	// Get the instance details
 	node, err := instanceProvider.Get(ctx, providerID)
 	if err != nil {
 		log.Error(err, "Failed to get instance")
 		return nil, fmt.Errorf("getting instance, %w", err)
 	}
-	
+
 	// Extract instance info from node
 	instanceTypeName := node.Labels["node.kubernetes.io/instance-type"]
 	zone := node.Labels["topology.kubernetes.io/zone"]
@@ -165,12 +165,12 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 		if node.Spec.ProviderID == "" {
 			continue
 		}
-		
+
 		// Skip nodes that don't have IBM provider IDs
 		if !strings.HasPrefix(node.Spec.ProviderID, "ibm://") {
 			continue
 		}
-		
+
 		// Handle IKS managed nodes (format: ibm://account-id///cluster-id/worker-id)
 		// These nodes are supported - the instance provider will map IKS worker to VPC instance
 
@@ -179,12 +179,12 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 		if c.defaultProviderMode == commonTypes.IKSMode {
 			nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
 		}
-		
+
 		instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 		if err != nil {
 			continue // Skip if we can't get provider
 		}
-		
+
 		_, err = instanceProvider.Get(ctx, node.Spec.ProviderID)
 		if err != nil {
 			// Check if this is an IKS managed cluster that doesn't allow Karpenter management
@@ -287,7 +287,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	log.Info("Found compatible instance types", "count", len(compatible), "types", lo.Map(compatible, func(it *cloudprovider.InstanceType, _ int) string { return it.Name }))
 
 	log.Info("Creating instance")
-	
+
 	// Circuit breaker check - validate against failure rate and concurrency safeguards
 	if cbErr := c.circuitBreaker.CanProvision(ctx, nodeClass.Name, nodeClass.Spec.Region, 0); cbErr != nil {
 		log.Error(cbErr, "Circuit breaker blocked provisioning",
@@ -296,7 +296,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		c.recorder.Publish(ibmevents.NodeClaimFailedToResolveNodeClass(nodeClaim))
 		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("circuit breaker blocked provisioning: %w", cbErr))
 	}
-	
+
 	// Get the appropriate instance provider based on NodeClass configuration
 	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 	if err != nil {
@@ -304,14 +304,14 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
 		return nil, fmt.Errorf("getting instance provider, %w", err)
 	}
-	
+
 	node, err := instanceProvider.Create(ctx, nodeClaim)
 	if err != nil {
 		log.Error(err, "Failed to create instance")
 		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
-	
+
 	// Record successful provisioning
 	c.circuitBreaker.RecordSuccess(nodeClass.Name, nodeClass.Spec.Region)
 	log.Info("Successfully created instance", "providerID", node.Spec.ProviderID)
@@ -330,7 +330,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 			ProviderID: node.Spec.ProviderID,
 		},
 	}
-	
+
 	// Set the Launched condition to indicate the instance was successfully created
 	nc.StatusConditions().SetTrue(karpv1.ConditionTypeLaunched)
 
@@ -339,19 +339,19 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	if nc.Labels == nil {
 		nc.Labels = make(map[string]string)
 	}
-	
+
 	// Copy essential labels from the created node first
 	for key, value := range node.Labels {
 		switch key {
-		case "node.kubernetes.io/instance-type",    // TYPE column
-			"karpenter.sh/capacity-type",           // CAPACITY column  
-			"topology.kubernetes.io/zone",          // ZONE column
-			"topology.kubernetes.io/region",        // Region info
-			"karpenter.sh/nodepool":                // Preserve nodepool label
+		case "node.kubernetes.io/instance-type", // TYPE column
+			"karpenter.sh/capacity-type",    // CAPACITY column
+			"topology.kubernetes.io/zone",   // ZONE column
+			"topology.kubernetes.io/region", // Region info
+			"karpenter.sh/nodepool":         // Preserve nodepool label
 			nc.Labels[key] = value
 		}
 	}
-	
+
 	// Populate labels from instance type requirements (similar to AWS)
 	// These take precedence over node labels when available
 	if instanceType != nil {
@@ -361,7 +361,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 			}
 		}
 	}
-	
+
 	// Set the node name in status for the NODE column
 	// This will be populated once the node registers with the cluster
 	nc.Status.NodeName = node.Name
@@ -412,14 +412,14 @@ func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 			nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
 		}
 	}
-	
+
 	// Get the appropriate instance provider
 	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 	if err != nil {
 		log.Error(err, "Failed to get instance provider")
 		return fmt.Errorf("getting instance provider, %w", err)
 	}
-	
+
 	if err := instanceProvider.Delete(ctx, node); err != nil {
 		// Return NodeClaimNotFoundError unchanged - this is expected during cleanup
 		if cloudprovider.IsNodeClaimNotFoundError(err) {
@@ -505,7 +505,7 @@ func (c *CloudProvider) GetInstanceTypeProvider() instancetype.Provider {
 	return c.instanceTypeProvider
 }
 
-// GetSubnetProvider returns the subnet provider  
+// GetSubnetProvider returns the subnet provider
 func (c *CloudProvider) GetSubnetProvider() subnet.Provider {
 	return c.subnetProvider
 }

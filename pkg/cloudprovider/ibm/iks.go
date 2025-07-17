@@ -29,8 +29,8 @@ import (
 
 // IKSClient handles IBM Kubernetes Service API operations
 type IKSClient struct {
-	client    *Client
-	baseURL   string
+	client     *Client
+	baseURL    string
 	httpClient *http.Client
 }
 
@@ -40,16 +40,16 @@ func (c *IKSClient) setIKSHeaders(req *http.Request, token string) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "IBM-Cloud-CLI/1.0.0")
-	
+
 	// Add regional targeting for global endpoint
 	region := c.client.GetRegion()
 	req.Header.Set("X-Region", region)
-	
+
 	// Add resource group context if available
 	if resourceGroupID := os.Getenv("IBM_RESOURCE_GROUP_ID"); resourceGroupID != "" {
 		req.Header.Set("X-Auth-Resource-Group", resourceGroupID)
 	}
-	
+
 	// Add headers to mimic IBM Cloud CLI behavior
 	req.Header.Set("X-CLI-Request", "true")
 	req.Header.Set("X-Service-Name", "containers-kubernetes")
@@ -95,7 +95,7 @@ func NewIKSClient(client *Client) *IKSClient {
 	// Use correct containers API endpoint matching IBM Cloud CLI
 	// CLI uses v1 without 'global' prefix
 	baseURL := "https://containers.cloud.ibm.com/v1"
-	
+
 	return &IKSClient{
 		client:  client,
 		baseURL: baseURL,
@@ -219,7 +219,7 @@ func (c *IKSClient) GetVPCInstanceIDFromWorker(ctx context.Context, clusterID, w
 		}
 	}
 
-	return "", fmt.Errorf("VPC instance not found for worker %s (IP: %s, subnet: %s)", 
+	return "", fmt.Errorf("VPC instance not found for worker %s (IP: %s, subnet: %s)",
 		workerID, primaryInterface.IPAddress, primaryInterface.SubnetID)
 }
 
@@ -228,7 +228,7 @@ func (c *IKSClient) GetClusterConfig(ctx context.Context, clusterID string) (str
 	if c.client == nil || c.client.iamClient == nil {
 		return "", fmt.Errorf("client not properly initialized")
 	}
-	
+
 	// Get IAM token for authentication
 	token, err := c.client.iamClient.GetToken(ctx)
 	if err != nil {
@@ -289,16 +289,16 @@ func (c *IKSClient) GetClusterConfig(ctx context.Context, clusterID string) (str
 
 // WorkerPool represents an IKS worker pool
 type WorkerPool struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Flavor       string            `json:"flavor"`
-	Zone         string            `json:"zone"`
-	SizePerZone  int               `json:"sizePerZone"`
-	ActualSize   int               `json:"actualSize"`
-	State        string            `json:"state"`
-	Labels       map[string]string `json:"labels"`
-	CreatedAt    time.Time         `json:"createdAt"`
-	UpdatedAt    time.Time         `json:"updatedAt"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Flavor      string            `json:"flavor"`
+	Zone        string            `json:"zone"`
+	SizePerZone int               `json:"sizePerZone"`
+	ActualSize  int               `json:"actualSize"`
+	State       string            `json:"state"`
+	Labels      map[string]string `json:"labels"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
 }
 
 // WorkerPoolResizeRequest represents a request to resize a worker pool

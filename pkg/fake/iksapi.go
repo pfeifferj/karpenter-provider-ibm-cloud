@@ -27,17 +27,17 @@ import (
 
 // IKSBehavior controls the fake IKS API behavior for testing
 type IKSBehavior struct {
-	ListWorkerPoolsBehavior    MockedFunction[ListWorkerPoolsInput, []WorkerPool]
-	GetWorkerPoolBehavior      MockedFunction[GetWorkerPoolInput, WorkerPool]
-	PatchWorkerPoolBehavior    MockedFunction[PatchWorkerPoolInput, struct{}]
-	ResizeWorkerPoolBehavior   MockedFunction[ResizeWorkerPoolInput, struct{}]
+	ListWorkerPoolsBehavior     MockedFunction[ListWorkerPoolsInput, []WorkerPool]
+	GetWorkerPoolBehavior       MockedFunction[GetWorkerPoolInput, WorkerPool]
+	PatchWorkerPoolBehavior     MockedFunction[PatchWorkerPoolInput, struct{}]
+	ResizeWorkerPoolBehavior    MockedFunction[ResizeWorkerPoolInput, struct{}]
 	RebalanceWorkerPoolBehavior MockedFunction[RebalanceWorkerPoolInput, struct{}]
-	CreateWorkerPoolBehavior   MockedFunction[CreateWorkerPoolInput, WorkerPool]
-	DeleteWorkerPoolBehavior   MockedFunction[DeleteWorkerPoolInput, struct{}]
-	ListWorkersBehavior        MockedFunction[ListWorkersInput, []Worker]
-	GetWorkerBehavior          MockedFunction[GetWorkerInput, Worker]
-	DeleteWorkerBehavior       MockedFunction[DeleteWorkerInput, struct{}]
-	
+	CreateWorkerPoolBehavior    MockedFunction[CreateWorkerPoolInput, WorkerPool]
+	DeleteWorkerPoolBehavior    MockedFunction[DeleteWorkerPoolInput, struct{}]
+	ListWorkersBehavior         MockedFunction[ListWorkersInput, []Worker]
+	GetWorkerBehavior           MockedFunction[GetWorkerInput, Worker]
+	DeleteWorkerBehavior        MockedFunction[DeleteWorkerInput, struct{}]
+
 	WorkerPools atomic.Slice[*WorkerPool]
 	Workers     atomic.Slice[*Worker]
 	NextError   AtomicError
@@ -54,9 +54,9 @@ type GetWorkerPoolInput struct {
 }
 
 type PatchWorkerPoolInput struct {
-	ClusterID        string
-	WorkerPoolID     string
-	PatchRequest     WorkerPoolPatchRequest
+	ClusterID    string
+	WorkerPoolID string
+	PatchRequest WorkerPoolPatchRequest
 }
 
 type ResizeWorkerPoolInput struct {
@@ -207,7 +207,7 @@ func (f *IKSAPI) PatchWorkerPool(ctx context.Context, clusterID, workerPoolID st
 	// Default behavior: update the pool
 	var found bool
 	var updatedPoolID string
-	
+
 	// First, find and update the pool
 	f.WorkerPools.Range(func(pool *WorkerPool) bool {
 		if pool.ClusterID == clusterID && (pool.ID == workerPoolID || pool.Name == workerPoolID) {
@@ -224,7 +224,7 @@ func (f *IKSAPI) PatchWorkerPool(ctx context.Context, clusterID, workerPoolID st
 					pool.Labels = patch.Labels
 				}
 			}
-			
+
 			pool.UpdatedDate = time.Now()
 			updatedPoolID = pool.ID
 			found = true
@@ -232,11 +232,11 @@ func (f *IKSAPI) PatchWorkerPool(ctx context.Context, clusterID, workerPoolID st
 		}
 		return true
 	})
-	
+
 	if !found {
 		return fmt.Errorf("worker pool %s not found in cluster %s", workerPoolID, clusterID)
 	}
-	
+
 	// Simulate async completion after a delay
 	go func() {
 		time.Sleep(100 * time.Millisecond)
@@ -250,7 +250,7 @@ func (f *IKSAPI) PatchWorkerPool(ctx context.Context, clusterID, workerPoolID st
 			return true
 		})
 	}()
-	
+
 	return nil
 }
 
@@ -297,7 +297,7 @@ func (f *IKSAPI) CreateWorkerPool(ctx context.Context, clusterID string, request
 	if len(request.Zones) > 0 {
 		zone = request.Zones[0].ID
 	}
-	
+
 	pool := &WorkerPool{
 		ID:          poolID,
 		Name:        request.Name,
@@ -372,8 +372,8 @@ func (f *IKSAPI) ListWorkers(ctx context.Context, clusterID, workerPoolID string
 	var result []Worker
 	f.Workers.Range(func(worker *Worker) bool {
 		// Filter by cluster ID and optionally by pool ID
-		if len(worker.ID) > 0 && 
-		   (workerPoolID == "" || worker.PoolID == workerPoolID) {
+		if len(worker.ID) > 0 &&
+			(workerPoolID == "" || worker.PoolID == workerPoolID) {
 			result = append(result, *worker)
 		}
 		return true
@@ -452,11 +452,11 @@ func (f *IKSAPI) DeleteWorker(ctx context.Context, clusterID, workerID string) e
 func (f *IKSAPI) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	
+
 	f.WorkerPools.Reset()
 	f.Workers.Reset()
 	f.NextError.Store(nil)
-	
+
 	// Reset all behavior mocks
 	f.ListWorkerPoolsBehavior.Reset()
 	f.GetWorkerPoolBehavior.Reset()

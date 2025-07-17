@@ -24,18 +24,18 @@ import (
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	
+
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 )
 
 // IKSWorkerRequest represents a request to add a worker to an IKS cluster
 type IKSWorkerRequest struct {
-	ClusterID      string `json:"cluster_id"`
-	WorkerPoolID   string `json:"worker_pool_id,omitempty"`
-	VPCInstanceID  string `json:"vpc_instance_id"`
-	Zone           string `json:"zone"`
-	Labels         map[string]string `json:"labels,omitempty"`
-	Taints         []IKSTaint `json:"taints,omitempty"`
+	ClusterID     string            `json:"cluster_id"`
+	WorkerPoolID  string            `json:"worker_pool_id,omitempty"`
+	VPCInstanceID string            `json:"vpc_instance_id"`
+	Zone          string            `json:"zone"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Taints        []IKSTaint        `json:"taints,omitempty"`
 }
 
 // IKSTaint represents a Kubernetes taint for IKS workers
@@ -54,11 +54,10 @@ type IKSWorkerResponse struct {
 	Location string            `json:"location"`
 }
 
-
 // AddWorkerToIKSCluster adds a VPC instance to an IKS cluster as a worker node
 func (p *IKSBootstrapProvider) AddWorkerToIKSCluster(ctx context.Context, options types.IKSWorkerPoolOptions) (*IKSWorkerResponse, error) {
 	logger := log.FromContext(ctx)
-	
+
 	// Get IAM token
 	token, err := p.client.GetIAMClient().GetToken(ctx)
 	if err != nil {

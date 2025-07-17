@@ -47,7 +47,7 @@ type IAMTokenRequest struct {
 type IAMBehavior struct {
 	GetTokenBehavior     MockedFunction[IAMTokenRequest, IAMTokenResponse]
 	RefreshTokenBehavior MockedFunction[IAMTokenRequest, IAMTokenResponse]
-	
+
 	Tokens    atomic.Slice[*IAMTokenResponse]
 	NextError AtomicError
 }
@@ -90,7 +90,7 @@ func (f *IAMAPI) GetToken(ctx context.Context, apiKey string) (*IAMTokenResponse
 	// Default behavior: generate a mock token
 	now := time.Now()
 	expiresIn := 3600 // 1 hour
-	
+
 	token := &IAMTokenResponse{
 		AccessToken:  fmt.Sprintf("mock-access-token-%d", now.Unix()),
 		RefreshToken: fmt.Sprintf("mock-refresh-token-%d", now.Unix()),
@@ -129,7 +129,7 @@ func (f *IAMAPI) RefreshToken(ctx context.Context, refreshToken string) (*IAMTok
 	// Default behavior: generate a new mock token
 	now := time.Now()
 	expiresIn := 3600 // 1 hour
-	
+
 	token := &IAMTokenResponse{
 		AccessToken:  fmt.Sprintf("mock-refreshed-token-%d", now.Unix()),
 		RefreshToken: fmt.Sprintf("mock-new-refresh-token-%d", now.Unix()),
@@ -160,7 +160,7 @@ func (f *IAMAPI) ValidateToken(ctx context.Context, accessToken string) (bool, e
 func (f *IAMAPI) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	
+
 	f.Tokens.Reset()
 	f.NextError.Store(nil)
 	f.GetTokenBehavior.Reset()

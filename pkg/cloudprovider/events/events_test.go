@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -63,7 +63,7 @@ func TestNodeClaimFailedToResolveNodeClass(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event := NodeClaimFailedToResolveNodeClass(tt.nodeClaim)
-			
+
 			assert.Equal(t, corev1.EventTypeWarning, event.Type)
 			assert.Equal(t, "FailedToResolveNodeClass", event.Reason)
 			assert.Equal(t, tt.expected, event.Message)
@@ -110,7 +110,7 @@ func TestNodePoolFailedToResolveNodeClass(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event := NodePoolFailedToResolveNodeClass(tt.nodePool)
-			
+
 			assert.Equal(t, corev1.EventTypeWarning, event.Type)
 			assert.Equal(t, "FailedToResolveNodeClass", event.Reason)
 			assert.Equal(t, tt.expected, event.Message)
@@ -124,14 +124,14 @@ func TestEventStructure(t *testing.T) {
 			Name: "test-nodeclaim",
 		},
 	}
-	
+
 	event := NodeClaimFailedToResolveNodeClass(nodeClaim)
-	
+
 	// Ensure all required fields are set
 	assert.NotEmpty(t, event.Type)
 	assert.NotEmpty(t, event.Reason)
 	assert.NotEmpty(t, event.Message)
-	
+
 	// Ensure event type is valid
 	assert.Contains(t, []string{corev1.EventTypeNormal, corev1.EventTypeWarning}, event.Type)
 }
@@ -144,7 +144,7 @@ func TestNilObjectHandling(t *testing.T) {
 		assert.Equal(t, "FailedToResolveNodeClass", event.Reason)
 		assert.Contains(t, event.Message, "Failed to resolve NodeClass for NodeClaim <unknown>")
 	})
-	
+
 	assert.NotPanics(t, func() {
 		event := NodePoolFailedToResolveNodeClass(nil)
 		assert.Equal(t, corev1.EventTypeWarning, event.Type)

@@ -446,7 +446,7 @@ func TestSecureCredentialStore_ConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	
+
 	// Test basic concurrent read access (no clearing)
 	done := make(chan bool)
 	for i := 0; i < 3; i++ {
@@ -469,13 +469,13 @@ func TestSecureCredentialStore_ConcurrentAccess(t *testing.T) {
 	keyBefore, err := store.GetVPCAPIKey(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, "test-vpc-key", keyBefore)
-	
+
 	// Test single clear and refresh (not concurrent)
 	store.ClearCredentials()
-	
+
 	// Debug: check provider state
 	t.Logf("Provider calls: %d, Provider creds: %+v", mockProvider.calls, mockProvider.creds)
-	
+
 	// Verify store can refresh after clearing
 	key, err := store.GetVPCAPIKey(ctx)
 	if err != nil {
