@@ -351,23 +351,47 @@ for i in {1..30}; do
   sleep 2
 done
 
-# Install CNI configuration
+# Install CNI binaries and configuration
 CNI_PLUGIN="{{ .CNIPlugin }}"
-echo "$(date): Installing $CNI_PLUGIN CNI configuration..."
+CNI_VERSION="{{ .CNIVersion }}"
+echo "$(date): Installing $CNI_PLUGIN CNI binaries and configuration..."
 mkdir -p /etc/cni/net.d
 
-# Create log directories based on CNI plugin
+# Download and install CNI binaries
+echo "$(date): Downloading CNI binaries..."
+CNI_PLUGINS_VERSION="v1.4.0"
+
+# Download standard CNI plugins
+curl -L "https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGINS_VERSION}/cni-plugins-linux-amd64-${CNI_PLUGINS_VERSION}.tgz" | tar -C /opt/cni/bin -xz
+
+# Download plugin-specific CNI binaries using detected version
 case "$CNI_PLUGIN" in
   "calico")
+    echo "$(date): Downloading Calico CNI binaries version $CNI_VERSION..."
+    curl -L -o /opt/cni/bin/calico "https://github.com/projectcalico/cni-plugin/releases/download/${CNI_VERSION}/calico-amd64"
+    curl -L -o /opt/cni/bin/calico-ipam "https://github.com/projectcalico/cni-plugin/releases/download/${CNI_VERSION}/calico-ipam-amd64"
+    chmod +x /opt/cni/bin/calico /opt/cni/bin/calico-ipam
     mkdir -p /var/log/calico/cni
     ;;
   "cilium")
+    echo "$(date): Downloading Cilium CNI binaries version $CNI_VERSION..."
+    curl -L -o /tmp/cilium.tar.gz "https://github.com/cilium/cilium/releases/download/${CNI_VERSION}/cilium-linux-amd64.tar.gz"
+    tar -xzf /tmp/cilium.tar.gz -C /opt/cni/bin/ cilium-cni
+    chmod +x /opt/cni/bin/cilium-cni
+    rm -f /tmp/cilium.tar.gz
     mkdir -p /var/log/cilium
     ;;
   "flannel")
+    echo "$(date): Downloading Flannel CNI binaries version $CNI_VERSION..."
+    curl -L -o /opt/cni/bin/flannel "https://github.com/flannel-io/cni-plugin/releases/download/${CNI_VERSION}/flannel-amd64"
+    chmod +x /opt/cni/bin/flannel
     mkdir -p /var/log/flannel
     ;;
 esac
+
+# Set proper permissions
+chmod +x /opt/cni/bin/*
+echo "$(date): ✅ CNI binaries installed"
 
 # Install CNI configuration based on detected plugin
 case "$CNI_PLUGIN" in
