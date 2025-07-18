@@ -77,11 +77,37 @@ EOF
 
 # Instance metadata
 PRIVATE_IP=$(hostname -I | awk '{print $1}')
-{{- if .InstanceID }}
-INSTANCE_ID="{{ .InstanceID }}"
-{{- else }}
-INSTANCE_ID=$(dmidecode -s system-uuid 2>/dev/null || echo "unknown")
-{{- end }}
+
+# Get instance ID from IBM Cloud metadata service
+# The instance ID must include the zone prefix (e.g., 02c7_uuid) for proper provider ID
+echo "$(date): Attempting to retrieve instance ID from metadata service..."
+
+# Get instance identity token for metadata service authentication
+echo "$(date): Getting instance identity token..."
+INSTANCE_IDENTITY_TOKEN=$(curl -s -f --max-time 10 -X PUT "http://api.metadata.cloud.ibm.com/instance_identity/v1/token?version=2022-03-29" -H "Metadata-Flavor: ibm" | grep -o "\"access_token\":\"[^\"]*" | cut -d"\"" -f4)
+
+if [[ -z "$INSTANCE_IDENTITY_TOKEN" ]]; then
+    echo "$(date): ❌ ERROR: Could not get instance identity token" | tee -a "$LOG_FILE"
+    report_status "failed" "instance-identity-token-failed"
+    exit 1
+fi
+
+echo "$(date): Successfully obtained instance identity token"
+
+# Get instance ID using IBM Cloud metadata service
+echo "$(date): Retrieving instance ID from IBM Cloud metadata service..."
+INSTANCE_ID=$(curl -s -f --max-time 10 -H "Authorization: Bearer $INSTANCE_IDENTITY_TOKEN" "http://api.metadata.cloud.ibm.com/metadata/v1/instance?version=2022-03-29" | grep -o "\"id\":\"02c7_[^\"]*" | head -1 | cut -d"\"" -f4)
+
+# Validate instance ID
+if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "unknown" ]]; then
+    echo "$(date): ❌ ERROR: Could not retrieve instance ID from metadata service" | tee -a "$LOG_FILE"
+    echo "$(date): This is required for proper provider ID configuration" | tee -a "$LOG_FILE"
+    echo "$(date): Metadata token available: $([[ -n \"$METADATA_TOKEN\" ]] && echo \"yes\" || echo \"no\")" | tee -a "$LOG_FILE"
+    report_status "failed" "instance-id-metadata-failed"
+    exit 1
+fi
+
+echo "$(date): Successfully retrieved instance ID: $INSTANCE_ID"
 
 # Use NodeClaim name as hostname for proper Karpenter registration
 HOSTNAME="$NODE_NAME"
