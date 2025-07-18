@@ -38,6 +38,7 @@ const (
 
 	// Labels and taints for registered nodes
 	RegisteredLabel   = "karpenter.sh/registered"
+	InitializedLabel  = "karpenter.sh/initialized"
 	UnregisteredTaint = "karpenter.sh/unregistered"
 	NodePoolLabel     = "karpenter.sh/nodepool"
 	NodeClassLabel    = "karpenter.ibm.sh/ibmnodeclass"
@@ -320,8 +321,9 @@ func (c *Controller) removeTaintFromNode(node *corev1.Node, taintKey string) boo
 	return len(node.Spec.Taints) != initialLen
 }
 
-// updateNodeClaimStatus updates the NodeClaim status to mark it as registered
+// updateNodeClaimStatus updates the NodeClaim status to mark it as registered and initialized
 func (c *Controller) updateNodeClaimStatus(ctx context.Context, nodeClaim *karpv1.NodeClaim, node *corev1.Node) error {
+	logger := log.FromContext(ctx).WithValues("nodeclaim", nodeClaim.Name, "node", node.Name)
 	patch := client.MergeFrom(nodeClaim.DeepCopy())
 
 	// Update node name if not set
@@ -333,14 +335,62 @@ func (c *Controller) updateNodeClaimStatus(ctx context.Context, nodeClaim *karpv
 	nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeRegistered)
 
 	// Check if the node is ready and set Initialized condition
+	nodeReady := false
 	for _, condition := range node.Status.Conditions {
 		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-			nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeInitialized)
+			nodeReady = true
 			break
 		}
 	}
 
+	// If node is ready and NodeClaim is not yet marked as initialized
+	if nodeReady && !nodeClaim.StatusConditions().Get(karpv1.ConditionTypeInitialized).IsTrue() {
+		logger.Info("node is ready, marking nodeclaim as initialized")
+		nodeClaim.StatusConditions().SetTrue(karpv1.ConditionTypeInitialized)
+		
+		// Also ensure the node has the initialized label
+		if err := c.setNodeInitializedLabel(ctx, node); err != nil {
+			logger.Error(err, "failed to set initialized label on node")
+			return fmt.Errorf("setting initialized label on node: %w", err)
+		}
+	}
+
 	return c.kubeClient.Status().Patch(ctx, nodeClaim, patch)
+}
+
+// setNodeInitializedLabel sets the karpenter.sh/initialized label on the node
+func (c *Controller) setNodeInitializedLabel(ctx context.Context, node *corev1.Node) error {
+	logger := log.FromContext(ctx).WithValues("node", node.Name)
+	
+	// Check if label is already set
+	if node.Labels[InitializedLabel] == "true" {
+		logger.V(1).Info("initialized label already set on node")
+		return nil
+	}
+
+	// Get fresh copy of node to avoid conflicts
+	freshNode := &corev1.Node{}
+	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: node.Name}, freshNode); err != nil {
+		return fmt.Errorf("getting fresh node: %w", err)
+	}
+
+	patch := client.MergeFrom(freshNode.DeepCopy())
+	
+	// Ensure labels map exists
+	if freshNode.Labels == nil {
+		freshNode.Labels = make(map[string]string)
+	}
+	
+	// Set the initialized label
+	freshNode.Labels[InitializedLabel] = "true"
+	
+	logger.Info("setting initialized label on node")
+	if err := c.kubeClient.Patch(ctx, freshNode, patch); err != nil {
+		return fmt.Errorf("patching node with initialized label: %w", err)
+	}
+	
+	logger.Info("successfully set initialized label on node")
+	return nil
 }
 
 // Register registers the controller with the manager
