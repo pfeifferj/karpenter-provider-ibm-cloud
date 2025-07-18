@@ -210,6 +210,13 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	// Set user data
 	instancePrototype.UserData = &userData
 
+	// Enable metadata service for instance ID retrieval
+	instancePrototype.MetadataService = &vpcv1.InstanceMetadataServicePrototype{
+		Enabled:         &[]bool{true}[0],
+		Protocol:        &[]string{"http"}[0],
+		ResponseHopLimit: &[]int64{1}[0],
+	}
+
 	// Create the instance
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
@@ -242,6 +249,8 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			},
 		},
 		Spec: corev1.NodeSpec{
+			// Use the full instance ID including the zone prefix (e.g., 02c7_uuid)
+			// This ensures consistency with how IBM Cloud APIs expect the instance ID
 			ProviderID: fmt.Sprintf("ibm:///%s/%s", nodeClass.Spec.Region, *instance.ID),
 		},
 		Status: corev1.NodeStatus{
@@ -380,6 +389,7 @@ func (p *VPCInstanceProvider) UpdateTags(ctx context.Context, providerID string,
 // extractInstanceIDFromProviderID extracts the instance ID from a provider ID
 func extractInstanceIDFromProviderID(providerID string) string {
 	// Provider ID format: ibm:///region/instance-id
+	// Instance ID includes zone prefix (e.g., 02c7_uuid)
 	parts := strings.Split(providerID, "/")
 	if len(parts) >= 4 {
 		return parts[len(parts)-1]
@@ -404,6 +414,11 @@ func isIBMInstanceNotFoundError(err error) bool {
 
 // generateBootstrapUserData generates bootstrap user data using the VPC bootstrap provider
 func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName) (string, error) {
+	return p.generateBootstrapUserDataWithInstanceID(ctx, nodeClass, nodeClaim, "")
+}
+
+// generateBootstrapUserDataWithInstanceID generates bootstrap user data with a specific instance ID
+func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceID(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID string) (string, error) {
 	logger := log.FromContext(ctx)
 
 	// If manual userData is provided, use it as-is (fallback behavior)
@@ -430,9 +445,9 @@ func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nod
 		}
 	}
 
-	// Generate dynamic bootstrap script
-	logger.Info("Generating dynamic bootstrap script with automatic cluster discovery")
-	userData, err := p.bootstrapProvider.GetUserData(ctx, nodeClass, nodeClaim)
+	// Generate dynamic bootstrap script with instance ID
+	logger.Info("Generating dynamic bootstrap script with automatic cluster discovery", "instanceID", instanceID)
+	userData, err := p.bootstrapProvider.GetUserDataWithInstanceID(ctx, nodeClass, nodeClaim, instanceID)
 	if err != nil {
 		logger.Error(err, "Failed to generate bootstrap user data, falling back to basic bootstrap")
 		return p.getBasicBootstrapScript(nodeClass), nil

@@ -91,3 +91,4 @@ func (c *IAMClient) GetToken(ctx context.Context) (string, error) {
 
 	return c.token, nil
 }
+
