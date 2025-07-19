@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
@@ -28,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/image"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
@@ -38,6 +40,7 @@ type Controller struct {
 	kubeClient     client.Client
 	ibmClient      *ibm.Client
 	subnetProvider subnet.Provider
+	cache          *cache.Cache
 }
 
 // NewController constructs a controller instance
@@ -55,10 +58,14 @@ func NewController(kubeClient client.Client) (*Controller, error) {
 	// Create subnet provider for validation
 	subnetProvider := subnet.NewProvider(ibmClient)
 
+	// Create cache for zone-subnet mappings
+	zoneSubnetCache := cache.New(15 * time.Minute)
+
 	return &Controller{
 		kubeClient:     kubeClient,
 		ibmClient:      ibmClient,
 		subnetProvider: subnetProvider,
+		cache:          zoneSubnetCache,
 	}, nil
 }
 
@@ -146,7 +153,7 @@ func (c *Controller) validateNodeClass(ctx context.Context, nc *v1alpha1.IBMNode
 	}
 
 	// Phase 4: Business logic validation
-	if err := c.validateBusinessLogic(nc); err != nil {
+	if err := c.validateBusinessLogic(ctx, nc); err != nil {
 		return fmt.Errorf("business logic validation failed: %w", err)
 	}
 
@@ -269,7 +276,7 @@ func (c *Controller) validateIBMCloudResources(ctx context.Context, nc *v1alpha1
 }
 
 // validateBusinessLogic checks business rules and constraints
-func (c *Controller) validateBusinessLogic(nc *v1alpha1.IBMNodeClass) error {
+func (c *Controller) validateBusinessLogic(ctx context.Context, nc *v1alpha1.IBMNodeClass) error {
 	// Validate instanceProfile and instanceRequirements mutual exclusivity
 	hasInstanceProfile := strings.TrimSpace(nc.Spec.InstanceProfile) != ""
 	hasInstanceRequirements := nc.Spec.InstanceRequirements != nil
@@ -282,10 +289,12 @@ func (c *Controller) validateBusinessLogic(nc *v1alpha1.IBMNodeClass) error {
 		return fmt.Errorf("instanceProfile and instanceRequirements are mutually exclusive")
 	}
 
-	// If both zone and subnet are specified, ensure they are compatible
-	// For now, we skip zone-subnet compatibility checks since we validate
-	// actual subnet resources via API calls in validateIBMCloudResources
-	// TODO: Add zone-subnet compatibility validation
+	// Validate zone-subnet compatibility if both are specified
+	if nc.Spec.Zone != "" && nc.Spec.Subnet != "" {
+		if err := c.validateZoneSubnetCompatibility(ctx, nc.Spec.Zone, nc.Spec.Subnet); err != nil {
+			return fmt.Errorf("zone-subnet compatibility validation failed: %w", err)
+		}
+	}
 
 	// Validate placement strategy if specified
 	if nc.Spec.PlacementStrategy != nil {
@@ -353,6 +362,47 @@ func (c *Controller) validateSubnetsAvailable(ctx context.Context, vpcID, zone s
 			return fmt.Errorf("no available subnets found in VPC %s for zone %s", vpcID, zone)
 		}
 		return fmt.Errorf("no available subnets found in VPC %s", vpcID)
+	}
+
+	return nil
+}
+
+// validateZoneSubnetCompatibility validates that a subnet exists in the specified zone
+func (c *Controller) validateZoneSubnetCompatibility(ctx context.Context, zone, subnetID string) error {
+	// Skip validation if subnet provider is not available (testing scenario)
+	if c.subnetProvider == nil {
+		return nil
+	}
+
+	// Use cached subnet info if available
+	cacheKey := fmt.Sprintf("subnet-zone-%s", subnetID)
+	if cachedZone, found := c.cache.Get(cacheKey); found {
+		if cachedZone.(string) != zone {
+			return fmt.Errorf("subnet %s is in zone %s, but requested zone is %s", 
+				subnetID, cachedZone.(string), zone)
+		}
+		return nil
+	}
+
+	// Get subnet information
+	subnetInfo, err := c.subnetProvider.GetSubnet(ctx, subnetID)
+	if err != nil {
+		return fmt.Errorf("failed to get subnet information: %w", err)
+	}
+
+	// Cache the zone information for future use
+	c.cache.SetWithTTL(cacheKey, subnetInfo.Zone, 15*time.Minute)
+
+	// Check if the subnet is in the requested zone
+	if subnetInfo.Zone != zone {
+		return fmt.Errorf("subnet %s is in zone %s, but requested zone is %s. Subnets cannot span multiple zones in IBM Cloud VPC", 
+			subnetID, subnetInfo.Zone, zone)
+	}
+
+	// Additional validation: ensure subnet is in available state
+	if subnetInfo.State != "available" {
+		return fmt.Errorf("subnet %s in zone %s is not in available state (current state: %s)", 
+			subnetID, zone, subnetInfo.State)
 	}
 
 	return nil
