@@ -3,9 +3,9 @@ module github.com/pfeifferj/karpenter-provider-ibm-cloud
 go 1.24.4
 
 require (
-	github.com/IBM/go-sdk-core/v5 v5.18.6
-	github.com/IBM/platform-services-go-sdk v0.69.4
-	github.com/IBM/vpc-go-sdk v0.59.0
+	github.com/IBM/go-sdk-core/v5 v5.20.1
+	github.com/IBM/platform-services-go-sdk v0.85.0
+	github.com/IBM/vpc-go-sdk v0.70.1
 	github.com/awslabs/operatorpkg v0.0.0-20250717190115-4fddcf1f444e
 	github.com/go-logr/logr v1.4.3
 	github.com/go-openapi/strfmt v0.23.0
@@ -24,8 +24,8 @@ require (
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
 	sigs.k8s.io/controller-runtime v0.21.0
-	sigs.k8s.io/controller-tools v0.16.5
-	sigs.k8s.io/karpenter v1.5.3
+	sigs.k8s.io/controller-tools v0.18.0
+	sigs.k8s.io/karpenter v1.6.0
 )
 
 require (
@@ -49,7 +49,7 @@ require (
 	github.com/go-openapi/swag v0.23.1 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.24.0 // indirect
+	github.com/go-playground/validator/v10 v10.26.0 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/gobuffalo/flect v1.0.3 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
