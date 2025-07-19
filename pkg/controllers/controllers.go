@@ -53,6 +53,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/bootstrap"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
 	nodeorphancleanup "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/node/orphancleanup"
 	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
 	nodeclaimregistration "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
@@ -168,8 +169,14 @@ func NewControllers(
 		controllers = append(controllers, instanceTypeCtrl)
 	}
 
-	// Add interruption controller (always add for now)
-	interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings)
+	// Add interruption controller (supports both VPC and IKS modes)
+	// - VPC Mode: Direct instance deletion and replacement via Karpenter
+	// - IKS Mode: Node cordoning + IKS worker pool management hybrid approach
+	var providerFactory *providers.ProviderFactory
+	if ibmClient != nil {
+		providerFactory = providers.NewProviderFactory(ibmClient, kubeClient, kubernetesClient)
+	}
+	interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings, providerFactory)
 	controllers = append(controllers, interruptionCtrl)
 
 	// Add orphaned node cleanup controller (only if enabled and IBM client available)

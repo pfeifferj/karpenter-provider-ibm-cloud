@@ -92,15 +92,20 @@ type IKSLifecycleStatus struct {
 
 // NewIKSClient creates a new IKS API client
 func NewIKSClient(client *Client) *IKSClient {
-	// Use correct containers API endpoint matching IBM Cloud CLI
-	// CLI uses v1 without 'global' prefix
-	baseURL := "https://containers.cloud.ibm.com/v1"
+	// Use IBM Cloud Kubernetes Service v1 API endpoint
+	// Reference: https://cloud.ibm.com/apidocs/kubernetes/containers-v1-v2
+	baseURL := "https://containers.cloud.ibm.com/global/v1"
 
 	return &IKSClient{
 		client:  client,
 		baseURL: baseURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 5,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 	}
 }
@@ -302,9 +307,9 @@ type WorkerPool struct {
 }
 
 // WorkerPoolResizeRequest represents a request to resize a worker pool
+// Reference: https://cloud.ibm.com/apidocs/kubernetes#patch-workerpool
 type WorkerPoolResizeRequest struct {
-	State       string `json:"state"`
-	SizePerZone int    `json:"sizePerZone"`
+	SizePerZone int `json:"sizePerZone"`
 }
 
 // ListWorkerPools retrieves all worker pools for a cluster
@@ -344,6 +349,26 @@ func (c *IKSClient) ListWorkerPools(ctx context.Context, clusterID string) ([]*W
 
 	// Check for API errors
 	if resp.StatusCode != http.StatusOK {
+		// Parse error response to get more details
+		var errorResp struct {
+			Code        string `json:"code"`
+			Description string `json:"description"`
+			Type        string `json:"type"`
+			MoreInfo    string `json:"more_info"`
+		}
+		if err := json.Unmarshal(body, &errorResp); err == nil {
+			// Handle specific error codes gracefully
+			switch errorResp.Code {
+			case "E3917": // Cluster provider not permitted for given operation
+				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, errorResp.Description)
+			case "E0003": // Unauthorized
+				return nil, fmt.Errorf("unauthorized to access IKS API: %s", errorResp.Description)
+			case "E0015": // Cluster not found
+				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, errorResp.Description)
+			default:
+				return nil, fmt.Errorf("IKS API error (code: %s): %s", errorResp.Code, errorResp.Description)
+			}
+		}
 		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
@@ -366,7 +391,6 @@ func (c *IKSClient) ResizeWorkerPool(ctx context.Context, clusterID, poolID stri
 
 	// Prepare request payload
 	request := WorkerPoolResizeRequest{
-		State:       "resizing",
 		SizePerZone: newSize,
 	}
 
@@ -447,6 +471,28 @@ func (c *IKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID string)
 
 	// Check for API errors
 	if resp.StatusCode != http.StatusOK {
+		// Parse error response to get more details
+		var errorResp struct {
+			Code        string `json:"code"`
+			Description string `json:"description"`
+			Type        string `json:"type"`
+			MoreInfo    string `json:"more_info"`
+		}
+		if err := json.Unmarshal(body, &errorResp); err == nil {
+			// Handle specific error codes gracefully
+			switch errorResp.Code {
+			case "E3917": // Cluster provider not permitted for given operation
+				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, errorResp.Description)
+			case "E0003": // Unauthorized
+				return nil, fmt.Errorf("unauthorized to access IKS API: %s", errorResp.Description)
+			case "E0015": // Cluster not found
+				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, errorResp.Description)
+			case "E0013": // Worker pool not found
+				return nil, fmt.Errorf("worker pool %s not found in cluster %s: %s", poolID, clusterID, errorResp.Description)
+			default:
+				return nil, fmt.Errorf("IKS API error (code: %s): %s", errorResp.Code, errorResp.Description)
+			}
+		}
 		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
