@@ -18,6 +18,7 @@ package interruption
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -38,12 +39,15 @@ func TestNewController(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 	unavailableOfferings := cache.NewUnavailableOfferings()
 
-	controller := NewController(kubeClient, recorder, unavailableOfferings)
+	controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
 
 	assert.NotNil(t, controller)
 	assert.Equal(t, kubeClient, controller.kubeClient)
 	assert.Equal(t, recorder, controller.recorder)
 	assert.Equal(t, unavailableOfferings, controller.unavailableOfferings)
+	assert.Nil(t, controller.providerFactory)
+	assert.NotNil(t, controller.httpClient)
+	assert.Equal(t, 10*time.Second, controller.httpClient.Timeout)
 }
 
 func TestControllerName(t *testing.T) {
@@ -117,7 +121,7 @@ func TestReconcile(t *testing.T) {
 			recorder := record.NewFakeRecorder(10)
 			unavailableOfferings := cache.NewUnavailableOfferings()
 
-			controller := NewController(kubeClient, recorder, unavailableOfferings)
+			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
 
 			ctx := context.Background()
 			result, err := controller.Reconcile(ctx)
@@ -134,7 +138,7 @@ func TestReconcileListError(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 	unavailableOfferings := cache.NewUnavailableOfferings()
 
-	controller := NewController(kubeClient, recorder, unavailableOfferings)
+	controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
 
 	ctx := context.Background()
 	_, err := controller.Reconcile(ctx)
@@ -145,37 +149,167 @@ func TestReconcileListError(t *testing.T) {
 
 func TestIsNodeInterrupted(t *testing.T) {
 	tests := []struct {
-		name     string
-		node     *v1.Node
-		expected bool
+		name           string
+		node           *v1.Node
+		expectedResult bool
+		expectedReason InterruptionReason
 	}{
 		{
-			name: "normal node",
+			name: "healthy node should not be interrupted",
 			node: &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
+					Name: "healthy-node",
 				},
-			},
-			expected: false, // Currently always returns false
-		},
-		{
-			name: "node with interruption annotation",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Annotations: map[string]string{
-						"ibm.io/interruption": "true",
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:   v1.NodeReady,
+							Status: v1.ConditionTrue,
+						},
 					},
 				},
 			},
-			expected: false, // Currently always returns false
+			expectedResult: false,
+			expectedReason: "",
+		},
+		{
+			name: "node with ready=false should be interrupted",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "unhealthy-node",
+				},
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:    v1.NodeReady,
+							Status:  v1.ConditionFalse,
+							Reason:  "KubeletNotReady",
+							Message: "Kubelet stopped posting node status",
+						},
+					},
+				},
+			},
+			expectedResult: true,
+			expectedReason: InstanceHealthFailed,
+		},
+		{
+			name: "node with capacity issues should be capacity-related interruption",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "capacity-node",
+				},
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:    v1.NodeReady,
+							Status:  v1.ConditionFalse,
+							Reason:  "CapacityUnavailable",
+							Message: "Not enough capacity available",
+						},
+					},
+				},
+			},
+			expectedResult: true,
+			expectedReason: CapacityUnavailable,
+		},
+		{
+			name: "node with memory pressure should be capacity-related",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "memory-pressure-node",
+				},
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:   v1.NodeReady,
+							Status: v1.ConditionTrue,
+						},
+						{
+							Type:   v1.NodeMemoryPressure,
+							Status: v1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expectedResult: true,
+			expectedReason: CapacityUnavailable,
+		},
+		{
+			name: "node with network unavailable should be network-related",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "network-node",
+				},
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:   v1.NodeReady,
+							Status: v1.ConditionTrue,
+						},
+						{
+							Type:   v1.NodeNetworkUnavailable,
+							Status: v1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expectedResult: true,
+			expectedReason: NetworkResourceLimit,
+		},
+		{
+			name: "node with interruption annotation should not be processed again",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "already-interrupted-node",
+					Annotations: map[string]string{
+						InterruptionAnnotation: "true",
+					},
+				},
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:   v1.NodeReady,
+							Status: v1.ConditionFalse,
+						},
+					},
+				},
+			},
+			expectedResult: false,
+			expectedReason: "",
+		},
+		{
+			name: "node with maintenance annotation should be host-maintenance",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "maintenance-node",
+					Annotations: map[string]string{
+						"ibm-cloud.kubernetes.io/maintenance": "true",
+					},
+				},
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:   v1.NodeReady,
+							Status: v1.ConditionTrue,
+						},
+					},
+				},
+			},
+			expectedResult: true,
+			expectedReason: HostMaintenance,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isNodeInterrupted(tt.node)
-			assert.Equal(t, tt.expected, result)
+			controller := &Controller{
+				httpClient:      &http.Client{Timeout: 5 * time.Second},
+				providerFactory: nil, // No provider factory in tests
+			}
+
+			interrupted, reason := controller.isNodeInterrupted(context.Background(), tt.node)
+			assert.Equal(t, tt.expectedResult, interrupted)
+			assert.Equal(t, tt.expectedReason, reason)
 		})
 	}
 }
@@ -184,34 +318,222 @@ func TestIsCapacityRelated(t *testing.T) {
 	tests := []struct {
 		name     string
 		node     *v1.Node
+		reason   InterruptionReason
 		expected bool
 	}{
 		{
-			name: "normal node",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-				},
-			},
-			expected: false, // Currently always returns false
+			name:     "capacity unavailable should be capacity related",
+			node:     &v1.Node{},
+			reason:   CapacityUnavailable,
+			expected: true,
 		},
 		{
-			name: "node with capacity annotation",
+			name:     "network resource limit should be capacity related",
+			node:     &v1.Node{},
+			reason:   NetworkResourceLimit,
+			expected: true,
+		},
+		{
+			name:     "host maintenance should not be capacity related",
+			node:     &v1.Node{},
+			reason:   HostMaintenance,
+			expected: false,
+		},
+		{
+			name:     "instance health failed should not be capacity related",
+			node:     &v1.Node{},
+			reason:   InstanceHealthFailed,
+			expected: false,
+		},
+		{
+			name: "unknown reason with memory pressure should be capacity related",
 			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Annotations: map[string]string{
-						"ibm.io/interruption-reason": "capacity",
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:   v1.NodeMemoryPressure,
+							Status: v1.ConditionTrue,
+						},
 					},
 				},
 			},
-			expected: false, // Currently always returns false
+			reason:   "unknown",
+			expected: true,
+		},
+		{
+			name: "unknown reason without pressure should not be capacity related",
+			node: &v1.Node{
+				Status: v1.NodeStatus{
+					Conditions: []v1.NodeCondition{
+						{
+							Type:   v1.NodeReady,
+							Status: v1.ConditionTrue,
+						},
+					},
+				},
+			},
+			reason:   "unknown",
+			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isCapacityRelated(tt.node)
+			controller := &Controller{}
+			result := controller.isCapacityRelated(tt.node, tt.reason)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestMarkNodeAsInterrupted(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1.AddToScheme(scheme))
+
+	node := &v1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(node).
+		Build()
+
+	controller := &Controller{
+		kubeClient: fakeClient,
+	}
+
+	ctx := context.Background()
+	reason := CapacityUnavailable
+
+	err := controller.markNodeAsInterrupted(ctx, node, reason)
+	require.NoError(t, err)
+
+	// Verify the node was updated with interruption annotations
+	updatedNode := &v1.Node{}
+	err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-node"}, updatedNode)
+	require.NoError(t, err)
+
+	assert.Equal(t, "true", updatedNode.Annotations[InterruptionAnnotation])
+	assert.Equal(t, string(reason), updatedNode.Annotations[InterruptionReasonAnnotation])
+	assert.NotEmpty(t, updatedNode.Annotations[InterruptionTimeAnnotation])
+
+	// Verify the time annotation is a valid RFC3339 timestamp
+	_, err = time.Parse(time.RFC3339, updatedNode.Annotations[InterruptionTimeAnnotation])
+	assert.NoError(t, err)
+}
+
+func TestGetInstanceIDFromNode(t *testing.T) {
+	tests := []struct {
+		name     string
+		node     *v1.Node
+		expected string
+	}{
+		{
+			name: "instance ID from provider ID",
+			node: &v1.Node{
+				Spec: v1.NodeSpec{
+					ProviderID: "ibm:///eu-de-2/02c7_12345678-1234-1234-1234-123456789abc",
+				},
+			},
+			expected: "02c7_12345678-1234-1234-1234-123456789abc",
+		},
+		{
+			name: "instance ID from label",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"ibm-cloud.kubernetes.io/instance-id": "02c7_87654321-4321-4321-4321-cba987654321",
+					},
+				},
+			},
+			expected: "02c7_87654321-4321-4321-4321-cba987654321",
+		},
+		{
+			name: "instance ID from annotation",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"ibm-cloud.kubernetes.io/instance-id": "02c7_11111111-2222-3333-4444-555555555555",
+					},
+				},
+			},
+			expected: "02c7_11111111-2222-3333-4444-555555555555",
+		},
+		{
+			name:     "no instance ID available",
+			node:     &v1.Node{},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller := &Controller{}
+			result := controller.getInstanceIDFromNode(tt.node)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCheckCapacitySignals(t *testing.T) {
+	tests := []struct {
+		name     string
+		node     *v1.Node
+		expected InterruptionReason
+	}{
+		{
+			name: "IBM capacity annotation should return capacity unavailable",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"ibm-cloud.kubernetes.io/status": "capacity unavailable",
+					},
+				},
+			},
+			expected: CapacityUnavailable,
+		},
+		{
+			name: "IBM network annotation should return network resource limit",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"ibm-cloud.kubernetes.io/error": "network resources unavailable",
+					},
+				},
+			},
+			expected: NetworkResourceLimit,
+		},
+		{
+			name: "maintenance annotation should return host maintenance",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"ibm-cloud.kubernetes.io/maintenance": "true",
+					},
+				},
+			},
+			expected: HostMaintenance,
+		},
+		{
+			name: "no relevant annotations should return empty",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"some.other.annotation": "value",
+					},
+				},
+			},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller := &Controller{}
+			result := controller.checkCapacitySignals(tt.node)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
