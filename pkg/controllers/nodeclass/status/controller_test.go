@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
@@ -373,8 +374,10 @@ func TestValidateBusinessLogic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{}
-			err := controller.validateBusinessLogic(tt.nodeClass)
+			controller := &Controller{
+				cache: cache.New(15 * time.Minute),
+			}
+			err := controller.validateBusinessLogic(context.Background(), tt.nodeClass)
 
 			if tt.wantError {
 				assert.Error(t, err, "Expected validation error")
