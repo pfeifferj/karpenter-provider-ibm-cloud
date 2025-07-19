@@ -299,7 +299,11 @@ func (c *Controller) getInstanceMetadata(ctx context.Context) (*InstanceMetadata
 	if err != nil {
 		return nil, err
 	}
-	defer tokenResp.Body.Close()
+	defer func() {
+		if closeErr := tokenResp.Body.Close(); closeErr != nil {
+			log.FromContext(ctx).Error(closeErr, "Failed to close token response body")
+		}
+	}()
 
 	if tokenResp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get metadata token: %d", tokenResp.StatusCode)
@@ -308,8 +312,8 @@ func (c *Controller) getInstanceMetadata(ctx context.Context) (*InstanceMetadata
 	var tokenResponse struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.NewDecoder(tokenResp.Body).Decode(&tokenResponse); err != nil {
-		return nil, err
+	if decodeErr := json.NewDecoder(tokenResp.Body).Decode(&tokenResponse); decodeErr != nil {
+		return nil, decodeErr
 	}
 
 	// Get instance metadata
@@ -323,7 +327,11 @@ func (c *Controller) getInstanceMetadata(ctx context.Context) (*InstanceMetadata
 	if err != nil {
 		return nil, err
 	}
-	defer metadataResp.Body.Close()
+	defer func() {
+		if closeErr := metadataResp.Body.Close(); closeErr != nil {
+			log.FromContext(ctx).Error(closeErr, "Failed to close metadata response body")
+		}
+	}()
 
 	if metadataResp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get instance metadata: %d", metadataResp.StatusCode)
