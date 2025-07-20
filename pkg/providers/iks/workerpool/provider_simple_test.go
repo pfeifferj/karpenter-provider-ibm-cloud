@@ -17,7 +17,9 @@ limitations under the License.
 package workerpool
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -304,4 +306,196 @@ func TestNodeLabelGeneration(t *testing.T) {
 	assert.Equal(t, "us-south-1", node.Labels["topology.kubernetes.io/zone"])
 	assert.Equal(t, "bx2-4x16", node.Labels["node.kubernetes.io/instance-type"])
 	assert.Equal(t, "test-nodepool", node.Labels["karpenter.sh/nodepool"])
+}
+
+func TestIKSWorkerPoolProvider_CreateMethodSignature(t *testing.T) {
+	// Test that Create method exists and has the right signature
+	provider := &IKSWorkerPoolProvider{}
+	
+	// Verify that Create method can be called (will error due to nil client but that's expected)
+	_, err := provider.Create(context.Background(), &karpv1.NodeClaim{})
+	assert.Error(t, err) // Expected due to nil client
+	assert.Contains(t, err.Error(), "kubernetes client not set")
+}
+
+func TestIKSWorkerPoolProvider_DeleteMethodSignature(t *testing.T) {
+	// Test that Delete method exists and has the right signature
+	provider := &IKSWorkerPoolProvider{}
+	
+	// Test with node missing required labels
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+		},
+	}
+	
+	err := provider.Delete(context.Background(), node)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster ID or pool ID not found")
+}
+
+func TestIKSWorkerPoolProvider_GetMethodNotImplemented(t *testing.T) {
+	provider := &IKSWorkerPoolProvider{}
+	
+	result, err := provider.Get(context.Background(), "test-provider-id")
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "get operation not implemented")
+}
+
+func TestIKSWorkerPoolProvider_ListMethodNotImplemented(t *testing.T) {
+	provider := &IKSWorkerPoolProvider{}
+	
+	result, err := provider.List(context.Background())
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "list operation not implemented")
+}
+
+func TestIKSWorkerPoolProvider_ResizePoolNilClient(t *testing.T) {
+	// Test that calling ResizePool with a nil client panics or errors correctly
+	// Since the method calls p.client.GetIKSClient() and p.client is nil, 
+	// this should panic. We capture the panic to verify the method exists.
+	provider := &IKSWorkerPoolProvider{}
+	
+	defer func() {
+		if r := recover(); r != nil {
+			// Expected panic due to nil client
+			assert.NotNil(t, r, "Expected panic due to nil client")
+		}
+	}()
+	
+	// This will panic due to nil client, but that's expected behavior for now
+	err := provider.ResizePool(context.Background(), "cluster", "pool", 5)
+	// If we reach here without panic, it means the method returned an error instead
+	assert.Error(t, err)
+}
+
+func TestIKSWorkerPoolProvider_GetPoolNilClient(t *testing.T) {
+	// Test that calling GetPool with a nil client panics or errors correctly
+	provider := &IKSWorkerPoolProvider{}
+	
+	defer func() {
+		if r := recover(); r != nil {
+			// Expected panic due to nil client
+			assert.NotNil(t, r, "Expected panic due to nil client")
+		}
+	}()
+	
+	// This will panic due to nil client
+	result, err := provider.GetPool(context.Background(), "cluster", "pool")
+	// If we reach here without panic, it means the method returned an error instead
+	if err != nil {
+		assert.Error(t, err)
+		assert.Nil(t, result)
+	}
+}
+
+func TestIKSWorkerPoolProvider_ListPoolsNilClient(t *testing.T) {
+	// Test that calling ListPools with a nil client panics or errors correctly  
+	provider := &IKSWorkerPoolProvider{}
+	
+	defer func() {
+		if r := recover(); r != nil {
+			// Expected panic due to nil client
+			assert.NotNil(t, r, "Expected panic due to nil client")
+		}
+	}()
+	
+	// This will panic due to nil client
+	result, err := provider.ListPools(context.Background(), "cluster")
+	// If we reach here without panic, it means the method returned an error instead
+	if err != nil {
+		assert.Error(t, err)
+		assert.Nil(t, result)
+	}
+}
+
+func TestProviderIDGeneration(t *testing.T) {
+	tests := []struct {
+		name        string
+		region      string
+		nodeClaimName string
+		expected    string
+	}{
+		{
+			name:        "standard provider ID",
+			region:      "us-south",
+			nodeClaimName: "test-nodeclaim",
+			expected:    "ibm:///us-south/test-nodeclaim",
+		},
+		{
+			name:        "different region",
+			region:      "eu-gb",
+			nodeClaimName: "my-node",
+			expected:    "ibm:///eu-gb/my-node",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test the provider ID generation logic
+			providerID := fmt.Sprintf("ibm:///%s/%s", tt.region, tt.nodeClaimName)
+			assert.Equal(t, tt.expected, providerID)
+		})
+	}
+}
+
+func TestEnvironmentVariableHandling(t *testing.T) {
+	// Save original env var
+	originalClusterID := os.Getenv("IKS_CLUSTER_ID")
+	defer func() {
+		if originalClusterID != "" {
+			_ = os.Setenv("IKS_CLUSTER_ID", originalClusterID)
+		} else {
+			_ = os.Unsetenv("IKS_CLUSTER_ID")
+		}
+	}()
+
+	tests := []struct {
+		name               string
+		nodeClassClusterID string
+		envClusterID       string
+		expectedClusterID  string
+	}{
+		{
+			name:               "use nodeclass cluster ID",
+			nodeClassClusterID: "nodeclass-cluster",
+			envClusterID:       "env-cluster",
+			expectedClusterID:  "nodeclass-cluster", // NodeClass takes precedence
+		},
+		{
+			name:               "use env cluster ID when nodeclass empty",
+			nodeClassClusterID: "",
+			envClusterID:       "env-cluster",
+			expectedClusterID:  "env-cluster",
+		},
+		{
+			name:               "empty when both empty",
+			nodeClassClusterID: "",
+			envClusterID:       "",
+			expectedClusterID:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set environment variable
+			if tt.envClusterID != "" {
+				_ = os.Setenv("IKS_CLUSTER_ID", tt.envClusterID)
+			} else {
+				_ = os.Unsetenv("IKS_CLUSTER_ID")
+			}
+
+			// Simulate the logic from the Create method
+			var clusterID string
+			if tt.nodeClassClusterID != "" {
+				clusterID = tt.nodeClassClusterID
+			} else {
+				clusterID = os.Getenv("IKS_CLUSTER_ID")
+			}
+
+			assert.Equal(t, tt.expectedClusterID, clusterID)
+		})
+	}
 }

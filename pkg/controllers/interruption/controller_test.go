@@ -31,7 +31,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
+)
+
+// InfrastructureFailure represents infrastructure-related interruption events
+const (
+	InfrastructureFailure InterruptionReason = "infrastructure-failure"
 )
 
 func TestNewController(t *testing.T) {
@@ -641,4 +647,714 @@ func (m *mockSubResourceClient) Patch(ctx context.Context, obj client.Object, pa
 
 func (m *mockErrorClient) Scheme() *runtime.Scheme {
 	return runtime.NewScheme()
+}
+
+// Test node class resolution functionality
+
+func TestGetNodeClassForNode(t *testing.T) {
+	tests := []struct {
+		name          string
+		node          *v1.Node
+		nodeClasses   []client.Object
+		expectedError bool
+		expectedMode  string
+	}{
+		{
+			name: "node with karpenter.ibm.sh/nodeclass label",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Labels: map[string]string{
+						"karpenter.ibm.sh/nodeclass": "test-nodeclass",
+					},
+				},
+			},
+			nodeClasses: []client.Object{
+				&v1alpha1.IBMNodeClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-nodeclass",
+					},
+					Spec: v1alpha1.IBMNodeClassSpec{
+						Region: "us-south",
+					},
+				},
+			},
+			expectedError: false,
+			expectedMode:  "test-nodeclass",
+		},
+		{
+			name: "node with fallback karpenter.sh/nodepool label",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Labels: map[string]string{
+						"karpenter.sh/nodepool": "test-nodepool",
+					},
+				},
+			},
+			nodeClasses: []client.Object{
+				&v1alpha1.IBMNodeClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-nodepool",
+					},
+					Spec: v1alpha1.IBMNodeClassSpec{
+						Region: "us-south",
+					},
+				},
+			},
+			expectedError: false,
+			expectedMode:  "test-nodepool",
+		},
+		{
+			name: "node with no nodeclass labels",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Labels: map[string]string{
+						"some-other-label": "value",
+					},
+				},
+			},
+			nodeClasses:   []client.Object{},
+			expectedError: true,
+		},
+		{
+			name: "nodeclass not found",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Labels: map[string]string{
+						"karpenter.ibm.sh/nodeclass": "non-existent-nodeclass",
+					},
+				},
+			},
+			nodeClasses:   []client.Object{},
+			expectedError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			err := v1.AddToScheme(scheme)
+			require.NoError(t, err)
+			err = v1alpha1.AddToScheme(scheme)
+			require.NoError(t, err)
+
+			kubeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.nodeClasses...).
+				Build()
+
+			recorder := record.NewFakeRecorder(10)
+			unavailableOfferings := cache.NewUnavailableOfferings()
+			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+
+			ctx := context.Background()
+			nodeClass, err := controller.getNodeClassForNode(ctx, tt.node)
+
+			if tt.expectedError {
+				assert.Error(t, err)
+				assert.Nil(t, nodeClass)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, nodeClass)
+				assert.Equal(t, tt.expectedMode, nodeClass.Name)
+			}
+		})
+	}
+}
+
+func TestInferModeFromNode(t *testing.T) {
+	tests := []struct {
+		name         string
+		node         *v1.Node
+		expectedMode string
+	}{
+		{
+			name: "IKS mode - cluster ID label",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "iks-node",
+					Labels: map[string]string{
+						"ibm-cloud.kubernetes.io/iks-cluster-id": "test-cluster",
+					},
+				},
+			},
+			expectedMode: "iks",
+		},
+		{
+			name: "IKS mode - worker pool annotation",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "iks-node",
+					Annotations: map[string]string{
+						"ibm-cloud.kubernetes.io/iks-worker-pool": "test-pool",
+					},
+				},
+			},
+			expectedMode: "iks",
+		},
+		{
+			name: "IKS mode - provider ID format",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "iks-node",
+				},
+				Spec: v1.NodeSpec{
+					ProviderID: "iks://cluster-id/worker-id",
+				},
+			},
+			expectedMode: "iks",
+		},
+		{
+			name: "VPC mode - default case",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "vpc-node",
+				},
+				Spec: v1.NodeSpec{
+					ProviderID: "ibm:///region/instance-id",
+				},
+			},
+			expectedMode: "vpc",
+		},
+		{
+			name: "VPC mode - no provider ID",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "vpc-node",
+				},
+			},
+			expectedMode: "vpc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller := &Controller{}
+			mode := controller.inferModeFromNode(tt.node)
+			assert.Equal(t, tt.expectedMode, string(mode))
+		})
+	}
+}
+
+func TestHandleVPCInterruption(t *testing.T) {
+	tests := []struct {
+		name                    string
+		node                    *v1.Node
+		reason                  InterruptionReason
+		expectCapacityMarking   bool
+		expectNodeCordoning     bool
+		expectNodeDeletion      bool
+		expectError             bool
+	}{
+		{
+			name: "capacity-related interruption should mark unavailable and delete node",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "capacity-node",
+					Labels: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			reason:                CapacityUnavailable,
+			expectCapacityMarking: true,
+			expectNodeCordoning:   true,
+			expectNodeDeletion:    true,
+			expectError:           false,
+		},
+		{
+			name: "host maintenance should cordon and delete without capacity marking",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "maintenance-node",
+					Labels: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			reason:                HostMaintenance,
+			expectCapacityMarking: false,
+			expectNodeCordoning:   true,
+			expectNodeDeletion:    true,
+			expectError:           false,
+		},
+		{
+			name: "already cordoned node should still be deleted",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "cordoned-node",
+					Labels: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: true,
+				},
+			},
+			reason:                CapacityUnavailable,
+			expectCapacityMarking: true,
+			expectNodeCordoning:   false, // Already cordoned
+			expectNodeDeletion:    true,
+			expectError:           false,
+		},
+		{
+			name: "node without instance type label should still work",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "no-labels-node",
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			reason:                CapacityUnavailable,
+			expectCapacityMarking: false, // Can't mark without labels
+			expectNodeCordoning:   true,
+			expectNodeDeletion:    true,
+			expectError:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			err := v1.AddToScheme(scheme)
+			require.NoError(t, err)
+
+			kubeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.node).
+				Build()
+
+			recorder := record.NewFakeRecorder(10)
+			unavailableOfferings := cache.NewUnavailableOfferings()
+			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+
+			ctx := context.Background()
+			err = controller.handleVPCInterruption(ctx, tt.node, tt.reason)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// Check if capacity was marked as unavailable
+			if tt.expectCapacityMarking {
+				instanceType := tt.node.Labels["node.kubernetes.io/instance-type"]
+				zone := tt.node.Labels["topology.kubernetes.io/zone"]
+				if instanceType != "" && zone != "" {
+					key := instanceType + ":" + zone
+					assert.True(t, unavailableOfferings.IsUnavailable(key))
+				}
+			}
+
+			// Verify node state changes by fetching the updated node
+			var updatedNode v1.Node
+			err = kubeClient.Get(ctx, client.ObjectKey{Name: tt.node.Name}, &updatedNode)
+
+			if tt.expectNodeDeletion {
+				// Node should be deleted, so Get should return not found error
+				assert.Error(t, err)
+				assert.True(t, client.IgnoreNotFound(err) == nil)
+			} else {
+				assert.NoError(t, err)
+				if tt.expectNodeCordoning {
+					assert.True(t, updatedNode.Spec.Unschedulable)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleIKSInterruption(t *testing.T) {
+	tests := []struct {
+		name                  string
+		node                  *v1.Node
+		reason                InterruptionReason
+		expectCapacityMarking bool
+		expectNodeCordoning   bool
+		expectNodeDeletion    bool
+		expectError           bool
+	}{
+		{
+			name: "capacity-related interruption should only cordon in IKS mode",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "iks-capacity-node",
+					Labels: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			reason:                CapacityUnavailable,
+			expectCapacityMarking: true,
+			expectNodeCordoning:   true,
+			expectNodeDeletion:    false, // IKS doesn't delete for capacity issues
+			expectError:           false,
+		},
+		{
+			name: "infrastructure issue should cordon and delete in IKS mode",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "iks-infra-node",
+					Labels: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			reason:                InfrastructureFailure,
+			expectCapacityMarking: false,
+			expectNodeCordoning:   true,
+			expectNodeDeletion:    true,
+			expectError:           false,
+		},
+		{
+			name: "host maintenance should cordon and delete in IKS mode",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "iks-maintenance-node",
+					Labels: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			reason:                HostMaintenance,
+			expectCapacityMarking: false,
+			expectNodeCordoning:   true,
+			expectNodeDeletion:    true,
+			expectError:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			err := v1.AddToScheme(scheme)
+			require.NoError(t, err)
+
+			kubeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.node).
+				Build()
+
+			recorder := record.NewFakeRecorder(10)
+			unavailableOfferings := cache.NewUnavailableOfferings()
+			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+
+			ctx := context.Background()
+			err = controller.handleIKSInterruption(ctx, tt.node, tt.reason)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// Check if capacity was marked as unavailable
+			if tt.expectCapacityMarking {
+				instanceType := tt.node.Labels["node.kubernetes.io/instance-type"]
+				zone := tt.node.Labels["topology.kubernetes.io/zone"]
+				if instanceType != "" && zone != "" {
+					key := instanceType + ":" + zone
+					assert.True(t, unavailableOfferings.IsUnavailable(key))
+				}
+			}
+
+			// Verify node state changes
+			var updatedNode v1.Node
+			err = kubeClient.Get(ctx, client.ObjectKey{Name: tt.node.Name}, &updatedNode)
+
+			if tt.expectNodeDeletion {
+				// Node should be deleted
+				assert.Error(t, err)
+				assert.True(t, client.IgnoreNotFound(err) == nil)
+			} else {
+				assert.NoError(t, err)
+				if tt.expectNodeCordoning {
+					assert.True(t, updatedNode.Spec.Unschedulable)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleInterruption(t *testing.T) {
+	tests := []struct {
+		name            string
+		node            *v1.Node
+		nodeClasses     []client.Object
+		reason          InterruptionReason
+		expectedMode    string
+		expectError     bool
+	}{
+		{
+			name: "VPC mode handling with nodeclass",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "vpc-node",
+					Labels: map[string]string{
+						"karpenter.ibm.sh/nodeclass":       "vpc-nodeclass",
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			nodeClasses: []client.Object{
+				&v1alpha1.IBMNodeClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "vpc-nodeclass",
+					},
+					Spec: v1alpha1.IBMNodeClassSpec{
+						Region: "us-south",
+					},
+				},
+			},
+			reason:       CapacityUnavailable,
+			expectedMode: "vpc",
+			expectError:  false,
+		},
+		{
+			name: "IKS mode handling with nodeclass",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "iks-node",
+					Labels: map[string]string{
+						"karpenter.ibm.sh/nodeclass":       "iks-nodeclass",
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			nodeClasses: []client.Object{
+				&v1alpha1.IBMNodeClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "iks-nodeclass",
+					},
+					Spec: v1alpha1.IBMNodeClassSpec{
+						Region: "us-south",
+					},
+				},
+			},
+			reason:       CapacityUnavailable,
+			expectedMode: "iks",
+			expectError:  false,
+		},
+		{
+			name: "fallback to VPC mode when nodeclass not found",
+			node: &v1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "fallback-node",
+					Labels: map[string]string{
+						"karpenter.ibm.sh/nodeclass":       "non-existent",
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+						"topology.kubernetes.io/zone":      "us-south-1",
+					},
+				},
+				Spec: v1.NodeSpec{
+					Unschedulable: false,
+				},
+			},
+			nodeClasses: []client.Object{},
+			reason:      CapacityUnavailable,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			err := v1.AddToScheme(scheme)
+			require.NoError(t, err)
+			err = v1alpha1.AddToScheme(scheme)
+			require.NoError(t, err)
+
+			allObjects := append(tt.nodeClasses, tt.node)
+			kubeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(allObjects...).
+				Build()
+
+			recorder := record.NewFakeRecorder(10)
+			unavailableOfferings := cache.NewUnavailableOfferings()
+			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+
+			ctx := context.Background()
+			err = controller.handleInterruption(ctx, tt.node, tt.reason)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				
+				// Verify that some action was taken (node should be modified or deleted)
+				var updatedNode v1.Node
+				err = kubeClient.Get(ctx, client.ObjectKey{Name: tt.node.Name}, &updatedNode)
+				
+				// Either node is deleted (error) or cordoned (unschedulable = true)
+				if err != nil {
+					assert.True(t, client.IgnoreNotFound(err) == nil, "Expected node to be deleted or not found")
+				} else {
+					assert.True(t, updatedNode.Spec.Unschedulable, "Expected node to be cordoned")
+				}
+			}
+		})
+	}
+}
+
+func TestReconcileWithInterruptedNodes(t *testing.T) {
+	tests := []struct {
+		name        string
+		nodes       []v1.Node
+		nodeClasses []client.Object
+		expectError bool
+	}{
+		{
+			name: "reconcile with interrupted node",
+			nodes: []v1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "interrupted-node",
+						Labels: map[string]string{
+							"karpenter.ibm.sh/nodeclass":       "test-nodeclass",
+							"node.kubernetes.io/instance-type": "bx2-2x8",
+							"topology.kubernetes.io/zone":      "us-south-1",
+						},
+					},
+					Status: v1.NodeStatus{
+						Conditions: []v1.NodeCondition{
+							{
+								Type:   v1.NodeReady,
+								Status: v1.ConditionFalse,
+								Reason: "KubeletNotReady",
+							},
+						},
+					},
+				},
+			},
+			nodeClasses: []client.Object{
+				&v1alpha1.IBMNodeClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-nodeclass",
+					},
+					Spec: v1alpha1.IBMNodeClassSpec{
+						Region: "us-south",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "reconcile with multiple interrupted nodes",
+			nodes: []v1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "interrupted-node-1",
+						Labels: map[string]string{
+							"karpenter.ibm.sh/nodeclass":       "test-nodeclass",
+							"node.kubernetes.io/instance-type": "bx2-2x8",
+							"topology.kubernetes.io/zone":      "us-south-1",
+						},
+					},
+					Status: v1.NodeStatus{
+						Conditions: []v1.NodeCondition{
+							{
+								Type:   v1.NodeReady,
+								Status: v1.ConditionFalse,
+							},
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "interrupted-node-2",
+						Labels: map[string]string{
+							"karpenter.ibm.sh/nodeclass":       "test-nodeclass",
+							"node.kubernetes.io/instance-type": "bx2-4x16",
+							"topology.kubernetes.io/zone":      "us-south-2",
+						},
+					},
+					Status: v1.NodeStatus{
+						Conditions: []v1.NodeCondition{
+							{
+								Type:   v1.NodeMemoryPressure,
+								Status: v1.ConditionTrue,
+							},
+						},
+					},
+				},
+			},
+			nodeClasses: []client.Object{
+				&v1alpha1.IBMNodeClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-nodeclass",
+					},
+					Spec: v1alpha1.IBMNodeClassSpec{
+						Region: "us-south",
+					},
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			err := v1.AddToScheme(scheme)
+			require.NoError(t, err)
+			err = v1alpha1.AddToScheme(scheme)
+			require.NoError(t, err)
+
+			allObjects := append(tt.nodeClasses, nodeSliceToObjects(tt.nodes)...)
+			kubeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(allObjects...).
+				Build()
+
+			recorder := record.NewFakeRecorder(10)
+			unavailableOfferings := cache.NewUnavailableOfferings()
+			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+
+			ctx := context.Background()
+			result, err := controller.Reconcile(ctx)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, time.Minute, result.RequeueAfter)
+			}
+		})
+	}
 }
