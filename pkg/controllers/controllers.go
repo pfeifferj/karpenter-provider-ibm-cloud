@@ -56,6 +56,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
 	nodeorphancleanup "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/node/orphancleanup"
 	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
+	nodeclaimloadbalancer "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/loadbalancer"
 	nodeclaimregistration "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
 	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
@@ -160,6 +161,21 @@ func NewControllers(
 		logger.Error(err, "failed to create tagging controller")
 	} else {
 		controllers = append(controllers, taggingCtrl)
+	}
+
+	// Add load balancer controller (VPC mode only)
+	if ibmClient != nil {
+		vpcClient, err := ibmClient.GetVPCClient()
+		if err != nil {
+			logger.Error(err, "failed to get VPC client for load balancer controller")
+		} else {
+			loadBalancerCtrl := nodeclaimloadbalancer.NewController(kubeClient, vpcClient)
+			if err := loadBalancerCtrl.Register(ctx, mgr); err != nil {
+				logger.Error(err, "failed to register load balancer controller")
+			} else {
+				logger.Info("registered load balancer controller")
+			}
+		}
 	}
 
 	// Add instance type controller

@@ -81,6 +81,106 @@ type SubnetSelectionCriteria struct {
 	RequiredTags map[string]string `json:"requiredTags,omitempty"`
 }
 
+// LoadBalancerTarget defines a target group configuration for load balancer integration
+type LoadBalancerTarget struct {
+	// LoadBalancerID is the ID of the IBM Cloud Load Balancer
+	// Must be a valid IBM Cloud Load Balancer ID
+	// Example: "r010-12345678-1234-5678-9abc-def012345678"
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern="^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+	LoadBalancerID string `json:"loadBalancerID"`
+
+	// PoolName is the name of the load balancer pool to add targets to
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+	PoolName string `json:"poolName"`
+
+	// Port is the port number on the target instances
+	// +required
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Weight specifies the weight for load balancing traffic to targets
+	// Higher weights receive proportionally more traffic
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=50
+	Weight *int32 `json:"weight,omitempty"`
+
+	// HealthCheck defines health check configuration for the target
+	// +optional
+	HealthCheck *LoadBalancerHealthCheck `json:"healthCheck,omitempty"`
+}
+
+// LoadBalancerHealthCheck defines health check configuration
+type LoadBalancerHealthCheck struct {
+	// Protocol is the protocol to use for health checks
+	// +optional
+	// +kubebuilder:validation:Enum=http;https;tcp
+	// +kubebuilder:default=tcp
+	Protocol string `json:"protocol,omitempty"`
+
+	// Path is the URL path for HTTP/HTTPS health checks
+	// Only used when Protocol is "http" or "https"
+	// +optional
+	// +kubebuilder:validation:Pattern="^/.*$"
+	Path string `json:"path,omitempty"`
+
+	// Interval is the time in seconds between health checks
+	// +optional
+	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=300
+	// +kubebuilder:default=30
+	Interval *int32 `json:"interval,omitempty"`
+
+	// Timeout is the timeout in seconds for each health check
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=60
+	// +kubebuilder:default=5
+	Timeout *int32 `json:"timeout,omitempty"`
+
+	// RetryCount is the number of consecutive successful checks required
+	// before marking a target as healthy
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=10
+	// +kubebuilder:default=2
+	RetryCount *int32 `json:"retryCount,omitempty"`
+}
+
+// LoadBalancerIntegration defines load balancer integration configuration
+type LoadBalancerIntegration struct {
+	// Enabled controls whether load balancer integration is active
+	// When enabled, nodes will be automatically registered with specified load balancers
+	// +optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// TargetGroups defines the load balancer pools to register nodes with
+	// +optional
+	// +kubebuilder:validation:MaxItems=10
+	TargetGroups []LoadBalancerTarget `json:"targetGroups,omitempty"`
+
+	// AutoDeregister controls whether nodes are automatically removed from
+	// load balancers when they are terminated or become unhealthy
+	// +optional
+	// +kubebuilder:default=true
+	AutoDeregister *bool `json:"autoDeregister,omitempty"`
+
+	// RegistrationTimeout is the maximum time to wait for target registration
+	// +optional
+	// +kubebuilder:validation:Minimum=30
+	// +kubebuilder:validation:Maximum=600
+	// +kubebuilder:default=300
+	RegistrationTimeout *int32 `json:"registrationTimeout,omitempty"`
+}
+
 // InstanceTypeRequirements defines criteria for automatic instance type selection.
 // This is used when InstanceProfile is not specified, allowing Karpenter to automatically
 // choose the most suitable instance types based on workload requirements and cost constraints.
@@ -266,6 +366,11 @@ type IBMNodeClassSpec struct {
 	// Used with IKS API bootstrapping mode
 	// +optional
 	IKSWorkerPoolID string `json:"iksWorkerPoolID,omitempty"`
+
+	// LoadBalancerIntegration defines load balancer integration settings
+	// When configured, nodes will be automatically registered with IBM Cloud Load Balancers
+	// +optional
+	LoadBalancerIntegration *LoadBalancerIntegration `json:"loadBalancerIntegration,omitempty"`
 }
 
 // IBMNodeClassStatus defines the observed state of IBMNodeClass

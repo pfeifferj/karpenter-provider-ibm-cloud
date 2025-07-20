@@ -133,6 +133,70 @@ func (m *mockVPCClient) ListSecurityGroupsWithContext(_ context.Context, _ *vpcv
 	return &vpcv1.SecurityGroupCollection{}, &core.DetailedResponse{}, nil
 }
 
+// Load Balancer methods
+func (m *mockVPCClient) GetLoadBalancerWithContext(_ context.Context, _ *vpcv1.GetLoadBalancerOptions) (*vpcv1.LoadBalancer, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.LoadBalancer{}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) ListLoadBalancerPoolsWithContext(_ context.Context, _ *vpcv1.ListLoadBalancerPoolsOptions) (*vpcv1.LoadBalancerPoolCollection, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.LoadBalancerPoolCollection{}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) GetLoadBalancerPoolWithContext(_ context.Context, _ *vpcv1.GetLoadBalancerPoolOptions) (*vpcv1.LoadBalancerPool, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.LoadBalancerPool{}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) CreateLoadBalancerPoolMemberWithContext(_ context.Context, _ *vpcv1.CreateLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.LoadBalancerPoolMember{}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) DeleteLoadBalancerPoolMemberWithContext(_ context.Context, _ *vpcv1.DeleteLoadBalancerPoolMemberOptions) (*core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) GetLoadBalancerPoolMemberWithContext(_ context.Context, _ *vpcv1.GetLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.LoadBalancerPoolMember{}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) ListLoadBalancerPoolMembersWithContext(_ context.Context, _ *vpcv1.ListLoadBalancerPoolMembersOptions) (*vpcv1.LoadBalancerPoolMemberCollection, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.LoadBalancerPoolMemberCollection{}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) UpdateLoadBalancerPoolMemberWithContext(_ context.Context, _ *vpcv1.UpdateLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.LoadBalancerPoolMember{}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) UpdateLoadBalancerPoolWithContext(_ context.Context, _ *vpcv1.UpdateLoadBalancerPoolOptions) (*vpcv1.LoadBalancerPool, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.LoadBalancerPool{}, &core.DetailedResponse{}, nil
+}
+
 func TestNewVPCClient(t *testing.T) {
 	baseURL := "https://test.vpc.url"
 	authType := "iam"

@@ -138,6 +138,79 @@ func (m *MockVPCSDKClient) ListSecurityGroupsWithContext(ctx context.Context, op
 	return args.Get(0).(*vpcv1.SecurityGroupCollection), args.Get(1).(*core.DetailedResponse), args.Error(2)
 }
 
+// Load Balancer methods
+func (m *MockVPCSDKClient) GetLoadBalancerWithContext(ctx context.Context, options *vpcv1.GetLoadBalancerOptions) (*vpcv1.LoadBalancer, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.LoadBalancer), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
+func (m *MockVPCSDKClient) ListLoadBalancerPoolsWithContext(ctx context.Context, options *vpcv1.ListLoadBalancerPoolsOptions) (*vpcv1.LoadBalancerPoolCollection, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.LoadBalancerPoolCollection), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
+func (m *MockVPCSDKClient) GetLoadBalancerPoolWithContext(ctx context.Context, options *vpcv1.GetLoadBalancerPoolOptions) (*vpcv1.LoadBalancerPool, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.LoadBalancerPool), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
+func (m *MockVPCSDKClient) CreateLoadBalancerPoolMemberWithContext(ctx context.Context, options *vpcv1.CreateLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.LoadBalancerPoolMember), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
+func (m *MockVPCSDKClient) DeleteLoadBalancerPoolMemberWithContext(ctx context.Context, options *vpcv1.DeleteLoadBalancerPoolMemberOptions) (*core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*core.DetailedResponse), args.Error(1)
+}
+
+func (m *MockVPCSDKClient) GetLoadBalancerPoolMemberWithContext(ctx context.Context, options *vpcv1.GetLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.LoadBalancerPoolMember), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
+func (m *MockVPCSDKClient) ListLoadBalancerPoolMembersWithContext(ctx context.Context, options *vpcv1.ListLoadBalancerPoolMembersOptions) (*vpcv1.LoadBalancerPoolMemberCollection, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.LoadBalancerPoolMemberCollection), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
+func (m *MockVPCSDKClient) UpdateLoadBalancerPoolMemberWithContext(ctx context.Context, options *vpcv1.UpdateLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.LoadBalancerPoolMember), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
+func (m *MockVPCSDKClient) UpdateLoadBalancerPoolWithContext(ctx context.Context, options *vpcv1.UpdateLoadBalancerPoolOptions) (*vpcv1.LoadBalancerPool, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.LoadBalancerPool), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
 // IBMClientInterface defines the interface we need for testing
 type IBMClientInterface interface {
 	GetVPCClient() (*ibm.VPCClient, error)
