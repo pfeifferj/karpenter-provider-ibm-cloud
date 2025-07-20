@@ -30,6 +30,7 @@ nav:
     - Security Considerations: security-considerations.md
   - Reference:
     - Current Limitations: limitations.md
+    - Circuit Breaker Protection: circuit-breaker.md
     - Troubleshooting: troubleshooting.md
 
 # Theme
