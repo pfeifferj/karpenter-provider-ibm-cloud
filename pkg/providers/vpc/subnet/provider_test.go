@@ -19,14 +19,18 @@ import (
 	"testing"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
-	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
-func TestSubnetProviderStructure(t *testing.T) {
-	// Test basic subnet provider structure
-	// This test ensures the package compiles correctly
-	t.Log("Subnet provider package compiles successfully")
+// Test the provider creation with the existing constructor
+func TestProvider_Creation(t *testing.T) {
+	client := &ibm.Client{}
+	provider := NewProvider(client)
+	require.NotNil(t, provider)
 }
 
 func TestConvertVPCSubnetToSubnetInfo(t *testing.T) {
@@ -259,11 +263,65 @@ func TestSubnetFiltering_Logic(t *testing.T) {
 	})
 }
 
-func TestNewProvider(t *testing.T) {
-	// Skip this test until mock interfaces are properly implemented
-	t.Skip("Skipping NewProvider test - requires proper mock client interfaces")
-}
+// Test the core subnet scoring logic
+func TestCalculateSubnetScore_Enhanced(t *testing.T) {
+	tests := []struct {
+		name     string
+		subnet   SubnetInfo
+		criteria *v1alpha1.SubnetSelectionCriteria
+		expected float64
+	}{
+		{
+			name: "high capacity subnet with good availability",
+			subnet: SubnetInfo{
+				TotalIPCount:    256,
+				AvailableIPs:    240,
+				UsedIPCount:     16,
+				ReservedIPCount: 0,
+			},
+			criteria: nil,
+			expected: 90.625, // (240/256)*100 - (16/256)*50 = 93.75 - 3.125 = 90.625
+		},
+		{
+			name: "low capacity subnet",
+			subnet: SubnetInfo{
+				TotalIPCount:    100,
+				AvailableIPs:    10,
+				UsedIPCount:     80,
+				ReservedIPCount: 10,
+			},
+			criteria: nil,
+			expected: -35.0, // (10/100)*100 - (90/100)*50 = 10 - 45 = -35
+		},
+		{
+			name: "perfect subnet",
+			subnet: SubnetInfo{
+				TotalIPCount:    256,
+				AvailableIPs:    256,
+				UsedIPCount:     0,
+				ReservedIPCount: 0,
+			},
+			criteria: nil,
+			expected: 100.0, // (256/256)*100 - (0/256)*50 = 100 - 0 = 100
+		},
+		{
+			name: "heavily fragmented subnet",
+			subnet: SubnetInfo{
+				TotalIPCount:    256,
+				AvailableIPs:    50,
+				UsedIPCount:     150,
+				ReservedIPCount: 56,
+			},
+			criteria: nil,
+			expected: -20.7, // (50/256)*100 - (206/256)*50 = 19.53 - 40.23 = -20.7
+		},
+	}
 
-// Note: Additional tests for ListSubnets, GetSubnet, etc. require proper mock interfaces
-// for IBM Cloud clients. These tests are skipped until mock implementations
-// are properly aligned with the current IBM client interface.
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score := calculateSubnetScore(tt.subnet, tt.criteria)
+			// Use tolerance for floating point comparison
+			assert.InDelta(t, tt.expected, score, 1.0, "Score should be within tolerance")
+		})
+	}
+}

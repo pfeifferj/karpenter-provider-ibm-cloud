@@ -53,7 +53,7 @@ spec:
 
 | Runtime        | Status             | Detection Method     | Default Version     |
 |----------------|--------------------|----------------------|---------------------|
-| **containerd** | ✅ Fully Supported | Auto-detected        | 1.6.12+             |
+| **containerd** | ✅ Fully Supported | Auto-detected        | 1.7.0+              |
 | **CRI-O**      | 🔄 Basic Support   | Manual configuration | 1.24+               |
 
 ### Runtime Auto-Detection

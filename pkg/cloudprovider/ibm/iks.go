@@ -20,18 +20,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/httpclient"
 )
 
 // IKSClient handles IBM Kubernetes Service API operations
 type IKSClient struct {
 	client     *Client
-	baseURL    string
-	httpClient *http.Client
+	httpClient *httpclient.IBMCloudHTTPClient
 }
 
 // setIKSHeaders sets the required headers for IKS API requests
@@ -96,17 +96,21 @@ func NewIKSClient(client *Client) *IKSClient {
 	// Reference: https://cloud.ibm.com/apidocs/kubernetes/containers-v1-v2
 	baseURL := "https://containers.cloud.ibm.com/global/v1"
 
+	iksClient := &IKSClient{
+		client: client,
+	}
+
+	// Create HTTP client with header setter
+	iksClient.httpClient = httpclient.NewIBMCloudHTTPClient(baseURL, iksClient.setIKSHeaders)
+
+	return iksClient
+}
+
+// NewIKSClientWithHTTPClient creates a new IKS API client with a custom HTTP client for testing
+func NewIKSClientWithHTTPClient(client *Client, httpClient *httpclient.IBMCloudHTTPClient) *IKSClient {
 	return &IKSClient{
-		client:  client,
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        10,
-				MaxIdleConnsPerHost: 5,
-				IdleConnTimeout:     90 * time.Second,
-			},
-		},
+		client:     client,
+		httpClient: httpClient,
 	}
 }
 
@@ -118,56 +122,25 @@ func (c *IKSClient) GetWorkerDetails(ctx context.Context, clusterID, workerID st
 		return nil, fmt.Errorf("getting IAM token: %w", err)
 	}
 
-	// Construct API URL
-	url := fmt.Sprintf("%s/clusters/%s/workers/%s", c.baseURL, clusterID, workerID)
+	// Construct API endpoint
+	endpoint := fmt.Sprintf("/clusters/%s/workers/%s", clusterID, workerID)
 
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Make request using shared HTTP client
+	resp, err := c.httpClient.Get(ctx, endpoint, token)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set headers
-	c.setIKSHeaders(req, token)
-
-	// Make request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("making request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	// Check for API errors
-	if resp.StatusCode != http.StatusOK {
-		// Parse error response to get more details
-		var errorResp struct {
-			Code        string `json:"code"`
-			Description string `json:"description"`
-			Type        string `json:"type"`
-		}
-		if err := json.Unmarshal(body, &errorResp); err == nil {
-			// Handle specific error codes gracefully
-			switch errorResp.Code {
+		// Handle specific IBM Cloud error codes
+		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
+			switch ibmErr.Code {
 			case "E3917": // Cluster provider not permitted for given operation
-				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, errorResp.Description)
-			default:
-				return nil, fmt.Errorf("IKS API error (code: %s): %s", errorResp.Code, errorResp.Description)
+				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, ibmErr.Description)
 			}
 		}
-		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
+		return nil, err
 	}
 
 	// Parse response
 	var workerDetails IKSWorkerDetails
-	if err := json.Unmarshal(body, &workerDetails); err != nil {
+	if err := json.Unmarshal(resp.Body, &workerDetails); err != nil {
 		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
@@ -240,53 +213,17 @@ func (c *IKSClient) GetClusterConfig(ctx context.Context, clusterID string) (str
 		return "", fmt.Errorf("getting IAM token: %w", err)
 	}
 
-	// Construct API URL for cluster config
-	url := fmt.Sprintf("%s/clusters/%s/config", c.baseURL, clusterID)
-
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return "", fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set headers
-	c.setIKSHeaders(req, token)
-
-	// Make request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("making request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("reading response: %w", err)
-	}
-
-	// Check for API errors
-	if resp.StatusCode != http.StatusOK {
-		// Parse error response to get more details
-		var errorResp struct {
-			Code        string `json:"code"`
-			Description string `json:"description"`
-			Type        string `json:"type"`
-		}
-		if err := json.Unmarshal(body, &errorResp); err == nil {
-			return "", fmt.Errorf("IKS API error (code: %s): %s", errorResp.Code, errorResp.Description)
-		}
-		return "", fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
-	}
+	// Construct API endpoint for cluster config
+	endpoint := fmt.Sprintf("/clusters/%s/config", clusterID)
 
 	// Parse response - the API returns the kubeconfig as a string
 	var configResp struct {
 		Config string `json:"config"`
 	}
-	if err := json.Unmarshal(body, &configResp); err != nil {
-		return "", fmt.Errorf("parsing response: %w", err)
+
+	// Make request using shared HTTP client
+	if err := c.httpClient.GetJSON(ctx, endpoint, token, &configResp); err != nil {
+		return "", err
 	}
 
 	return configResp.Config, nil
@@ -320,62 +257,26 @@ func (c *IKSClient) ListWorkerPools(ctx context.Context, clusterID string) ([]*W
 		return nil, fmt.Errorf("getting IAM token: %w", err)
 	}
 
-	// Construct API URL
-	url := fmt.Sprintf("%s/clusters/%s/workerpools", c.baseURL, clusterID)
-
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set headers
-	c.setIKSHeaders(req, token)
-
-	// Make request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("making request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	// Check for API errors
-	if resp.StatusCode != http.StatusOK {
-		// Parse error response to get more details
-		var errorResp struct {
-			Code        string `json:"code"`
-			Description string `json:"description"`
-			Type        string `json:"type"`
-			MoreInfo    string `json:"more_info"`
-		}
-		if err := json.Unmarshal(body, &errorResp); err == nil {
-			// Handle specific error codes gracefully
-			switch errorResp.Code {
-			case "E3917": // Cluster provider not permitted for given operation
-				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, errorResp.Description)
-			case "E0003": // Unauthorized
-				return nil, fmt.Errorf("unauthorized to access IKS API: %s", errorResp.Description)
-			case "E0015": // Cluster not found
-				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, errorResp.Description)
-			default:
-				return nil, fmt.Errorf("IKS API error (code: %s): %s", errorResp.Code, errorResp.Description)
-			}
-		}
-		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
-	}
+	// Construct API endpoint
+	endpoint := fmt.Sprintf("/clusters/%s/workerpools", clusterID)
 
 	// Parse response
 	var workerPools []*WorkerPool
-	if err := json.Unmarshal(body, &workerPools); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
+
+	// Make request using shared HTTP client
+	if err := c.httpClient.GetJSON(ctx, endpoint, token, &workerPools); err != nil {
+		// Handle specific IBM Cloud error codes
+		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
+			switch ibmErr.Code {
+			case "E3917": // Cluster provider not permitted for given operation
+				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, ibmErr.Description)
+			case "E0003": // Unauthorized
+				return nil, fmt.Errorf("unauthorized to access IKS API: %s", ibmErr.Description)
+			case "E0015": // Cluster not found
+				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, ibmErr.Description)
+			}
+		}
+		return nil, err
 	}
 
 	return workerPools, nil
@@ -394,41 +295,18 @@ func (c *IKSClient) ResizeWorkerPool(ctx context.Context, clusterID, poolID stri
 		SizePerZone: newSize,
 	}
 
-	requestBody, err := json.Marshal(request)
+	// Construct API endpoint
+	endpoint := fmt.Sprintf("/clusters/%s/workerpools/%s", clusterID, poolID)
+
+	// Make request using shared HTTP client (PATCH for updates)
+	jsonData, err := json.Marshal(&request)
 	if err != nil {
 		return fmt.Errorf("marshaling request: %w", err)
 	}
 
-	// Construct API URL
-	url := fmt.Sprintf("%s/clusters/%s/workerpools/%s", c.baseURL, clusterID, poolID)
-
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "PATCH", url, strings.NewReader(string(requestBody)))
+	_, err = c.httpClient.Patch(ctx, endpoint, token, strings.NewReader(string(jsonData)))
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set headers
-	c.setIKSHeaders(req, token)
-
-	// Make request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("making request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("reading response: %w", err)
-	}
-
-	// Check for API errors
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("IKS worker pool resize failed: status %d, body: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("IKS worker pool resize failed: %w", err)
 	}
 
 	return nil
@@ -442,64 +320,28 @@ func (c *IKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID string)
 		return nil, fmt.Errorf("getting IAM token: %w", err)
 	}
 
-	// Construct API URL
-	url := fmt.Sprintf("%s/clusters/%s/workerpools/%s", c.baseURL, clusterID, poolID)
-
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set headers
-	c.setIKSHeaders(req, token)
-
-	// Make request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("making request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	// Check for API errors
-	if resp.StatusCode != http.StatusOK {
-		// Parse error response to get more details
-		var errorResp struct {
-			Code        string `json:"code"`
-			Description string `json:"description"`
-			Type        string `json:"type"`
-			MoreInfo    string `json:"more_info"`
-		}
-		if err := json.Unmarshal(body, &errorResp); err == nil {
-			// Handle specific error codes gracefully
-			switch errorResp.Code {
-			case "E3917": // Cluster provider not permitted for given operation
-				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, errorResp.Description)
-			case "E0003": // Unauthorized
-				return nil, fmt.Errorf("unauthorized to access IKS API: %s", errorResp.Description)
-			case "E0015": // Cluster not found
-				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, errorResp.Description)
-			case "E0013": // Worker pool not found
-				return nil, fmt.Errorf("worker pool %s not found in cluster %s: %s", poolID, clusterID, errorResp.Description)
-			default:
-				return nil, fmt.Errorf("IKS API error (code: %s): %s", errorResp.Code, errorResp.Description)
-			}
-		}
-		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
-	}
+	// Construct API endpoint
+	endpoint := fmt.Sprintf("/clusters/%s/workerpools/%s", clusterID, poolID)
 
 	// Parse response
 	var workerPool WorkerPool
-	if err := json.Unmarshal(body, &workerPool); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
+
+	// Make request using shared HTTP client
+	if err := c.httpClient.GetJSON(ctx, endpoint, token, &workerPool); err != nil {
+		// Handle specific IBM Cloud error codes
+		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
+			switch ibmErr.Code {
+			case "E3917": // Cluster provider not permitted for given operation
+				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, ibmErr.Description)
+			case "E0003": // Unauthorized
+				return nil, fmt.Errorf("unauthorized to access IKS API: %s", ibmErr.Description)
+			case "E0015": // Cluster not found
+				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, ibmErr.Description)
+			case "E0013": // Worker pool not found
+				return nil, fmt.Errorf("worker pool %s not found in cluster %s: %s", poolID, clusterID, ibmErr.Description)
+			}
+		}
+		return nil, err
 	}
 
 	return &workerPool, nil

@@ -17,6 +17,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -26,21 +27,37 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/httpclient"
 	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 )
 
 // IKSBootstrapProvider provides IKS-specific bootstrap functionality
 type IKSBootstrapProvider struct {
-	client    *ibm.Client
-	k8sClient kubernetes.Interface
+	client     *ibm.Client
+	k8sClient  kubernetes.Interface
+	httpClient *httpclient.IBMCloudHTTPClient
+}
+
+// setIKSHeaders sets the required headers for IKS API requests
+func (p *IKSBootstrapProvider) setIKSHeaders(req *http.Request, token string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "karpenter-provider-ibm-cloud/1.0")
 }
 
 // NewIKSBootstrapProvider creates a new IKS bootstrap provider
 func NewIKSBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface) *IKSBootstrapProvider {
-	return &IKSBootstrapProvider{
+	provider := &IKSBootstrapProvider{
 		client:    client,
 		k8sClient: k8sClient,
 	}
+	
+	// Initialize HTTP client for IKS API calls
+	baseURL := "https://containers.cloud.ibm.com/global/v1"
+	provider.httpClient = httpclient.NewIBMCloudHTTPClient(baseURL, provider.setIKSHeaders)
+	
+	return provider
 }
 
 // GetUserData generates IKS-specific user data (which is minimal since IKS handles bootstrapping)
