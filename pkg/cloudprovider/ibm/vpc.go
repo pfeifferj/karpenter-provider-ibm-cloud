@@ -37,6 +37,16 @@ type vpcClientInterface interface {
 	ListImagesWithContext(context.Context, *vpcv1.ListImagesOptions) (*vpcv1.ImageCollection, *core.DetailedResponse, error)
 	ListInstanceProfilesWithContext(context.Context, *vpcv1.ListInstanceProfilesOptions) (*vpcv1.InstanceProfileCollection, *core.DetailedResponse, error)
 	ListSecurityGroupsWithContext(context.Context, *vpcv1.ListSecurityGroupsOptions) (*vpcv1.SecurityGroupCollection, *core.DetailedResponse, error)
+	// Load Balancer methods
+	GetLoadBalancerWithContext(context.Context, *vpcv1.GetLoadBalancerOptions) (*vpcv1.LoadBalancer, *core.DetailedResponse, error)
+	ListLoadBalancerPoolsWithContext(context.Context, *vpcv1.ListLoadBalancerPoolsOptions) (*vpcv1.LoadBalancerPoolCollection, *core.DetailedResponse, error)
+	GetLoadBalancerPoolWithContext(context.Context, *vpcv1.GetLoadBalancerPoolOptions) (*vpcv1.LoadBalancerPool, *core.DetailedResponse, error)
+	CreateLoadBalancerPoolMemberWithContext(context.Context, *vpcv1.CreateLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error)
+	DeleteLoadBalancerPoolMemberWithContext(context.Context, *vpcv1.DeleteLoadBalancerPoolMemberOptions) (*core.DetailedResponse, error)
+	GetLoadBalancerPoolMemberWithContext(context.Context, *vpcv1.GetLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error)
+	ListLoadBalancerPoolMembersWithContext(context.Context, *vpcv1.ListLoadBalancerPoolMembersOptions) (*vpcv1.LoadBalancerPoolMemberCollection, *core.DetailedResponse, error)
+	UpdateLoadBalancerPoolMemberWithContext(context.Context, *vpcv1.UpdateLoadBalancerPoolMemberOptions) (*vpcv1.LoadBalancerPoolMember, *core.DetailedResponse, error)
+	UpdateLoadBalancerPoolWithContext(context.Context, *vpcv1.UpdateLoadBalancerPoolOptions) (*vpcv1.LoadBalancerPool, *core.DetailedResponse, error)
 }
 
 // VPCClient handles interactions with the IBM Cloud VPC API
@@ -282,4 +292,160 @@ func (c *VPCClient) ListInstanceProfiles(options *vpcv1.ListInstanceProfilesOpti
 	}
 
 	return c.client.ListInstanceProfilesWithContext(context.Background(), options)
+}
+
+// GetLoadBalancer retrieves a load balancer by ID
+func (c *VPCClient) GetLoadBalancer(ctx context.Context, loadBalancerID string) (*vpcv1.LoadBalancer, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.GetLoadBalancerOptions{
+		ID: &loadBalancerID,
+	}
+
+	loadBalancer, _, err := c.client.GetLoadBalancerWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("getting load balancer %s: %w", loadBalancerID, err)
+	}
+
+	return loadBalancer, nil
+}
+
+// GetLoadBalancerPool retrieves a load balancer pool by ID
+func (c *VPCClient) GetLoadBalancerPool(ctx context.Context, loadBalancerID, poolID string) (*vpcv1.LoadBalancerPool, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.GetLoadBalancerPoolOptions{
+		LoadBalancerID: &loadBalancerID,
+		ID:             &poolID,
+	}
+
+	pool, _, err := c.client.GetLoadBalancerPoolWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("getting load balancer pool %s/%s: %w", loadBalancerID, poolID, err)
+	}
+
+	return pool, nil
+}
+
+// ListLoadBalancerPools lists pools for a load balancer
+func (c *VPCClient) ListLoadBalancerPools(ctx context.Context, loadBalancerID string) (*vpcv1.LoadBalancerPoolCollection, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.ListLoadBalancerPoolsOptions{
+		LoadBalancerID: &loadBalancerID,
+	}
+
+	pools, _, err := c.client.ListLoadBalancerPoolsWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("listing load balancer pools for %s: %w", loadBalancerID, err)
+	}
+
+	return pools, nil
+}
+
+// CreateLoadBalancerPoolMember adds a member to a load balancer pool
+func (c *VPCClient) CreateLoadBalancerPoolMember(ctx context.Context, loadBalancerID, poolID string, target vpcv1.LoadBalancerPoolMemberTargetPrototypeIntf, port int64, weight int64) (*vpcv1.LoadBalancerPoolMember, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.CreateLoadBalancerPoolMemberOptions{
+		LoadBalancerID: &loadBalancerID,
+		PoolID:         &poolID,
+		Target:         target,
+		Port:           &port,
+		Weight:         &weight,
+	}
+
+	member, _, err := c.client.CreateLoadBalancerPoolMemberWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("creating load balancer pool member in %s/%s: %w", loadBalancerID, poolID, err)
+	}
+
+	return member, nil
+}
+
+// DeleteLoadBalancerPoolMember removes a member from a load balancer pool
+func (c *VPCClient) DeleteLoadBalancerPoolMember(ctx context.Context, loadBalancerID, poolID, memberID string) error {
+	if c.client == nil {
+		return fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.DeleteLoadBalancerPoolMemberOptions{
+		LoadBalancerID: &loadBalancerID,
+		PoolID:         &poolID,
+		ID:             &memberID,
+	}
+
+	_, err := c.client.DeleteLoadBalancerPoolMemberWithContext(ctx, options)
+	if err != nil {
+		return fmt.Errorf("deleting load balancer pool member %s from %s/%s: %w", memberID, loadBalancerID, poolID, err)
+	}
+
+	return nil
+}
+
+// GetLoadBalancerPoolMember retrieves a specific pool member
+func (c *VPCClient) GetLoadBalancerPoolMember(ctx context.Context, loadBalancerID, poolID, memberID string) (*vpcv1.LoadBalancerPoolMember, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.GetLoadBalancerPoolMemberOptions{
+		LoadBalancerID: &loadBalancerID,
+		PoolID:         &poolID,
+		ID:             &memberID,
+	}
+
+	member, _, err := c.client.GetLoadBalancerPoolMemberWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("getting load balancer pool member %s from %s/%s: %w", memberID, loadBalancerID, poolID, err)
+	}
+
+	return member, nil
+}
+
+// ListLoadBalancerPoolMembers lists all members in a pool
+func (c *VPCClient) ListLoadBalancerPoolMembers(ctx context.Context, loadBalancerID, poolID string) (*vpcv1.LoadBalancerPoolMemberCollection, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.ListLoadBalancerPoolMembersOptions{
+		LoadBalancerID: &loadBalancerID,
+		PoolID:         &poolID,
+	}
+
+	members, _, err := c.client.ListLoadBalancerPoolMembersWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("listing load balancer pool members for %s/%s: %w", loadBalancerID, poolID, err)
+	}
+
+	return members, nil
+}
+
+// UpdateLoadBalancerPool updates a load balancer pool configuration
+func (c *VPCClient) UpdateLoadBalancerPool(ctx context.Context, loadBalancerID, poolID string, updates map[string]interface{}) (*vpcv1.LoadBalancerPool, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("VPC client not initialized")
+	}
+
+	options := &vpcv1.UpdateLoadBalancerPoolOptions{
+		LoadBalancerID:        &loadBalancerID,
+		ID:                    &poolID,
+		LoadBalancerPoolPatch: updates,
+	}
+
+	pool, _, err := c.client.UpdateLoadBalancerPoolWithContext(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("updating load balancer pool %s/%s: %w", loadBalancerID, poolID, err)
+	}
+
+	return pool, nil
 }
