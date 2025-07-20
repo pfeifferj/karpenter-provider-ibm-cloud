@@ -185,7 +185,10 @@ func parseClusterInfoEndpoint(kubeconfig string) (string, error) {
 
 // generateRandomString generates a random string of specified length
 func generateRandomString(length int) (string, error) {
-	bytes := make([]byte, length/2)
+	// Need to generate enough bytes to ensure we have at least 'length' hex characters
+	// Each byte generates 2 hex characters, so we need ceil(length/2) bytes
+	byteCount := (length + 1) / 2
+	bytes := make([]byte, byteCount)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
