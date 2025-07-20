@@ -41,6 +41,13 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/loadbalancer"
 )
 
+// LoadBalancerProviderInterface defines the interface for load balancer operations
+type LoadBalancerProviderInterface interface {
+	RegisterInstance(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, instanceID, instanceIP string) error
+	DeregisterInstance(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, instanceID string) error
+	ValidateLoadBalancerConfiguration(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass) error
+}
+
 const (
 	// LoadBalancerFinalizer is added to NodeClaims to ensure proper load balancer cleanup
 	LoadBalancerFinalizer = "loadbalancer.nodeclaim.ibm.sh/finalizer"
@@ -56,7 +63,7 @@ const (
 type Controller struct {
 	client.Client
 	vpcClient              *ibm.VPCClient
-	loadBalancerProvider   *loadbalancer.LoadBalancerProvider
+	loadBalancerProvider   LoadBalancerProviderInterface
 	logger                 logr.Logger
 }
 
@@ -125,7 +132,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		if err := c.Update(ctx, &nodeClaim); err != nil {
 			return reconcile.Result{}, fmt.Errorf("adding finalizer: %w", err)
 		}
-		return reconcile.Result{Requeue: true}, nil
+		return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
 	}
 
 	// Handle registration
