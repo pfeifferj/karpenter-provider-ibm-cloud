@@ -417,7 +417,7 @@ func (t *testIKSClient) GetVPCInstanceIDFromWorker(ctx context.Context, clusterI
 }
 
 func TestIKSClient_GetVPCInstanceIDFromWorker_CoverageGaps(t *testing.T) {
-	// This test specifically targets the coverage gaps in GetVPCInstanceIDFromWorker
+	// Test error handling when VPC client initialization fails
 	// We'll test the actual method by using a working IKS client with the testIKSClient wrapper
 
 	tests := []struct {
