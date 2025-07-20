@@ -138,6 +138,121 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              loadBalancerIntegration:
+                description: |-
+                  LoadBalancerIntegration defines load balancer integration settings
+                  When configured, nodes will be automatically registered with IBM Cloud Load Balancers
+                properties:
+                  autoDeregister:
+                    default: true
+                    description: |-
+                      AutoDeregister controls whether nodes are automatically removed from
+                      load balancers when they are terminated or become unhealthy
+                    type: boolean
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled controls whether load balancer integration is active
+                      When enabled, nodes will be automatically registered with specified load balancers
+                    type: boolean
+                  registrationTimeout:
+                    default: 300
+                    description: RegistrationTimeout is the maximum time to wait for
+                      target registration
+                    format: int32
+                    maximum: 600
+                    minimum: 30
+                    type: integer
+                  targetGroups:
+                    description: TargetGroups defines the load balancer pools to register
+                      nodes with
+                    items:
+                      description: LoadBalancerTarget defines a target group configuration
+                        for load balancer integration
+                      properties:
+                        healthCheck:
+                          description: HealthCheck defines health check configuration
+                            for the target
+                          properties:
+                            interval:
+                              default: 30
+                              description: Interval is the time in seconds between
+                                health checks
+                              format: int32
+                              maximum: 300
+                              minimum: 5
+                              type: integer
+                            path:
+                              description: |-
+                                Path is the URL path for HTTP/HTTPS health checks
+                                Only used when Protocol is "http" or "https"
+                              pattern: ^/.*$
+                              type: string
+                            protocol:
+                              default: tcp
+                              description: Protocol is the protocol to use for health
+                                checks
+                              enum:
+                              - http
+                              - https
+                              - tcp
+                              type: string
+                            retryCount:
+                              default: 2
+                              description: |-
+                                RetryCount is the number of consecutive successful checks required
+                                before marking a target as healthy
+                              format: int32
+                              maximum: 10
+                              minimum: 1
+                              type: integer
+                            timeout:
+                              default: 5
+                              description: Timeout is the timeout in seconds for each
+                                health check
+                              format: int32
+                              maximum: 60
+                              minimum: 1
+                              type: integer
+                          type: object
+                        loadBalancerID:
+                          description: |-
+                            LoadBalancerID is the ID of the IBM Cloud Load Balancer
+                            Must be a valid IBM Cloud Load Balancer ID
+                            Example: "r010-12345678-1234-5678-9abc-def012345678"
+                          minLength: 1
+                          pattern: ^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
+                          type: string
+                        poolName:
+                          description: PoolName is the name of the load balancer pool
+                            to add targets to
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                          type: string
+                        port:
+                          description: Port is the port number on the target instances
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        weight:
+                          default: 50
+                          description: |-
+                            Weight specifies the weight for load balancing traffic to targets
+                            Higher weights receive proportionally more traffic
+                          format: int32
+                          maximum: 100
+                          minimum: 0
+                          type: integer
+                      required:
+                      - loadBalancerID
+                      - poolName
+                      - port
+                      type: object
+                    maxItems: 10
+                    type: array
+                type: object
               placementStrategy:
                 description: |-
                   PlacementStrategy defines how nodes should be placed across zones and subnets when explicit
