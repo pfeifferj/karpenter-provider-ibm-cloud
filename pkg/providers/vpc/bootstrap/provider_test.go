@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 
@@ -1220,4 +1221,151 @@ func TestCloudInitStatusReporting(t *testing.T) {
 		assert.Contains(t, script, `"region": "$REGION"`)
 		assert.Contains(t, script, `"zone": "$ZONE"`)
 	})
+}
+
+func TestVPCBootstrapProvider_GetClusterDNS(t *testing.T) {
+	tests := []struct {
+		name         string
+		services     []corev1.Service
+		configMaps   []corev1.ConfigMap
+		expectedDNS  string
+		expectError  bool
+	}{
+		{
+			name: "kube-dns service found",
+			services: []corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "kube-dns",
+						Namespace: "kube-system",
+					},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "172.21.0.10",
+					},
+				},
+			},
+			expectedDNS: "172.21.0.10",
+		},
+		{
+			name: "coredns service found",
+			services: []corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "coredns",
+						Namespace: "kube-system",
+					},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+					},
+				},
+			},
+			expectedDNS: "10.96.0.10",
+		},
+		{
+			name: "DNS from kubelet configmap",
+			configMaps: []corev1.ConfigMap{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "kubelet-config",
+						Namespace: "kube-system",
+					},
+					Data: map[string]string{
+						"kubelet": "apiVersion: kubelet.config.k8s.io/v1beta1\nkind: KubeletConfiguration\nclusterDNS:\n- 172.21.0.10\n",
+					},
+				},
+			},
+			expectedDNS: "172.21.0.10",
+		},
+		{
+			name:        "no DNS service or config found",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var k8sObjects []runtime.Object
+			for i := range tt.services {
+				k8sObjects = append(k8sObjects, &tt.services[i])
+			}
+			for i := range tt.configMaps {
+				k8sObjects = append(k8sObjects, &tt.configMaps[i])
+			}
+			k8sClient := fake.NewSimpleClientset(k8sObjects...)
+
+			provider := &VPCBootstrapProvider{
+				k8sClient: k8sClient,
+			}
+
+			dns, err := provider.getClusterDNS(context.Background())
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Empty(t, dns)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedDNS, dns)
+			}
+		})
+	}
+}
+
+func TestVPCBootstrapProvider_GetClusterName(t *testing.T) {
+	provider := &VPCBootstrapProvider{}
+	name := provider.getClusterName()
+	assert.Equal(t, "karpenter-vpc-cluster", name)
+}
+
+func TestVPCBootstrapProvider_GetInstanceBootstrapLogs(t *testing.T) {
+	provider := &VPCBootstrapProvider{}
+	logs, err := provider.GetInstanceBootstrapLogs(context.Background(), "test-instance-id")
+	assert.NoError(t, err)
+	assert.Contains(t, logs, "/var/log/karpenter-bootstrap.log")
+	assert.Contains(t, logs, "/var/log/karpenter-bootstrap-status.log")
+	assert.Contains(t, logs, "/var/log/karpenter-bootstrap-status.json")
+}
+
+func TestVPCBootstrapProvider_PollInstanceBootstrapStatus(t *testing.T) {
+	tests := []struct {
+		name          string
+		instanceID    string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:          "nil client - should error",
+			instanceID:    "test-instance-id",
+			expectError:   true,
+			errorContains: "IBM Cloud client is not initialized",
+		},
+		{
+			name:          "empty instance ID",
+			instanceID:    "",
+			expectError:   true,
+			errorContains: "instance ID is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a simple mock that implements the interface correctly
+			provider := &VPCBootstrapProvider{
+				client:    nil, // For error testing - will fail VPC client creation
+				k8sClient: fake.NewSimpleClientset(),
+			}
+
+			status, err := provider.PollInstanceBootstrapStatus(context.Background(), tt.instanceID)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				assert.Nil(t, status)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, status)
+			}
+		})
+	}
 }
