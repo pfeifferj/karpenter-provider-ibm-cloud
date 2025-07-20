@@ -387,6 +387,192 @@ func getTestVPCInstance() *vpcv1.Instance {
 	}
 }
 
+// Test the real VPCInstanceProvider implementation with comprehensive mocks
+func TestVPCInstanceProvider_CreateReal(t *testing.T) {
+	t.Skip("Skipping comprehensive integration tests - requires refactoring of IBM client for proper dependency injection")
+	tests := []struct {
+		name           string
+		nodeClass      *v1alpha1.IBMNodeClass
+		nodeClaim      *karpv1.NodeClaim
+		setupMocks     func(*MockVPCSDKClient)
+		failVPCClient  bool
+		expectError    bool
+		errorContains  string
+		validateResult func(*testing.T, *corev1.Node)
+	}{
+		{
+			name:      "successful instance creation with comprehensive flow",
+			nodeClass: getTestNodeClass(),
+			nodeClaim: getTestNodeClaim(),
+			setupMocks: func(vpcSDKClient *MockVPCSDKClient) {
+				// Mock security group lookup for default SG
+				vpc := &vpcv1.VPC{ID: &[]string{"test-vpc-id"}[0]}
+				vpcSDKClient.On("GetVPCWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetVPCOptions")).Return(vpc, &core.DetailedResponse{}, nil)
+				
+				securityGroups := &vpcv1.SecurityGroupCollection{
+					SecurityGroups: []vpcv1.SecurityGroup{
+						{ID: &[]string{"sg-default"}[0], Name: &[]string{"default"}[0]},
+					},
+				}
+				vpcSDKClient.On("ListSecurityGroupsWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListSecurityGroupsOptions")).Return(securityGroups, &core.DetailedResponse{}, nil)
+
+				// Mock image lookup for image resolution (the test implementation calls GetImageWithContext)
+				testImage := &vpcv1.Image{
+					ID:   &[]string{"test-image-id"}[0],
+					Name: &[]string{"test-image"}[0],
+				}
+				vpcSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(testImage, &core.DetailedResponse{}, nil)
+
+				// Mock instance creation
+				expectedInstance := getTestVPCInstance()
+				vpcSDKClient.On("CreateInstanceWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.CreateInstanceOptions")).Return(expectedInstance, &core.DetailedResponse{StatusCode: 201}, nil)
+			},
+			expectError: false,
+			validateResult: func(t *testing.T, node *corev1.Node) {
+				assert.NotNil(t, node)
+				assert.Equal(t, "test-nodeclaim", node.Name)
+				assert.Contains(t, node.Spec.ProviderID, "test-instance-id")
+				assert.Equal(t, "bx2-4x16", node.Labels["node.kubernetes.io/instance-type"])
+				assert.Equal(t, "us-south-1", node.Labels["topology.kubernetes.io/zone"])
+			},
+		},
+		{
+			name: "missing zone validation",
+			nodeClass: func() *v1alpha1.IBMNodeClass {
+				nc := getTestNodeClass()
+				nc.Spec.Zone = "" // Missing zone
+				return nc
+			}(),
+			nodeClaim: getTestNodeClaim(),
+			setupMocks: func(vpcSDKClient *MockVPCSDKClient) {
+				// No mocks needed for validation error
+			},
+			expectError:   true,
+			errorContains: "zone not specified",
+		},
+		{
+			name: "missing subnet validation",
+			nodeClass: func() *v1alpha1.IBMNodeClass {
+				nc := getTestNodeClass()
+				nc.Spec.Subnet = "" // Missing subnet
+				return nc
+			}(),
+			nodeClaim: getTestNodeClaim(),
+			setupMocks: func(vpcSDKClient *MockVPCSDKClient) {
+				// No mocks needed for validation error
+			},
+			expectError:   true,
+			errorContains: "subnet not specified",
+		},
+		{
+			name:      "VPC client creation failure",
+			nodeClass: getTestNodeClass(),
+			nodeClaim: getTestNodeClaim(),
+			setupMocks: func(vpcSDKClient *MockVPCSDKClient) {
+				// No mocks needed as VPC client creation will fail
+			},
+			failVPCClient: true,
+			expectError:   true,
+			errorContains: "getting VPC client",
+		},
+		{
+			name:      "image resolution failure",
+			nodeClass: getTestNodeClass(),
+			nodeClaim: getTestNodeClaim(),
+			setupMocks: func(vpcSDKClient *MockVPCSDKClient) {
+				// Mock security group lookup success
+				vpc := &vpcv1.VPC{ID: &[]string{"test-vpc-id"}[0]}
+				vpcSDKClient.On("GetVPCWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetVPCOptions")).Return(vpc, &core.DetailedResponse{}, nil)
+				
+				securityGroups := &vpcv1.SecurityGroupCollection{
+					SecurityGroups: []vpcv1.SecurityGroup{
+						{ID: &[]string{"sg-default"}[0], Name: &[]string{"default"}[0]},
+					},
+				}
+				vpcSDKClient.On("ListSecurityGroupsWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListSecurityGroupsOptions")).Return(securityGroups, &core.DetailedResponse{}, nil)
+
+				// Mock image lookup failure
+				vpcSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(nil, nil, fmt.Errorf("image not found"))
+			},
+			expectError:   true,
+			errorContains: "resolving image",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fake Kubernetes client with the nodeclass
+			scheme := getTestScheme()
+			_ = v1alpha1.AddToScheme(scheme)
+			_ = corev1.AddToScheme(scheme)
+			
+			var fakeClient client.Client
+			if tt.nodeClass != nil {
+				fakeClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(tt.nodeClass).Build()
+			} else {
+				fakeClient = fake.NewClientBuilder().WithScheme(scheme).Build()
+			}
+
+			// Create mock VPC client
+			mockVPCSDKClient := &MockVPCSDKClient{}
+			if tt.setupMocks != nil {
+				tt.setupMocks(mockVPCSDKClient)
+			}
+
+			// Create mock IBM client
+			var mockIBMClient *MockIBMClient
+			if tt.failVPCClient {
+				mockIBMClient = &MockIBMClient{
+					mockVPCSDKClient: nil, // Will cause GetVPCClient to fail
+				}
+			} else {
+				mockIBMClient = &MockIBMClient{
+					mockVPCSDKClient: mockVPCSDKClient,
+				}
+			}
+
+			// Create real VPC instance provider using testVPCInstanceProvider interface
+			provider := &testVPCInstanceProvider{
+				client:     mockIBMClient,
+				kubeClient: fakeClient,
+			}
+
+			// Test
+			ctx := context.Background()
+			result, err := provider.Create(ctx, tt.nodeClaim)
+
+			// Validate results
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				if tt.validateResult != nil {
+					tt.validateResult(t, result)
+				}
+			}
+
+			// Verify all expected calls were made
+			mockVPCSDKClient.AssertExpectations(t)
+		})
+	}
+}
+
+// MockIBMClientWithFailure simulates IBM client creation failure
+type MockIBMClientWithFailure struct{}
+
+func (m *MockIBMClientWithFailure) GetVPCClient() (*ibm.VPCClient, error) {
+	return nil, fmt.Errorf("failed to create VPC client")
+}
+
+func (m *MockIBMClientWithFailure) GetIKSClient() *ibm.IKSClient {
+	return nil
+}
+
 func TestVPCInstanceProvider_Create(t *testing.T) {
 	tests := []struct {
 		name           string

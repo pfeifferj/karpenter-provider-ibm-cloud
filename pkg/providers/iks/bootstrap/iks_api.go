@@ -16,12 +16,7 @@ package bootstrap
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -77,45 +72,13 @@ func (p *IKSBootstrapProvider) AddWorkerToIKSCluster(ctx context.Context, option
 		},
 	}
 
-	payloadBytes, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling request: %w", err)
-	}
+	// Construct API endpoint
+	endpoint := fmt.Sprintf("/clusters/%s/workers", options.ClusterID)
 
-	// Make API request
-	url := fmt.Sprintf("https://containers.cloud.ibm.com/global/v1/clusters/%s/workers", options.ClusterID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(payloadBytes)))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("making request: %w", err)
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: failed to close response body: %v\n", closeErr)
-		}
-	}()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("IKS API error: status %d, body: %s", resp.StatusCode, string(body))
-	}
-
+	// Make request using shared HTTP client
 	var response IKSWorkerResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
+	if err := p.httpClient.PostJSON(ctx, endpoint, token, &request, &response); err != nil {
+		return nil, fmt.Errorf("IKS API error: %w", err)
 	}
 
 	logger.Info("Successfully added worker to IKS cluster", "worker_id", response.ID, "state", response.State)

@@ -140,16 +140,16 @@ spec:
 kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes
 
 # Example output:
-# NAME         ADDRESSTYPE   PORTS   ENDPOINTS     AGE  
-# kubernetes   IPv4          6443    10.243.65.4   15d
+# NAME         ADDRESSTYPE   PORTS   ENDPOINTS       AGE  
+# kubernetes   IPv4          6443    <INTERNAL-IP>   15d
 
-# Use: https://10.243.65.4:6443
+# Use: https://<INTERNAL-IP>:6443
 ```
 
 ```bash
 # Method 2: Check kubernetes service (alternative)
 kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}'
-# Returns cluster IP (e.g., 10.96.0.1) - use https://10.96.0.1:443
+# Returns cluster IP (e.g., <CLUSTER-IP>) - use https://<CLUSTER-IP>:443
 ```
 
 #### Configuring IBMNodeClass with Correct Endpoint
@@ -161,7 +161,7 @@ metadata:
   name: vpc-nodeclass
 spec:
   # CRITICAL: Use INTERNAL endpoint from discovery above
-  apiServerEndpoint: "https://10.243.65.4:6443"
+  apiServerEndpoint: "https://<INTERNAL-IP>:6443"
   
   region: us-south
   vpc: vpc-12345678
@@ -379,7 +379,7 @@ kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes
 
 # 2. Update NodeClass with internal endpoint (NOT external)
 kubectl patch ibmnodeclass your-nodeclass --type='merge' \
-  -p='{"spec":{"apiServerEndpoint":"https://10.243.65.4:6443"}}'
+  -p='{"spec":{"apiServerEndpoint":"https://<INTERNAL-IP>:6443"}}'
 
 # 3. Delete old NodeClaims to trigger new ones with correct config
 kubectl delete nodeclaims --all
@@ -391,7 +391,7 @@ kubectl get nodes -w
 **Verification**:
 ```bash
 # Test connectivity from worker instance
-ssh ubuntu@<node-ip> "telnet 10.243.65.4 6443"
+ssh ubuntu@<node-ip> "telnet <INTERNAL-IP> 6443"
 # Should connect successfully, not timeout
 
 # Check kubelet logs
