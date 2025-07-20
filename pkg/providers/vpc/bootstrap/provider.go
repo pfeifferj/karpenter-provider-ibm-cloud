@@ -625,6 +625,10 @@ func (p *VPCBootstrapProvider) PollInstanceBootstrapStatus(ctx context.Context, 
 		return nil, fmt.Errorf("instance ID is required for status polling")
 	}
 
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM Cloud client is not initialized")
+	}
+
 	vpcClient, err := p.client.GetVPCClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VPC client for status polling: %w", err)
