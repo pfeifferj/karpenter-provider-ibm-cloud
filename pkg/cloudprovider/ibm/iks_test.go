@@ -22,12 +22,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/httpclient"
 )
 
 func TestNewIKSClient(t *testing.T) {
@@ -36,7 +37,6 @@ func TestNewIKSClient(t *testing.T) {
 
 	assert.NotNil(t, iksClient)
 	assert.Equal(t, client, iksClient.client)
-	assert.Equal(t, "https://containers.cloud.ibm.com/global/v1", iksClient.baseURL)
 	assert.NotNil(t, iksClient.httpClient)
 }
 
@@ -129,7 +129,7 @@ func TestIKSClient_GetWorkerDetails(t *testing.T) {
 			workerID:       "test-worker",
 			serverResponse: http.StatusNotFound,
 			serverBody:     `{"error": "worker not found"}`,
-			expectedError:  "IKS API error (code: ):",
+			expectedError:  "HTTP 404:",
 		},
 		{
 			name:           "malformed JSON response",
@@ -167,9 +167,11 @@ func TestIKSClient_GetWorkerDetails(t *testing.T) {
 			}
 
 			// Create IKS client with test server URL
-			iksClient := NewIKSClient(client)
-			iksClient.baseURL = server.URL
-			iksClient.httpClient = &http.Client{Timeout: 5 * time.Second}
+			httpClient := httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) {
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("Content-Type", "application/json")
+			})
+			iksClient := NewIKSClientWithHTTPClient(client, httpClient)
 
 			// Test GetWorkerDetails
 			ctx := context.Background()
@@ -301,9 +303,11 @@ func TestIKSClient_GetVPCInstanceIDFromWorker(t *testing.T) {
 			}
 
 			// Create IKS client with test server URL
-			iksClient := NewIKSClient(client)
-			iksClient.baseURL = iksServer.URL
-			iksClient.httpClient = &http.Client{Timeout: 5 * time.Second}
+			httpClient := httpclient.NewIBMCloudHTTPClient(iksServer.URL, func(req *http.Request, token string) {
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("Content-Type", "application/json")
+			})
+			iksClient := NewIKSClientWithHTTPClient(client, httpClient)
 
 			// Create a test IKS client with custom VPC client getter
 			testIKSClient := &testIKSClient{
@@ -458,9 +462,11 @@ func TestIKSClient_GetVPCInstanceIDFromWorker_CoverageGaps(t *testing.T) {
 			}
 
 			// Create IKS client with test server URL
-			iksClient := NewIKSClient(client)
-			iksClient.baseURL = iksServer.URL
-			iksClient.httpClient = &http.Client{Timeout: 5 * time.Second}
+			httpClient := httpclient.NewIBMCloudHTTPClient(iksServer.URL, func(req *http.Request, token string) {
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("Content-Type", "application/json")
+			})
+			iksClient := NewIKSClientWithHTTPClient(client, httpClient)
 
 			// Test GetVPCInstanceIDFromWorker directly to hit the actual implementation
 			ctx := context.Background()
@@ -501,13 +507,13 @@ func TestIKSClient_GetClusterConfig(t *testing.T) {
 				"description": "Access denied to cluster config",
 				"type": "Authentication"
 			}`,
-			expectedError: "IKS API error (code: E0403): Access denied to cluster config",
+			expectedError: "IBM Cloud API error (code: E0403): Access denied to cluster config",
 		},
 		{
 			name:          "invalid JSON response",
 			statusCode:    200,
 			response:      `{invalid json`,
-			expectedError: "parsing response:",
+			expectedError: "unmarshaling JSON response:",
 		},
 		{
 			name:       "empty config response",
@@ -542,9 +548,11 @@ func TestIKSClient_GetClusterConfig(t *testing.T) {
 			}
 
 			// Create IKS client with test server URL
-			iksClient := NewIKSClient(client)
-			iksClient.baseURL = server.URL
-			iksClient.httpClient = &http.Client{Timeout: 5 * time.Second}
+			httpClient := httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) {
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("Content-Type", "application/json")
+			})
+			iksClient := NewIKSClientWithHTTPClient(client, httpClient)
 
 			// Test GetClusterConfig
 			ctx := context.Background()
@@ -583,12 +591,13 @@ func TestIKSClient_GetClusterConfig_ClientNotInitialized(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			httpClient := httpclient.NewIBMCloudHTTPClient("https://containers.cloud.ibm.com/global/v1", func(req *http.Request, token string) {
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("Content-Type", "application/json")
+			})
 			iksClient := &IKSClient{
-				client:  tt.client,
-				baseURL: "https://containers.cloud.ibm.com/global/v1",
-				httpClient: &http.Client{
-					Timeout: 30 * time.Second,
-				},
+				client:     tt.client,
+				httpClient: httpClient,
 			}
 
 			ctx := context.Background()

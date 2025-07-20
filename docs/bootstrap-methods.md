@@ -12,7 +12,7 @@ The provider supports three bootstrap approaches:
 
 The provider aims to automatically detect your cluster configuration and generates appropriate bootstrap scripts with no manual userData needed.
 
-## Auto Bootstrap (Experimentaal)
+## Auto Bootstrap (Experimental)
 
 ### When to Use
 - **Simplified configuration** without manual bootstrap decisions
@@ -231,11 +231,11 @@ export BOOTSTRAP_TIMEOUT=600             # Bootstrap timeout in seconds
 
 # Container runtime preferences
 export CONTAINER_RUNTIME=containerd      # or crio
-export CONTAINERD_VERSION=1.7.2          # Specific version
+export CONTAINERD_VERSION=1.7.22         # Specific version
 
 # CNI plugin preferences  
 export CNI_PLUGIN=calico                 # or cilium, flannel
-export CNI_VERSION=v3.26.0               # Specific CNI version
+export CNI_VERSION=v3.29.0               # Specific CNI version
 
 # System configuration
 export ENABLE_IP_FORWARDING=true         # Enable IP forwarding
@@ -272,10 +272,10 @@ kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes
 
 # 2. Update NodeClass with internal endpoint
 kubectl patch ibmnodeclass your-nodeclass --type='merge' \
-  -p='{"spec":{"apiServerEndpoint":"https://10.243.65.4:6443"}}'
+  -p='{"spec":{"apiServerEndpoint":"https://<INTERNAL-IP>:6443"}}'
 
 # 3. Verify connectivity from worker instance
-ssh ubuntu@<instance-ip> "telnet 10.243.65.4 6443"
+ssh ubuntu@<instance-ip> "telnet <INTERNAL-IP> 6443"
 ```
 
 **Bootstrap Token Issues**:
@@ -284,7 +284,7 @@ ssh ubuntu@<instance-ip> "telnet 10.243.65.4 6443"
 kubectl get secrets -n kube-system | grep bootstrap-token
 
 # Verify RBAC permissions exist
-kubectl get clusterrolebindings | grep karpenter-ibm-bootstrap
+kubectl get clusterrolebindings | grep karpenter-ibm-bootstrap-nodes
 
 # Check token authentication on instance
 ssh ubuntu@<instance-ip> "sudo cat /var/lib/kubelet/bootstrap-kubeconfig"
@@ -297,7 +297,7 @@ ssh ubuntu@<instance-ip> "sudo systemctl status kubelet"
 ssh ubuntu@<instance-ip> "sudo journalctl -u kubelet --no-pager -n 50"
 
 # Verify cluster connectivity (use INTERNAL endpoint)
-ssh ubuntu@<instance-ip> "curl -k https://10.243.65.4:6443/healthz"
+ssh ubuntu@<instance-ip> "curl -k https://<INTERNAL-IP>:6443/healthz"
 
 # For direct kubelet bootstrap (not kubeadm)
 ssh ubuntu@<instance-ip> "sudo journalctl -u kubelet | grep -E '(bootstrap|token|certificate)'"
