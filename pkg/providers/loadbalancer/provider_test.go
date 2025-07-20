@@ -169,6 +169,98 @@ func TestLoadBalancerProvider_RegisterInstance(t *testing.T) {
 			setupMocks:  func(m *MockVPCClient) {},
 			expectError: false,
 		},
+		{
+			name: "pool not found error",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				Spec: v1alpha1.IBMNodeClassSpec{
+					LoadBalancerIntegration: &v1alpha1.LoadBalancerIntegration{
+						Enabled: true,
+						TargetGroups: []v1alpha1.LoadBalancerTarget{
+							{
+								LoadBalancerID: "r010-12345678-1234-5678-9abc-def012345678",
+								PoolName:       "nonexistent-pool",
+								Port:           80,
+							},
+						},
+					},
+				},
+			},
+			instanceID: "instance-123",
+			instanceIP: "10.0.0.100",
+			setupMocks: func(m *MockVPCClient) {
+				// Mock ListLoadBalancerPools returning empty list
+				pools := &vpcv1.LoadBalancerPoolCollection{
+					Pools: []vpcv1.LoadBalancerPool{},
+				}
+				m.On("ListLoadBalancerPools", mock.Anything, "r010-12345678-1234-5678-9abc-def012345678").Return(pools, nil)
+			},
+			expectError: false, // The function continues and succeeds even if one target fails
+		},
+		{
+			name: "multiple target groups",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				Spec: v1alpha1.IBMNodeClassSpec{
+					LoadBalancerIntegration: &v1alpha1.LoadBalancerIntegration{
+						Enabled: true,
+						TargetGroups: []v1alpha1.LoadBalancerTarget{
+							{
+								LoadBalancerID: "r010-12345678-1234-5678-9abc-def012345678",
+								PoolName:       "web-servers",
+								Port:           80,
+								Weight:         ptr(int32(50)),
+							},
+							{
+								LoadBalancerID: "r010-87654321-4321-8765-cba9-fed210987654",
+								PoolName:       "api-servers",
+								Port:           443,
+								Weight:         ptr(int32(50)),
+							},
+						},
+					},
+				},
+			},
+			instanceID: "instance-123",
+			instanceIP: "10.0.0.100",
+			setupMocks: func(m *MockVPCClient) {
+				poolID1 := "pool-123"
+				poolID2 := "pool-456"
+				memberID1 := "member-123"
+				memberID2 := "member-456"
+				
+				// Mock first load balancer
+				pools1 := &vpcv1.LoadBalancerPoolCollection{
+					Pools: []vpcv1.LoadBalancerPool{
+						{
+							ID:   &poolID1,
+							Name: ptr("web-servers"),
+						},
+					},
+				}
+				m.On("ListLoadBalancerPools", mock.Anything, "r010-12345678-1234-5678-9abc-def012345678").Return(pools1, nil)
+				
+				member1 := &vpcv1.LoadBalancerPoolMember{
+					ID: &memberID1,
+				}
+				m.On("CreateLoadBalancerPoolMember", mock.Anything, "r010-12345678-1234-5678-9abc-def012345678", poolID1, mock.Anything, int64(80), int64(50)).Return(member1, nil)
+				
+				// Mock second load balancer
+				pools2 := &vpcv1.LoadBalancerPoolCollection{
+					Pools: []vpcv1.LoadBalancerPool{
+						{
+							ID:   &poolID2,
+							Name: ptr("api-servers"),
+						},
+					},
+				}
+				m.On("ListLoadBalancerPools", mock.Anything, "r010-87654321-4321-8765-cba9-fed210987654").Return(pools2, nil)
+				
+				member2 := &vpcv1.LoadBalancerPoolMember{
+					ID: &memberID2,
+				}
+				m.On("CreateLoadBalancerPoolMember", mock.Anything, "r010-87654321-4321-8765-cba9-fed210987654", poolID2, mock.Anything, int64(443), int64(50)).Return(member2, nil)
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
