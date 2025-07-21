@@ -93,10 +93,6 @@ func (c *Client) GetGlobalCatalogClient() (*GlobalCatalogClient, error) {
 
 // GetIKSClient returns a configured IKS API client interface
 func (c *Client) GetIKSClient() IKSClientInterface {
-	// Check if the client is properly initialized
-	if c.iamClient == nil {
-		return nil
-	}
 	// Use pure API client with proper IBM Cloud Kubernetes Service REST API
 	return NewIKSClient(c)
 }
