@@ -22,12 +22,15 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
 
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
@@ -339,4 +342,169 @@ func TestIBMInstanceTypeProvider_GetWithMocks(t *testing.T) {
 // Helper function
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && s[:len(substr)] == substr || len(s) > len(substr) && contains(s[1:], substr)
+}
+
+// Test Create method (no-op)
+func TestIBMInstanceTypeProvider_Create(t *testing.T) {
+	provider := &IBMInstanceTypeProvider{}
+	
+	instanceType := &cloudprovider.InstanceType{
+		Name: "bx2-4x16",
+	}
+	
+	err := provider.Create(context.Background(), instanceType)
+	assert.NoError(t, err) // Create should be a no-op for IBM Cloud
+}
+
+// Test Delete method (no-op)
+func TestIBMInstanceTypeProvider_Delete(t *testing.T) {
+	provider := &IBMInstanceTypeProvider{}
+	
+	instanceType := &cloudprovider.InstanceType{
+		Name: "bx2-4x16",
+	}
+	
+	err := provider.Delete(context.Background(), instanceType)
+	assert.NoError(t, err) // Delete should be a no-op for IBM Cloud
+}
+
+// Test FilterInstanceTypes with nil client
+func TestIBMInstanceTypeProvider_FilterInstanceTypes_NilClient(t *testing.T) {
+	provider := &IBMInstanceTypeProvider{
+		client: nil,
+	}
+	
+	requirements := &v1alpha1.InstanceTypeRequirements{
+		MinimumCPU:    2,
+		MinimumMemory: 8,
+	}
+	
+	result, err := provider.FilterInstanceTypes(context.Background(), requirements)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "IBM client not initialized")
+}
+
+// Test Get method with more coverage
+func TestIBMInstanceTypeProvider_Get_Extended(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     *IBMInstanceTypeProvider
+		instanceName string
+		wantErr      bool
+		errContains  string
+	}{
+		{
+			name: "nil client",
+			provider: &IBMInstanceTypeProvider{
+				client: nil,
+			},
+			instanceName: "bx2-4x16",
+			wantErr:      true,
+			errContains:  "IBM client not initialized",
+		},
+		{
+			name: "empty instance name",
+			provider: &IBMInstanceTypeProvider{
+				client: nil, // Will fail at client check first
+			},
+			instanceName: "",
+			wantErr:      true,
+			errContains:  "IBM client not initialized", // Will hit client check first
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.provider.Get(context.Background(), tt.instanceName)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+			}
+		})
+	}
+}
+
+// Test List method with more coverage
+func TestIBMInstanceTypeProvider_List_Extended(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider *IBMInstanceTypeProvider
+		wantErr  bool
+		errContains string
+	}{
+		{
+			name: "nil client",
+			provider: &IBMInstanceTypeProvider{
+				client: nil,
+			},
+			wantErr:     true,
+			errContains: "IBM client not initialized",
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.provider.List(context.Background())
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+			}
+		})
+	}
+}
+
+// Test convertCatalogEntryToInstanceType with more edge cases
+func TestConvertCatalogEntryToInstanceType_Extended(t *testing.T) {
+	entryName := "bx2-4x16"
+	
+	tests := []struct {
+		name    string
+		entry   *globalcatalogv1.CatalogEntry
+		want    *cloudprovider.InstanceType
+		wantErr bool
+	}{
+		{
+			name: "nil entry",
+			entry: nil,
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "entry with valid name",
+			entry: &globalcatalogv1.CatalogEntry{
+				Name: &entryName,
+			},
+			want:    nil, // Don't check exact match, just verify it doesn't error
+			wantErr: false,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := convertCatalogEntryToInstanceType(tt.entry)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				if tt.want != nil {
+					assert.Equal(t, tt.want.Name, result.Name)
+				}
+			}
+		})
+	}
 }
