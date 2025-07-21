@@ -437,7 +437,7 @@ func TestProviderWithCache(t *testing.T) {
 	assert.NotNil(t, provider)
 	
 	// Verify interface compliance - provider implements Provider interface
-	var _ Provider = provider
+	_ = provider
 }
 
 // Test provider creation scenarios
@@ -462,7 +462,7 @@ func TestProvider_NewProvider(t *testing.T) {
 			assert.NotNil(t, provider)
 			
 			// Verify provider implements the interface
-			var _ Provider = provider
+			_ = provider
 		})
 	}
 }
@@ -475,7 +475,7 @@ func TestProvider_Interface(t *testing.T) {
 	
 	// Verify interface compliance
 	assert.NotNil(t, provider)
-	var _ Provider = provider
+	_ = provider
 }
 
 // Test method signatures

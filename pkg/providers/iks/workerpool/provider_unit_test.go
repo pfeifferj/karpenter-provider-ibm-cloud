@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,7 +37,7 @@ import (
 func TestNewIKSWorkerPoolProvider_Unit(t *testing.T) {
 	t.Run("successful creation", func(t *testing.T) {
 		scheme := runtime.NewScheme()
-		v1alpha1.AddToScheme(scheme)
+		require.NoError(t, v1alpha1.AddToScheme(scheme))
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		
 		client := &ibm.Client{}
@@ -48,7 +49,7 @@ func TestNewIKSWorkerPoolProvider_Unit(t *testing.T) {
 	
 	t.Run("nil client", func(t *testing.T) {
 		scheme := runtime.NewScheme()
-		v1alpha1.AddToScheme(scheme)
+		require.NoError(t, v1alpha1.AddToScheme(scheme))
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		
 		provider, err := NewIKSWorkerPoolProvider(nil, kubeClient)
@@ -94,7 +95,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 	t.Run("nodeclass not found", func(t *testing.T) {
 		// Create fake kubernetes client without the nodeclass
 		scheme := runtime.NewScheme()
-		v1alpha1.AddToScheme(scheme)
+		require.NoError(t, v1alpha1.AddToScheme(scheme))
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		
 		provider := &IKSWorkerPoolProvider{
@@ -125,7 +126,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 		}
 		
 		scheme := runtime.NewScheme()
-		v1alpha1.AddToScheme(scheme)
+		require.NoError(t, v1alpha1.AddToScheme(scheme))
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
 		
 		provider := &IKSWorkerPoolProvider{
@@ -141,7 +142,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 		}
 		
 		// Clear environment variable to ensure it's not used
-		os.Unsetenv("IKS_CLUSTER_ID")
+		require.NoError(t, os.Unsetenv("IKS_CLUSTER_ID"))
 		
 		result, err := provider.Create(ctx, nodeClaim)
 		assert.Error(t, err)
@@ -151,8 +152,8 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 	
 	t.Run("cluster ID from environment variable", func(t *testing.T) {
 		// Set environment variable
-		os.Setenv("IKS_CLUSTER_ID", "env-cluster-id")
-		defer os.Unsetenv("IKS_CLUSTER_ID")
+		require.NoError(t, os.Setenv("IKS_CLUSTER_ID", "env-cluster-id"))
+		defer func() { _ = os.Unsetenv("IKS_CLUSTER_ID") }()
 		
 		// Create nodeclass without cluster ID
 		nodeClass := &v1alpha1.IBMNodeClass{
@@ -165,11 +166,12 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 		}
 		
 		scheme := runtime.NewScheme()
-		v1alpha1.AddToScheme(scheme)
+		require.NoError(t, v1alpha1.AddToScheme(scheme))
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
 		
+		// Use nil client to avoid panic from empty struct
 		provider := &IKSWorkerPoolProvider{
-			client:     &ibm.Client{},
+			client:     nil,
 			kubeClient: kubeClient,
 		}
 		
@@ -182,13 +184,13 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 		
 		result, err := provider.Create(ctx, nodeClaim)
 		
-		// Should error due to IKS client not being available
+		// Should error due to nil client
 		assert.Error(t, err)
 		assert.Nil(t, result)
 		// Should not error due to missing cluster ID - the env var should be found
 		assert.NotContains(t, err.Error(), "IKS cluster ID not found")
-		// Should fail at IKS client step since we don't have a real IKS client setup
-		assert.Contains(t, err.Error(), "IKS client not available")
+		// Should fail at the nil client check
+		assert.Contains(t, err.Error(), "IBM client is not initialized")
 	})
 }
 
@@ -221,11 +223,11 @@ func TestIKSWorkerPoolProvider_Delete_ErrorCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			v1alpha1.AddToScheme(scheme)
+			require.NoError(t, v1alpha1.AddToScheme(scheme))
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 			
 			provider := &IKSWorkerPoolProvider{
-				client:     &ibm.Client{},
+				client:     nil,
 				kubeClient: kubeClient,
 			}
 			
@@ -318,7 +320,8 @@ func TestIKSWorkerPoolProvider_NodeLabelDeletion(t *testing.T) {
 				"karpenter.ibm.sh/cluster-id":     "cluster-123",
 				"karpenter.ibm.sh/worker-pool-id": "pool-456",
 			},
-			expectsError: true, // Will error later due to IKS client not available, but labels are valid
+			expectsError:  true, // Will error due to nil client
+			expectedError: "IBM client is not initialized",
 		},
 		{
 			name:          "missing cluster label",
@@ -343,11 +346,11 @@ func TestIKSWorkerPoolProvider_NodeLabelDeletion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			v1alpha1.AddToScheme(scheme)
+			require.NoError(t, v1alpha1.AddToScheme(scheme))
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 			
 			provider := &IKSWorkerPoolProvider{
-				client:     &ibm.Client{},
+				client:     nil,
 				kubeClient: kubeClient,
 			}
 			
@@ -403,11 +406,11 @@ func TestClusterIDResolution_Unit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment
 			if tt.envID != "" {
-				os.Setenv("IKS_CLUSTER_ID", tt.envID)
+				require.NoError(t, os.Setenv("IKS_CLUSTER_ID", tt.envID))
 			} else {
-				os.Unsetenv("IKS_CLUSTER_ID")
+				_ = os.Unsetenv("IKS_CLUSTER_ID")
 			}
-			defer os.Unsetenv("IKS_CLUSTER_ID")
+			defer func() { _ = os.Unsetenv("IKS_CLUSTER_ID") }()
 			
 			// Create nodeclass
 			nodeClass := &v1alpha1.IBMNodeClass{
@@ -420,11 +423,11 @@ func TestClusterIDResolution_Unit(t *testing.T) {
 			}
 			
 			scheme := runtime.NewScheme()
-			v1alpha1.AddToScheme(scheme)
+			require.NoError(t, v1alpha1.AddToScheme(scheme))
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
 			
 			provider := &IKSWorkerPoolProvider{
-				client:     &ibm.Client{},
+				client:     nil,
 				kubeClient: kubeClient,
 			}
 			
