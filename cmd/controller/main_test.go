@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,6 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"k8s.io/apimachinery/pkg/types"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/events"
@@ -104,17 +106,13 @@ func (m *mockInstanceTypeProvider) Delete(ctx context.Context, instanceType *clo
 }
 
 func (m *mockInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requirements *v1alpha1.InstanceTypeRequirements) ([]*cloudprovider.InstanceType, error) {
-	// For testing, just return a single instance type that meets all requirements
 	instanceType, _ := m.Get(ctx, "test-instance-type")
 	return []*cloudprovider.InstanceType{instanceType}, nil
 }
 
 func (m *mockInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
-	// For testing, just return the input slice unchanged
 	return instanceTypes
 }
-
-// mockInstanceProvider removed - was unused
 
 // Mock Subnet Provider
 type mockSubnetProvider struct{}
@@ -145,15 +143,123 @@ func (m *mockSubnetProvider) SelectSubnets(ctx context.Context, vpcID string, st
 	return m.ListSubnets(ctx, vpcID)
 }
 
-func TestReconcile(t *testing.T) {
+func TestCloudProviderCreation(t *testing.T) {
 	// Create a new scheme and register types
 	s := runtime.NewScheme()
-	if err := scheme.AddToScheme(s); err != nil {
-		t.Fatalf("Failed to add core scheme: %v", err)
-	}
-	if err := v1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("Failed to add ibm scheme: %v", err)
-	}
+	require.NoError(t, scheme.AddToScheme(s))
+	require.NoError(t, v1alpha1.AddToScheme(s))
+
+	// Register NodeClaim types
+	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
+	s.AddKnownTypes(gv,
+		&v1.NodeClaim{},
+		&v1.NodeClaimList{},
+		&v1.NodePool{},
+		&v1.NodePoolList{},
+	)
+	metav1.AddToGroupVersion(s, gv)
+
+	// Create fake client
+	client := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&v1.NodeClaim{}).
+		Build()
+
+	// Create CloudProvider with mocked dependencies
+	cloudProvider := ibmcloud.New(
+		client,
+		&mockEventRecorder{},
+		&ibm.Client{},
+		&mockInstanceTypeProvider{},
+		&mockSubnetProvider{},
+	)
+
+	// Test cloud provider is created successfully
+	assert.NotNil(t, cloudProvider)
+	
+	// Test that the cloud provider implements the expected interface
+	assert.Implements(t, (*cloudprovider.CloudProvider)(nil), cloudProvider)
+	
+	// Test that the providers can be created without panicking
+	assert.NotPanics(t, func() {
+		_ = ibmcloud.New(
+			client,
+			&mockEventRecorder{},
+			&ibm.Client{},
+			&mockInstanceTypeProvider{},
+			&mockSubnetProvider{},
+		)
+	})
+}
+
+func TestMockProviders(t *testing.T) {
+	ctx := context.Background()
+	
+	t.Run("MockInstanceTypeProvider", func(t *testing.T) {
+		provider := &mockInstanceTypeProvider{}
+		
+		// Test Get
+		instanceType, err := provider.Get(ctx, "test-instance-type")
+		assert.NoError(t, err)
+		assert.NotNil(t, instanceType)
+		assert.Equal(t, "test-instance-type", instanceType.Name)
+		
+		// Test List
+		instanceTypes, err := provider.List(ctx)
+		assert.NoError(t, err)
+		assert.Len(t, instanceTypes, 1)
+		
+		// Test Create/Delete (no-ops)
+		assert.NoError(t, provider.Create(ctx, instanceType))
+		assert.NoError(t, provider.Delete(ctx, instanceType))
+		
+		// Test FilterInstanceTypes
+		filtered, err := provider.FilterInstanceTypes(ctx, &v1alpha1.InstanceTypeRequirements{})
+		assert.NoError(t, err)
+		assert.Len(t, filtered, 1)
+		
+		// Test RankInstanceTypes
+		ranked := provider.RankInstanceTypes(instanceTypes)
+		assert.Equal(t, instanceTypes, ranked)
+	})
+	
+	t.Run("MockSubnetProvider", func(t *testing.T) {
+		provider := &mockSubnetProvider{}
+		
+		// Test ListSubnets
+		subnets, err := provider.ListSubnets(ctx, "test-vpc")
+		assert.NoError(t, err)
+		assert.Len(t, subnets, 1)
+		assert.Equal(t, "test-subnet-1", subnets[0].ID)
+		assert.Equal(t, "us-south-1", subnets[0].Zone)
+		
+		// Test GetSubnet
+		subnet, err := provider.GetSubnet(ctx, "test-subnet-1")
+		assert.NoError(t, err)
+		assert.NotNil(t, subnet)
+		assert.Equal(t, "test-subnet-1", subnet.ID)
+		
+		// Test SelectSubnets
+		selected, err := provider.SelectSubnets(ctx, "test-vpc", nil)
+		assert.NoError(t, err)
+		assert.Len(t, selected, 1)
+	})
+	
+	t.Run("MockEventRecorder", func(t *testing.T) {
+		recorder := &mockEventRecorder{}
+		
+		// Test Publish doesn't panic
+		assert.NotPanics(t, func() {
+			recorder.Publish()
+		})
+	})
+}
+
+func TestNodeClassAndNodeClaimCreation(t *testing.T) {
+	// Create a new scheme and register types
+	s := runtime.NewScheme()
+	require.NoError(t, scheme.AddToScheme(s))
+	require.NoError(t, v1alpha1.AddToScheme(s))
 
 	// Register NodeClaim types
 	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
@@ -229,18 +335,26 @@ func TestReconcile(t *testing.T) {
 		WithStatusSubresource(&v1.NodeClaim{}).
 		Build()
 
-	// Create CloudProvider with mocked dependencies
-	cloudProvider := ibmcloud.New(
-		client,
-		&mockEventRecorder{},
-		&ibm.Client{},
-		&mockInstanceTypeProvider{},
-		&mockSubnetProvider{},
-	)
-
-	// Test cloud provider is created successfully
-	assert.NotNil(t, cloudProvider)
-
-	// Verify cloud provider methods are available
-	assert.NotNil(t, cloudProvider)
+	// Verify objects can be retrieved
+	ctx := context.Background()
+	
+	// Test NodeClass retrieval
+	retrievedNodeClass := &v1alpha1.IBMNodeClass{}
+	err := client.Get(ctx, types.NamespacedName{Name: "test-nodeclass"}, retrievedNodeClass)
+	assert.NoError(t, err)
+	assert.Equal(t, "test-nodeclass", retrievedNodeClass.Name)
+	assert.Equal(t, "us-south", retrievedNodeClass.Spec.Region)
+	assert.Equal(t, "bx2-4x16", retrievedNodeClass.Spec.InstanceProfile)
+	
+	// Test NodeClaim retrieval
+	retrievedNodeClaim := &v1.NodeClaim{}
+	err = client.Get(ctx, types.NamespacedName{Name: "test-node", Namespace: "default"}, retrievedNodeClaim)
+	assert.NoError(t, err)
+	assert.Equal(t, "test-node", retrievedNodeClaim.Name)
+	assert.Equal(t, "test-nodeclass", retrievedNodeClaim.Spec.NodeClassRef.Name)
+	
+	// Test requirements
+	assert.Len(t, retrievedNodeClaim.Spec.Requirements, 1)
+	assert.Equal(t, corev1.LabelInstanceTypeStable, retrievedNodeClaim.Spec.Requirements[0].Key)
+	assert.Contains(t, retrievedNodeClaim.Spec.Requirements[0].Values, "test-instance-type")
 }
