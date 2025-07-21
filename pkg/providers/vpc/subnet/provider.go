@@ -190,6 +190,10 @@ func (p *provider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1
 
 // ListSubnets returns all subnets in the VPC
 func (p *provider) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client is not initialized")
+	}
+
 	cacheKey := fmt.Sprintf("vpc-subnets:%s", vpcID)
 
 	// Try to get from cache first
@@ -223,6 +227,10 @@ func (p *provider) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo,
 
 // GetSubnet retrieves information about a specific subnet
 func (p *provider) GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client is not initialized")
+	}
+
 	cacheKey := fmt.Sprintf("subnet:%s", subnetID)
 
 	// Try to get from cache first
