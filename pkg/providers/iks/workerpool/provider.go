@@ -74,6 +74,11 @@ func (p *IKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *v1.NodeCl
 		return nil, fmt.Errorf("IKS cluster ID not found in nodeClass.spec.iksClusterID or IKS_CLUSTER_ID environment variable")
 	}
 
+	// Check if client is initialized
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client is not initialized")
+	}
+	
 	// Get IKS client
 	iksClient := p.client.GetIKSClient()
 	if iksClient == nil {
@@ -163,6 +168,11 @@ func (p *IKSWorkerPoolProvider) Delete(ctx context.Context, node *corev1.Node) e
 		return fmt.Errorf("cluster ID or pool ID not found in node labels")
 	}
 
+	// Check if client is initialized
+	if p.client == nil {
+		return fmt.Errorf("IBM client is not initialized")
+	}
+	
 	// Get IKS client
 	iksClient := p.client.GetIKSClient()
 	if iksClient == nil {
@@ -208,6 +218,10 @@ func (p *IKSWorkerPoolProvider) List(ctx context.Context) ([]*corev1.Node, error
 
 // ResizePool resizes a worker pool to the specified size
 func (p *IKSWorkerPoolProvider) ResizePool(ctx context.Context, clusterID, poolID string, newSize int) error {
+	if p.client == nil {
+		return fmt.Errorf("IBM client is not initialized")
+	}
+	
 	iksClient := p.client.GetIKSClient()
 	if iksClient == nil {
 		return fmt.Errorf("IKS client not available")
@@ -218,6 +232,10 @@ func (p *IKSWorkerPoolProvider) ResizePool(ctx context.Context, clusterID, poolI
 
 // GetPool retrieves information about a worker pool
 func (p *IKSWorkerPoolProvider) GetPool(ctx context.Context, clusterID, poolID string) (*commonTypes.WorkerPool, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client is not initialized")
+	}
+	
 	iksClient := p.client.GetIKSClient()
 	if iksClient == nil {
 		return nil, fmt.Errorf("IKS client not available")
@@ -243,6 +261,10 @@ func (p *IKSWorkerPoolProvider) GetPool(ctx context.Context, clusterID, poolID s
 
 // ListPools returns all worker pools for a cluster
 func (p *IKSWorkerPoolProvider) ListPools(ctx context.Context, clusterID string) ([]*commonTypes.WorkerPool, error) {
+	if p.client == nil {
+		return nil, fmt.Errorf("IBM client is not initialized")
+	}
+	
 	iksClient := p.client.GetIKSClient()
 	if iksClient == nil {
 		return nil, fmt.Errorf("IKS client not available")
