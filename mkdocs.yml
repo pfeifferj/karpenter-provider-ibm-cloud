@@ -32,6 +32,9 @@ nav:
     - Current Limitations: limitations.md
     - Circuit Breaker Protection: circuit-breaker.md
     - Troubleshooting: troubleshooting.md
+    - Nightly Builds: nightly-builds.md
+  - Community:
+    - Presentations & Talks: presentations.md
 
 # Theme
 theme:
