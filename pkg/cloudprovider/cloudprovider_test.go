@@ -127,7 +127,6 @@ func (m *mockInstanceProvider) Delete(ctx context.Context, node *corev1.Node) er
 	return m.deleteError
 }
 
-// GetInstance method removed - replaced by Get method below
 
 // TagInstance method removed - not part of interface
 
@@ -136,7 +135,7 @@ func (m *mockInstanceProvider) UpdateTags(ctx context.Context, providerID string
 }
 
 func (m *mockInstanceProvider) List(ctx context.Context) ([]*corev1.Node, error) {
-	// Simple mock implementation - return empty list for now
+	// Return empty list for mock implementation
 	return []*corev1.Node{}, nil
 }
 

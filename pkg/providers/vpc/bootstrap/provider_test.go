@@ -197,7 +197,7 @@ func getTestKubernetesService() *corev1.Service {
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
 
-				// User data is now plain text (no base64 encoding)
+				// User data is plain text (no base64 encoding)
 				assert.Contains(t, userData, "#!/bin/bash")
 				// Should contain custom user data from NodeClass
 				assert.Contains(t, userData, "custom user data")
@@ -242,7 +242,7 @@ func getTestKubernetesService() *corev1.Service {
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
 
-				// User data is now plain text (no base64 encoding)
+				// User data is plain text (no base64 encoding)
 				assert.Contains(t, userData, "#!/bin/bash")
 			},
 		},
@@ -291,7 +291,7 @@ func getTestKubernetesService() *corev1.Service {
 			validateUserData: func(t *testing.T, userData string) {
 				assert.NotEmpty(t, userData)
 
-				// User data is now plain text (no base64 encoding)
+				// User data is plain text (no base64 encoding)
 				assert.Contains(t, userData, "#!/bin/bash")
 				// Should not contain the actual custom user data content (echo 'custom user data')
 				assert.NotContains(t, userData, "echo 'custom user data'")
