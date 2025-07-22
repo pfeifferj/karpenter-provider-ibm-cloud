@@ -359,7 +359,7 @@ func TestRegisterControllersOptionsContextFix(t *testing.T) {
 		// Start with a context that has NO options - this was the problematic scenario
 		ctx := context.Background()
 
-		// Verify that IBM options work fine (they return zero values instead of panicking)
+		// Verify that IBM options return zero values when context is empty
 		ibmOpts := options.FromContext(ctx)
 		assert.NotNil(t, ibmOpts, "IBM FromContext should return valid options struct")
 		assert.False(t, ibmOpts.Interruption, "Default value should be false")
@@ -375,7 +375,7 @@ func TestRegisterControllersOptionsContextFix(t *testing.T) {
 		}
 		ctxWithCoreOpts := coreOpts.ToContext(ctx)
 
-		// Now core options should be accessible without panic
+		// Core options should be accessible
 		retrievedOpts := coreoptions.FromContext(ctxWithCoreOpts)
 		assert.NotNil(t, retrievedOpts, "Core options should be retrievable")
 		assert.Equal(t, "info", retrievedOpts.LogLevel)
@@ -402,7 +402,7 @@ func TestRegisterControllersOptionsContextFix(t *testing.T) {
 		}
 		ctxWithInjectedOpts := injectedCoreOpts.ToContext(ctx)
 
-		// This should now work without panic - the core of our fix
+		// Core options should be accessible after injection
 		retrievedOpts := coreoptions.FromContext(ctxWithInjectedOpts)
 		assert.NotNil(t, retrievedOpts, "Core options should be accessible after injection")
 		assert.Equal(t, "info", retrievedOpts.LogLevel)

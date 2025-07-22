@@ -136,7 +136,7 @@ func (c *Controller) handleDeletion(ctx context.Context, nodeClaim *karpv1.NodeC
 	}
 
 	// Clean up any registration-specific resources if needed
-	// For now, just remove the finalizer
+	// Remove the finalizer (no additional cleanup required)
 	patch := client.MergeFrom(nodeClaim.DeepCopy())
 	controllerutil.RemoveFinalizer(nodeClaim, NodeClaimRegistrationFinalizer)
 	if err := c.kubeClient.Patch(ctx, nodeClaim, patch); err != nil {

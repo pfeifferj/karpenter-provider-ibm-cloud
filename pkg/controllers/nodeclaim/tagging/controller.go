@@ -93,7 +93,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			continue
 		}
 
-		// Only process VPC instances (skip IKS for now)
+		// Only process VPC instances (IKS tagging not supported)
 		if !c.isVPCMode(nodeClass) {
 			continue
 		}

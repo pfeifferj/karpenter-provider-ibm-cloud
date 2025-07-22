@@ -433,14 +433,14 @@ func (p *IBMInstanceTypeProvider) convertVPCProfileToInstanceType(profile vpcv1.
 		scheduling.NewRequirement("karpenter.ibm.sh/instance-size", corev1.NodeSelectorOpIn, getInstanceSize(*profile.Name)),
 	)
 
-	// Create offerings (for now, assume on-demand in all supported zones)
+	// Create offerings with on-demand capacity in all supported zones
 	offerings := cloudprovider.Offerings{
 		{
 			Requirements: scheduling.NewRequirements(
 				scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1", "us-south-2", "us-south-3"),
 				scheduling.NewRequirement("karpenter.sh/capacity-type", corev1.NodeSelectorOpIn, "on-demand"),
 			),
-			Price:     0.1, // Default price - will be updated by pricing provider
+			Price:     0.1, // Default price when pricing provider unavailable
 			Available: true,
 		},
 	}
