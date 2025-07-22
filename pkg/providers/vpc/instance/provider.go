@@ -399,7 +399,7 @@ func extractInstanceIDFromProviderID(providerID string) string {
 
 // getDefaultSecurityGroup gets the default security group for a VPC
 func (p *VPCInstanceProvider) getDefaultSecurityGroup(ctx context.Context, vpcClient *ibm.VPCClient, vpcID string) (*vpcv1.SecurityGroup, error) {
-	// For now, return a placeholder - this would need to be implemented based on the VPC API
+	// TODO: implement security group lookup via VPC API
 	// The VPCClient would need a ListSecurityGroups method
 	return &vpcv1.SecurityGroup{
 		ID:   &[]string{"default-sg"}[0],

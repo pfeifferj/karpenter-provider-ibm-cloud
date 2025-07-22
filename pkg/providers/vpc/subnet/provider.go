@@ -281,7 +281,7 @@ func convertVPCSubnetToSubnetInfo(vpcSubnet vpcv1.Subnet) SubnetInfo {
 
 	// Extract user tags if available (Note: UserTags may not be available in all SDK versions)
 	// TODO: Implement tag extraction when IBM Cloud SDK supports user tags on subnets
-	// For now, we'll use an empty tags map
+	// Using empty tags map until SDK supports user tags on subnets
 
 	return subnetInfo
 }
