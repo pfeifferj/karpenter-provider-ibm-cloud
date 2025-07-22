@@ -635,7 +635,7 @@ func (p *VPCBootstrapProvider) PollInstanceBootstrapStatus(ctx context.Context, 
 	}
 
 	// Get instance console output (this would require IBM Cloud API support for console output)
-	// For now, we'll return a placeholder - IBM Cloud VPC doesn't currently support console output API
+	// IBM Cloud VPC doesn't currently support console output API
 	// The status will be available in the instance logs via SSH or through other monitoring
 	
 	logger.Info("Checking instance bootstrap status", "instanceID", instanceID)
