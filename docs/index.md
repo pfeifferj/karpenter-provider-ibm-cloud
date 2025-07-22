@@ -30,6 +30,12 @@ The Karpenter IBM Cloud Provider enables automatic node provisioning and scaling
 - :gear: **[Configuration](bootstrap-methods.md)**  
   Learn about bootstrap methods and configuration options
 
+- :building_construction: **[Nightly Builds](nightly-builds.md)**  
+  Access bleeding-edge features and development versions
+
+- :speaking_head: **[Presentations](presentations.md)**  
+  Conference talks and demos about the project
+
 </div>
 
 ## Key Features
