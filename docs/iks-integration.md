@@ -41,7 +41,8 @@ kubectl create secret generic karpenter-ibm-credentials \
 
 # Install via Helm
 helm repo add karpenter-ibm https://pfeifferj.github.io/karpenter-provider-ibm-cloud
-helm install karpenter karpenter-ibm/karpenter \
+helm repo update
+helm install karpenter karpenter-ibm/karpenter-ibm \
   --namespace karpenter \
   --create-namespace \
   --set controller.env.IBM_REGION="us-south"

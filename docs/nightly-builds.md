@@ -1,7 +1,5 @@
 # Nightly Builds
 
-This document explains the nightly build process for the Karpenter IBM Cloud Provider.
-
 ## Overview
 
 Nightly builds are automatically created every day at 2 AM UTC from the latest commit on the main branch. These builds allow users to test the latest features and fixes before they are included in an official release.
@@ -48,11 +46,13 @@ helm upgrade --install karpenter-ibm oci://ghcr.io/pfeifferj/karpenter-provider-
 ## Stability Notice
 
 **Important**: Nightly builds are created from the latest code on the main branch and may contain:
+
 - Unreleased features
 - Breaking changes
 - Bugs that haven't been discovered yet
 
 Nightly builds are intended for:
+
 - Testing new features early
 - Development and staging environments
 - Contributing to the project

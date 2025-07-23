@@ -92,11 +92,11 @@ Install directly with API keys as helm values:
 
 ```bash
 # Add Helm repository
-helm repo add karpenter-ibm https://pfeifferj.github.io/karpenter-provider-ibm-cloud
+helm repo add karpenter-ibm https://karpenter-ibm.sh
 helm repo update
 
 # Install with your API keys
-helm install karpenter karpenter-ibm/karpenter \
+helm install karpenter karpenter-ibm/karpenter-ibm \
   --namespace karpenter \
   --create-namespace \
   --set credentials.region="us-south" \
