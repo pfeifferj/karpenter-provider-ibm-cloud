@@ -57,16 +57,14 @@ jobs:
         run: |
           mkdir -p _helm-repo
           
-          # Package all charts
-          for chart in charts/*/; do
-            if [ -f "$chart/Chart.yaml" ]; then
-              echo "Packaging chart: $chart"
-              helm package "$chart" --destination _helm-repo
-            fi
-          done
+          # Package the chart from charts/ directory
+          if [ -f "charts/Chart.yaml" ]; then
+            echo "Packaging chart: charts/"
+            helm package charts/ --destination _helm-repo
+          fi
           
           # Generate index
-          helm repo index _helm-repo --url https://pfeifferj.github.io/karpenter-provider-ibm-cloud
+          helm repo index _helm-repo --url https://karpenter-ibm.sh
 
       - name: Combine site content
         run: |
