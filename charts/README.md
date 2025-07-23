@@ -1,12 +1,37 @@
-# karpenter
+# karpenter-ibm
 
 A Helm chart for Karpenter's IBM Cloud Provider
 
-![Version: 0.35.0](https://img.shields.io/badge/Version-0.35.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.35.0](https://img.shields.io/badge/AppVersion-0.35.0-informational?style=flat-square)
+![Version: 0.3.47](https://img.shields.io/badge/Version-0.3.47-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.3.47](https://img.shields.io/badge/AppVersion-0.3.47-informational?style=flat-square)
+
+## Installation
+
+```bash
+# Add the Karpenter IBM helm repository
+helm repo add karpenter-ibm https://karpenter-ibm.sh
+helm repo update
+
+# Install the chart
+helm install karpenter karpenter-ibm/karpenter-ibm \
+  --namespace karpenter \
+  --create-namespace \
+  --set credentials.region="us-south" \
+  --set credentials.ibm_api_key="your-api-key" \
+  --set credentials.vpc_api_key="your-vpc-api-key"
+```
 
 ## Documentation
 
-For full Karpenter documentation please checkout [https://karpenter.sh](https://karpenter.sh/docs/).
+For full installation and configuration guide, see the [Getting Started documentation](https://karpenter-ibm.sh/getting-started/).
+
+## Release Process
+
+To release a new version:
+
+1. Update the `version` and `appVersion` in `charts/Chart.yaml`
+2. Update the version badges in this README
+3. Commit and push to the main branch
+4. The GitHub Actions workflow will automatically package and publish the chart to https://karpenter-ibm.sh
 
 ## Values
 

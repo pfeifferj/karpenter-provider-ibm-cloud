@@ -5,7 +5,7 @@ This page contains links to presentations, talks, and demos about the Karpenter 
 ## Conference Talks
 
 ### DevConf.CZ 2025
-- **Title**: [Beyond CAS: Why the world needs another Kubernetes Cluster Autoscaler](https://pretalx.devconf.info/devconf-cz-2025/talk/EHDDFT/)
+#### [Beyond CAS: Why the world needs another Kubernetes Cluster Autoscaler](https://pretalx.devconf.info/devconf-cz-2025/talk/EHDDFT/)
 - **Speaker**: Josephine Pfeffer
 - **Date**: June 14, 2025
 - **Location**: Brno, Czech Republic
