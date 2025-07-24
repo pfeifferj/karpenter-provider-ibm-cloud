@@ -63,7 +63,8 @@ spec:
   image: r006-12345678                  # Ubuntu 20.04 or cluster-compatible image
   
   # IKS-SPECIFIC CONFIGURATION
-  iksClusterID: "cluster-12345678"      # Your IKS cluster ID
+  bootstrapMode: iks-api                # Use IKS API for node bootstrapping
+  iksClusterID: "cluster-12345678"      # Your IKS cluster ID (required for iks-api mode)
   iksWorkerPoolID: "pool-default"       # Optional: specific worker pool
   
   # Security and networking
