@@ -1,7 +1,7 @@
 site_name: Karpenter IBM Cloud Provider
 site_description: Auto-scaling for Kubernetes on IBM Cloud VPC
 site_author: Karpenter IBM Contributors
-site_url: https://pfeifferj.github.io/karpenter-provider-ibm-cloud/
+site_url: https://karpenter-ibm.sh/
 
 # Repository
 repo_name: pfeifferj/karpenter-provider-ibm-cloud
