@@ -74,6 +74,9 @@ jobs:
           # Keep charts at root (existing customer configs)
           cp -r _helm-repo/* .
           
+          # Preserve custom domain configuration
+          cp docs/CNAME .
+          
           # Clean up build directories
           rm -rf site _helm-repo
 
