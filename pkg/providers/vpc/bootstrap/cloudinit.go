@@ -73,6 +73,28 @@ EOF
     
     # Always log status locally for debugging
     echo "$timestamp|$INSTANCE_ID|$NODE_NAME|$status|$phase" >> /var/log/karpenter-bootstrap-status.log
+    
+    # Enhanced error capture with detailed diagnostics
+    if [[ "$status" == "failed" ]]; then
+        echo "$(date): 🔍 BOOTSTRAP FAILURE DIAGNOSTICS" >> /var/log/karpenter-bootstrap-failure.log
+        echo "$(date): Phase: $phase" >> /var/log/karpenter-bootstrap-failure.log
+        echo "$(date): Instance ID: $INSTANCE_ID" >> /var/log/karpenter-bootstrap-failure.log
+        echo "$(date): NodeClaim: $NODE_NAME" >> /var/log/karpenter-bootstrap-failure.log
+        echo "$(date): Error details below:" >> /var/log/karpenter-bootstrap-failure.log
+        echo "----------------------------------------" >> /var/log/karpenter-bootstrap-failure.log
+        
+        # Capture recent system logs for debugging
+        echo "Recent system logs:" >> /var/log/karpenter-bootstrap-failure.log
+        journalctl --no-pager -n 20 >> /var/log/karpenter-bootstrap-failure.log 2>/dev/null || echo "Could not capture journalctl logs" >> /var/log/karpenter-bootstrap-failure.log
+        
+        echo "----------------------------------------" >> /var/log/karpenter-bootstrap-failure.log
+        echo "Network interface status:" >> /var/log/karpenter-bootstrap-failure.log
+        ip addr show >> /var/log/karpenter-bootstrap-failure.log 2>/dev/null || echo "Could not capture network interfaces" >> /var/log/karpenter-bootstrap-failure.log
+        
+        echo "----------------------------------------" >> /var/log/karpenter-bootstrap-failure.log
+        echo "DNS resolution test:" >> /var/log/karpenter-bootstrap-failure.log
+        nslookup kubernetes.default.svc.cluster.local >> /var/log/karpenter-bootstrap-failure.log 2>&1 || echo "DNS resolution failed" >> /var/log/karpenter-bootstrap-failure.log
+    fi
 }
 
 # Instance metadata
@@ -88,6 +110,8 @@ INSTANCE_IDENTITY_TOKEN=$(curl -s -f --max-time 10 -X PUT "http://api.metadata.c
 
 if [[ -z "$INSTANCE_IDENTITY_TOKEN" ]]; then
     echo "$(date): ❌ ERROR: Could not get instance identity token" | tee -a "$LOG_FILE"
+    echo "$(date): Testing metadata service connectivity..." | tee -a "$LOG_FILE"
+    curl -v -m 5 "http://api.metadata.cloud.ibm.com" 2>&1 | tee -a "$LOG_FILE" || true
     report_status "failed" "instance-identity-token-failed"
     exit 1
 fi
@@ -102,7 +126,9 @@ INSTANCE_ID=$(curl -s -f --max-time 10 -H "Authorization: Bearer $INSTANCE_IDENT
 if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "unknown" ]]; then
     echo "$(date): ❌ ERROR: Could not retrieve instance ID from metadata service" | tee -a "$LOG_FILE"
     echo "$(date): This is required for proper provider ID configuration" | tee -a "$LOG_FILE"
-    echo "$(date): Metadata token available: $([[ -n \"$METADATA_TOKEN\" ]] && echo \"yes\" || echo \"no\")" | tee -a "$LOG_FILE"
+    echo "$(date): Token available: $([[ -n \"$INSTANCE_IDENTITY_TOKEN\" ]] && echo \"yes\" || echo \"no\")" | tee -a "$LOG_FILE"
+    echo "$(date): Testing metadata endpoint with token..." | tee -a "$LOG_FILE"
+    curl -v -H "Authorization: Bearer $INSTANCE_IDENTITY_TOKEN" "http://api.metadata.cloud.ibm.com/metadata/v1/instance?version=2022-03-29" 2>&1 | tee -a "$LOG_FILE" || true
     report_status "failed" "instance-id-metadata-failed"
     exit 1
 fi
