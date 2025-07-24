@@ -189,6 +189,13 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		}
 	}
 
+	// Add resource group if specified
+	if nodeClass.Spec.ResourceGroup != "" {
+		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+			ID: &nodeClass.Spec.ResourceGroup,
+		}
+	}
+
 	// Add SSH keys if specified
 	if len(nodeClass.Spec.SSHKeys) > 0 {
 		var sshKeys []vpcv1.KeyIdentityIntf
