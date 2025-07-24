@@ -78,13 +78,57 @@ spec:
   # Optional: Specific subnet (auto-selected if not specified)
   subnet: subnet-12345678               # Your subnet ID
   
+  # Optional: Instance requirements (alternative to specific instance profile)
+  instanceRequirements:
+    architecture: amd64                 # CPU architecture: amd64, arm64, s390x
+    minimumCPU: 2                       # Minimum vCPUs required
+    minimumMemory: 4                    # Minimum memory in GiB
+    maximumHourlyPrice: "1.00"          # Maximum hourly price in USD
+    
+  # Optional: Specific instance profile (alternative to instanceRequirements)
+  instanceProfile: bx2-4x16             # Specific instance type
+  
+  # Optional: Placement strategy for zone/subnet selection
+  placementStrategy:
+    zoneBalance: Balanced               # Balanced, AvailabilityFirst, or CostOptimized
+    
   # Optional: SSH access for troubleshooting
   sshKeys:
   - key-admin-access
   
-  # Optional: Resource group
-  resourceGroup:
-    name: "kubernetes-resources"
+  # Optional: Resource group ID
+  resourceGroup: rg-12345678             # Resource group ID (not name)
+  
+  # Optional: Placement target (dedicated host or placement group)
+  placementTarget: ph-12345678
+  
+  # Optional: Tags to apply to instances
+  tags:
+    environment: production
+    team: devops
+    
+  # Optional: Bootstrap mode (cloud-init, iks-api, or auto)
+  bootstrapMode: cloud-init
+  
+  # Optional: Custom API server endpoint (if automatic discovery doesn't work)
+  apiServerEndpoint: "https://10.243.65.4:6443"
+  
+  # Optional: IKS cluster ID (required when bootstrapMode is "iks-api")
+  iksClusterID: bng6n48d0t6vj7b33kag
+  
+  # Optional: IKS worker pool ID (for IKS API bootstrapping)
+  iksWorkerPoolID: bng6n48d0t6vj7b33kag-pool1
+  
+  # Optional: Load balancer integration
+  loadBalancerIntegration:
+    enabled: true
+    targetGroups:
+    - loadBalancerID: r010-12345678-1234-5678-9abc-def012345678
+      poolName: web-servers
+      port: 80
+      weight: 50
+    autoDeregister: true
+    registrationTimeout: 300
   
   # VPC mode uses automatic bootstrap - no userData required!
 ```
