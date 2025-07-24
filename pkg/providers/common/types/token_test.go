@@ -517,9 +517,12 @@ func TestGenerateRandomString(t *testing.T) {
 			}
 
 			// Generate another string and verify they're different
+			// For single character, allow collision due to small character space
 			result2, err := generateRandomString(tt.length)
 			assert.NoError(t, err)
-			assert.NotEqual(t, result, result2, "Two random strings should be different")
+			if tt.length > 1 {
+				assert.NotEqual(t, result, result2, "Two random strings should be different")
+			}
 		})
 	}
 }
