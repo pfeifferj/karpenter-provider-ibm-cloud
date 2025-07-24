@@ -576,6 +576,60 @@ func TestVPCInstanceProvider_CreateReal(t *testing.T) {
 			expectError:   true,
 			errorContains: "resolving image",
 		},
+		{
+			name: "resource group configuration",
+			nodeClass: func() *v1alpha1.IBMNodeClass {
+				nc := getTestNodeClass()
+				nc.Spec.ResourceGroup = "test-resource-group-id"
+				return nc
+			}(),
+			nodeClaim: getTestNodeClaim(),
+			setupMocks: func(vpcSDKClient *MockVPCSDKClient) {
+				// Mock security group lookup
+				vpc := &vpcv1.VPC{ID: &[]string{"test-vpc-id"}[0]}
+				vpcSDKClient.On("GetVPCWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetVPCOptions")).Return(vpc, &core.DetailedResponse{}, nil)
+				
+				securityGroups := &vpcv1.SecurityGroupCollection{
+					SecurityGroups: []vpcv1.SecurityGroup{
+						{ID: &[]string{"sg-default"}[0], Name: &[]string{"default"}[0]},
+					},
+				}
+				vpcSDKClient.On("ListSecurityGroupsWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListSecurityGroupsOptions")).Return(securityGroups, &core.DetailedResponse{}, nil)
+
+				// Mock image lookup
+				testImage := &vpcv1.Image{
+					ID:   &[]string{"test-image-id"}[0],
+					Name: &[]string{"test-image"}[0],
+				}
+				vpcSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(testImage, &core.DetailedResponse{}, nil)
+
+				// Mock instance creation with validation that resource group is set
+				expectedInstance := getTestVPCInstance()
+				vpcSDKClient.On("CreateInstanceWithContext", mock.Anything, mock.MatchedBy(func(options *vpcv1.CreateInstanceOptions) bool {
+					// Verify that the instance prototype has the resource group set
+					if options.InstancePrototype == nil {
+						return false
+					}
+					
+					// Cast to the specific type to access ResourceGroup field
+					if prototypeByImage, ok := options.InstancePrototype.(*vpcv1.InstancePrototypeInstanceByImage); ok {
+						if prototypeByImage.ResourceGroup == nil {
+							return false
+						}
+						if resourceGroupIdentity, ok := prototypeByImage.ResourceGroup.(*vpcv1.ResourceGroupIdentity); ok {
+							return resourceGroupIdentity.ID != nil && *resourceGroupIdentity.ID == "test-resource-group-id"
+						}
+					}
+					return false
+				})).Return(expectedInstance, &core.DetailedResponse{StatusCode: 201}, nil)
+			},
+			expectError: false,
+			validateResult: func(t *testing.T, node *corev1.Node) {
+				assert.NotNil(t, node)
+				assert.Equal(t, "test-nodeclaim", node.Name)
+				assert.Contains(t, node.Spec.ProviderID, "test-instance-id")
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -769,6 +823,32 @@ func TestVPCInstanceProvider_Create(t *testing.T) {
 			},
 			expectError:   true,
 			errorContains: "creating VPC instance",
+		},
+		{
+			name:      "resource group configuration",
+			nodeClass: func() *v1alpha1.IBMNodeClass {
+				nc := getTestNodeClass()
+				nc.Spec.ResourceGroup = "test-resource-group-id"
+				return nc
+			}(),
+			nodeClaim: getTestNodeClaim(),
+			setupMocks: func(ibmClient *MockIBMClient, vpcSDKClient *MockVPCSDKClient) {
+				testImage := &vpcv1.Image{
+					ID:   &[]string{"resolved-image-id"}[0],
+					Name: &[]string{"test-image"}[0],
+				}
+				testResponse := &core.DetailedResponse{StatusCode: 200}
+				vpcSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(testImage, testResponse, nil)
+
+				expectedInstance := getTestVPCInstance()
+				vpcSDKClient.On("CreateInstanceWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.CreateInstanceOptions")).Return(expectedInstance, testResponse, nil)
+			},
+			expectError: false,
+			validateResult: func(t *testing.T, node *corev1.Node) {
+				assert.NotNil(t, node)
+				assert.Equal(t, "test-nodeclaim", node.Name)
+				assert.Contains(t, node.Spec.ProviderID, "test-instance-id")
+			},
 		},
 	}
 
