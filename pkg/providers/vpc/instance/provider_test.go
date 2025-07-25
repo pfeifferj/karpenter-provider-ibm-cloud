@@ -268,6 +268,28 @@ func (p *testVPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.
 		}
 	}
 
+	// Create primary network interface with subnet
+	primaryNetworkInterface := &vpcv1.NetworkInterfacePrototype{
+		Subnet: &vpcv1.SubnetIdentity{
+			ID: &nodeClass.Spec.Subnet,
+		},
+	}
+
+	// Add security groups if specified, otherwise use default (matching real implementation)
+	if len(nodeClass.Spec.SecurityGroups) > 0 {
+		var securityGroups []vpcv1.SecurityGroupIdentityIntf
+		for _, sg := range nodeClass.Spec.SecurityGroups {
+			securityGroups = append(securityGroups, &vpcv1.SecurityGroupIdentity{ID: &sg})
+		}
+		primaryNetworkInterface.SecurityGroups = securityGroups
+	} else {
+		// Use default security group (simplified for test)
+		defaultSG := "default-sg"
+		primaryNetworkInterface.SecurityGroups = []vpcv1.SecurityGroupIdentityIntf{
+			&vpcv1.SecurityGroupIdentity{ID: &defaultSG},
+		}
+	}
+
 	// Create instance prototype following IBM SDK patterns
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImage{
 		Name: &nodeClaim.Name,
@@ -283,11 +305,7 @@ func (p *testVPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.
 		VPC: &vpcv1.VPCIdentity{
 			ID: &nodeClass.Spec.VPC,
 		},
-		PrimaryNetworkInterface: &vpcv1.NetworkInterfacePrototype{
-			Subnet: &vpcv1.SubnetIdentity{
-				ID: &nodeClass.Spec.Subnet,
-			},
-		},
+		PrimaryNetworkInterface: primaryNetworkInterface,
 	}
 
 	// Create the instance using VPC client
@@ -1835,5 +1853,284 @@ func TestVPCInstanceProvider_CreateKubernetesClient(t *testing.T) {
 		} else {
 			assert.NotNil(t, client)
 		}
+	})
+}
+
+// Test security group management functionality
+func TestVPCInstanceProvider_SecurityGroups(t *testing.T) {
+	t.Run("should apply specified security groups to instance prototype", func(t *testing.T) {
+		// Create NodeClass with specific security groups
+		nodeClass := &v1alpha1.IBMNodeClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-nodeclass",
+			},
+			Spec: v1alpha1.IBMNodeClassSpec{
+				Region:          "us-south",
+				Zone:            "us-south-1",
+				InstanceProfile: "bx2-4x16",
+				Image:           "test-image-id",
+				VPC:             "test-vpc-id",
+				Subnet:          "test-subnet-id",
+				SecurityGroups:  []string{"r010-sg12345", "r010-sg67890"},
+			},
+		}
+
+		// Create NodeClaim
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+			},
+			Spec: karpv1.NodeClaimSpec{
+				NodeClassRef: &karpv1.NodeClassReference{
+					Name: nodeClass.Name,
+				},
+			},
+		}
+
+		// Set up fake kubernetes client
+		scheme := getTestScheme()
+		k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
+
+		// Mock VPC SDK client
+		mockVPCSDKClient := &MockVPCSDKClient{}
+		mockIBMClient := &MockIBMClient{mockVPCSDKClient: mockVPCSDKClient}
+		
+		// Mock image resolution
+		testImage := &vpcv1.Image{
+			ID: &[]string{"test-image-id"}[0],
+		}
+		mockVPCSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(testImage, &core.DetailedResponse{StatusCode: 200}, nil)
+
+		// Mock instance creation with security group validation
+		expectedInstance := &vpcv1.Instance{
+			ID:   &[]string{"test-instance-id"}[0],
+			Name: &[]string{"test-node"}[0],
+		}
+
+		// Verify security groups are passed correctly in CreateInstanceWithContext call
+		mockVPCSDKClient.On("CreateInstanceWithContext", mock.Anything, mock.MatchedBy(func(options *vpcv1.CreateInstanceOptions) bool {
+			if options.InstancePrototype == nil {
+				return false
+			}
+
+			prototype, ok := options.InstancePrototype.(*vpcv1.InstancePrototypeInstanceByImage)
+			if !ok {
+				return false
+			}
+
+			if prototype.PrimaryNetworkInterface == nil {
+				return false
+			}
+
+			if prototype.PrimaryNetworkInterface.SecurityGroups == nil {
+				return false
+			}
+
+			// Verify both security groups are present in the request
+			if len(prototype.PrimaryNetworkInterface.SecurityGroups) != 2 {
+				return false
+			}
+
+			// Check security group IDs match expected values
+			sgIDs := make(map[string]bool)
+			for _, sg := range prototype.PrimaryNetworkInterface.SecurityGroups {
+				if sgIdentity, ok := sg.(*vpcv1.SecurityGroupIdentity); ok && sgIdentity.ID != nil {
+					sgIDs[*sgIdentity.ID] = true
+				} else {
+					return false
+				}
+			}
+
+			return sgIDs["r010-sg12345"] && sgIDs["r010-sg67890"]
+		})).Return(expectedInstance, &core.DetailedResponse{StatusCode: 201}, nil)
+
+		// Create test provider
+		provider := &testVPCInstanceProvider{
+			client:     mockIBMClient,
+			kubeClient: k8sClient,
+		}
+
+		// Create the instance
+		ctx := context.Background()
+		node, err := provider.Create(ctx, nodeClaim)
+
+		// Verify results
+		assert.NoError(t, err)
+		assert.NotNil(t, node)
+		assert.Equal(t, "test-node", node.Name)
+
+		// Verify mocks were called with expected parameters
+		mockVPCSDKClient.AssertExpectations(t)
+	})
+
+	t.Run("should use default security group when none specified", func(t *testing.T) {
+		// Create NodeClass without security groups
+		nodeClass := &v1alpha1.IBMNodeClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-nodeclass",
+			},
+			Spec: v1alpha1.IBMNodeClassSpec{
+				Region:          "us-south",
+				Zone:            "us-south-1",
+				InstanceProfile: "bx2-4x16",
+				Image:           "test-image-id",
+				VPC:             "test-vpc-id",
+				Subnet:          "test-subnet-id",
+				// SecurityGroups not specified - should trigger default behavior
+			},
+		}
+
+		// Create NodeClaim
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+			},
+			Spec: karpv1.NodeClaimSpec{
+				NodeClassRef: &karpv1.NodeClassReference{
+					Name: nodeClass.Name,
+				},
+			},
+		}
+
+		// Set up fake kubernetes client
+		scheme := getTestScheme()
+		k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
+
+		// Mock VPC SDK client
+		mockVPCSDKClient := &MockVPCSDKClient{}
+		mockIBMClient := &MockIBMClient{mockVPCSDKClient: mockVPCSDKClient}
+		
+		// Mock image resolution
+		testImage := &vpcv1.Image{
+			ID: &[]string{"test-image-id"}[0],
+		}
+		mockVPCSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(testImage, &core.DetailedResponse{StatusCode: 200}, nil)
+
+		// Mock instance creation
+		expectedInstance := &vpcv1.Instance{
+			ID:   &[]string{"test-instance-id"}[0],
+			Name: &[]string{"test-node"}[0],
+		}
+
+		// Verify default security group is used when none specified
+		mockVPCSDKClient.On("CreateInstanceWithContext", mock.Anything, mock.MatchedBy(func(options *vpcv1.CreateInstanceOptions) bool {
+			if options.InstancePrototype == nil {
+				return false
+			}
+
+			prototype, ok := options.InstancePrototype.(*vpcv1.InstancePrototypeInstanceByImage)
+			if !ok {
+				return false
+			}
+
+			if prototype.PrimaryNetworkInterface == nil {
+				return false
+			}
+
+			if prototype.PrimaryNetworkInterface.SecurityGroups == nil {
+				return false
+			}
+
+			// Verify default security group is present
+			if len(prototype.PrimaryNetworkInterface.SecurityGroups) != 1 {
+				return false
+			}
+
+			if sgIdentity, ok := prototype.PrimaryNetworkInterface.SecurityGroups[0].(*vpcv1.SecurityGroupIdentity); ok && sgIdentity.ID != nil {
+				return *sgIdentity.ID == "default-sg"
+			}
+
+			return false
+		})).Return(expectedInstance, &core.DetailedResponse{StatusCode: 201}, nil)
+
+		// Create test provider
+		provider := &testVPCInstanceProvider{
+			client:     mockIBMClient,
+			kubeClient: k8sClient,
+		}
+
+		// Create the instance
+		ctx := context.Background()
+		node, err := provider.Create(ctx, nodeClaim)
+
+		// Verify results
+		assert.NoError(t, err)
+		assert.NotNil(t, node)
+		assert.Equal(t, "test-node", node.Name)
+
+		// Verify mocks were called with expected parameters
+		mockVPCSDKClient.AssertExpectations(t)
+	})
+
+	t.Run("should handle empty security groups list", func(t *testing.T) {
+		// Create NodeClass with empty security groups array
+		nodeClass := &v1alpha1.IBMNodeClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-nodeclass",
+			},
+			Spec: v1alpha1.IBMNodeClassSpec{
+				Region:          "us-south",
+				Zone:            "us-south-1",
+				InstanceProfile: "bx2-4x16",
+				Image:           "test-image-id",
+				VPC:             "test-vpc-id",
+				Subnet:          "test-subnet-id",
+				SecurityGroups:  []string{}, // Empty list should trigger default behavior
+			},
+		}
+
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+			},
+			Spec: karpv1.NodeClaimSpec{
+				NodeClassRef: &karpv1.NodeClassReference{
+					Name: nodeClass.Name,
+				},
+			},
+		}
+
+		scheme := getTestScheme()
+		k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
+
+		mockVPCSDKClient := &MockVPCSDKClient{}
+		mockIBMClient := &MockIBMClient{mockVPCSDKClient: mockVPCSDKClient}
+
+		testImage := &vpcv1.Image{ID: &[]string{"test-image-id"}[0]}
+		mockVPCSDKClient.On("GetImageWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.GetImageOptions")).Return(testImage, &core.DetailedResponse{StatusCode: 200}, nil)
+
+		expectedInstance := &vpcv1.Instance{
+			ID:   &[]string{"test-instance-id"}[0],
+			Name: &[]string{"test-node"}[0],
+		}
+
+		// Verify empty security groups list triggers default security group logic
+		mockVPCSDKClient.On("CreateInstanceWithContext", mock.Anything, mock.MatchedBy(func(options *vpcv1.CreateInstanceOptions) bool {
+			prototype := options.InstancePrototype.(*vpcv1.InstancePrototypeInstanceByImage)
+			if prototype.PrimaryNetworkInterface == nil || prototype.PrimaryNetworkInterface.SecurityGroups == nil {
+				return false
+			}
+
+			// Should have default security group when list is empty
+			if len(prototype.PrimaryNetworkInterface.SecurityGroups) == 1 {
+				if sgIdentity, ok := prototype.PrimaryNetworkInterface.SecurityGroups[0].(*vpcv1.SecurityGroupIdentity); ok && sgIdentity.ID != nil {
+					return *sgIdentity.ID == "default-sg"
+				}
+			}
+
+			return false
+		})).Return(expectedInstance, &core.DetailedResponse{StatusCode: 201}, nil)
+
+		provider := &testVPCInstanceProvider{
+			client:     mockIBMClient,
+			kubeClient: k8sClient,
+		}
+
+		ctx := context.Background()
+		node, err := provider.Create(ctx, nodeClaim)
+
+		assert.NoError(t, err)
+		assert.NotNil(t, node)
+		mockVPCSDKClient.AssertExpectations(t)
 	})
 }
