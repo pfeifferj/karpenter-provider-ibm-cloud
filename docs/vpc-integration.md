@@ -93,11 +93,12 @@ spec:
     zoneBalance: Balanced               # Balanced, AvailabilityFirst, or CostOptimized
     
   # Optional: SSH access for troubleshooting
+  # To find SSH key IDs: ibmcloud is keys --output json | jq '.[] | {name, id}'
   sshKeys:
-  - key-admin-access
+  - r010-12345678-1234-1234-1234-123456789012  # SSH key ID
   
   # Optional: Resource group ID
-  resourceGroup: rg-12345678             # Resource group ID (not name)
+  resourceGroup: rg-12345678             # Resource group ID
   
   # Optional: Placement target (dedicated host or placement group)
   placementTarget: ph-12345678

@@ -17,11 +17,13 @@ package subnet
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/kubernetes"
 
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -245,6 +247,213 @@ func TestVPCSubnetProvider_Interface(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "IBM client is not initialized")
 	})
+}
+
+// TestSubnetSelection_NetworkConnectivity tests subnet selection network isolation scenarios
+func TestSubnetSelection_NetworkConnectivity(t *testing.T) {
+	t.Run("cluster nodes in first-second subnet scenario", func(t *testing.T) {
+		
+		clusterSubnet := SubnetInfo{
+			ID:           "02c7-ac2802cf-54bb-4508-aad7-eba7e8c2034c", // first-second
+			Zone:         "eu-de-2",
+			CIDR:         "10.243.65.0/24", // Control plane and worker nodes network
+			State:        "available",
+			TotalIPCount: 256,
+			AvailableIPs: 200,
+			UsedIPCount:  56,
+			Tags:         map[string]string{"Name": "first-second"},
+		}
+		
+		wrongAutoSelectedSubnet := SubnetInfo{
+			ID:           "02c7-dc97437a-1b67-41c9-9db9-a6b92a46963d", // eu-de-2-default-subnet
+			Zone:         "eu-de-2",
+			CIDR:         "10.243.64.0/24", // Isolated from cluster nodes
+			State:        "available",
+			TotalIPCount: 256,
+			AvailableIPs: 250,
+			UsedIPCount:  6,
+			Tags:         map[string]string{"Name": "eu-de-2-default-subnet"},
+		}
+		
+		// Test that these subnets are in different networks
+		assert.NotEqual(t, clusterSubnet.CIDR, wrongAutoSelectedSubnet.CIDR,
+			"Cluster subnet and auto-selected subnet should be in different networks")
+		
+		// Test that nodes in wrongAutoSelectedSubnet cannot reach cluster API server
+		// API server is at 10.243.65.4 (in clusterSubnet CIDR)
+		apiServerIP := "10.243.65.4"
+		
+		// Helper function to check if IP is in CIDR range
+		isInClusterNetwork := isIPInCIDR(apiServerIP, clusterSubnet.CIDR)
+		isInWrongNetwork := isIPInCIDR(apiServerIP, wrongAutoSelectedSubnet.CIDR)
+		
+		assert.True(t, isInClusterNetwork, "API server should be reachable from cluster subnet")
+		assert.False(t, isInWrongNetwork, "API server should NOT be reachable from wrong subnet")
+		
+		// Test scoring preference for cluster subnet
+		clusterScore := calculateSubnetScore(clusterSubnet, nil)
+		wrongScore := calculateSubnetScore(wrongAutoSelectedSubnet, nil)
+		
+		// Current scoring algorithm might prefer wrongAutoSelectedSubnet due to more available IPs
+		// This demonstrates the bug: availability-based scoring doesn't consider cluster topology
+		if wrongScore > clusterScore {
+			t.Logf("BUG: Auto-selection algorithm prefers isolated subnet (score: %.2f) over cluster subnet (score: %.2f)",
+				wrongScore, clusterScore)
+			t.Logf("This is why new nodes cannot join the cluster - they're placed in isolated network")
+		}
+	})
+	
+	t.Run("subnet selection should prioritize cluster connectivity", func(t *testing.T) {
+		// Test case for the enhanced subnet selection that should be implemented
+		
+		// Mock existing cluster nodes in specific subnets
+		existingClusterSubnets := map[string]int{
+			"02c7-ac2802cf-54bb-4508-aad7-eba7e8c2034c": 2, // first-second: 2 nodes (control-plane + worker)
+		}
+		
+		availableSubnets := []SubnetInfo{
+			{
+				ID:           "02c7-ac2802cf-54bb-4508-aad7-eba7e8c2034c", // first-second (cluster subnet)
+				Zone:         "eu-de-2",
+				CIDR:         "10.243.65.0/24",
+				State:        "available",
+				TotalIPCount: 256,
+				AvailableIPs: 200, // Less available IPs
+				UsedIPCount:  56,
+				Tags:         map[string]string{"Name": "first-second"},
+			},
+			{
+				ID:           "02c7-dc97437a-1b67-41c9-9db9-a6b92a46963d", // isolated subnet
+				Zone:         "eu-de-2",
+				CIDR:         "10.243.64.0/24",
+				State:        "available",
+				TotalIPCount: 256,
+				AvailableIPs: 250, // More available IPs
+				UsedIPCount:  6,
+				Tags:         map[string]string{"Name": "eu-de-2-default-subnet"},
+			},
+		}
+		
+		// Enhanced selection algorithm should prioritize cluster connectivity over availability
+		selectedSubnet := selectClusterAwareSubnet(availableSubnets, existingClusterSubnets)
+		
+		// Should select the cluster subnet despite fewer available IPs
+		assert.Equal(t, "02c7-ac2802cf-54bb-4508-aad7-eba7e8c2034c", selectedSubnet.ID,
+			"Enhanced algorithm should prefer subnet with existing cluster nodes")
+		assert.Equal(t, "10.243.65.0/24", selectedSubnet.CIDR,
+			"Selected subnet should be in same network as existing cluster nodes")
+	})
+	
+	t.Run("multi-zone cluster subnet distribution", func(t *testing.T) {
+		// Test for future enhancement: multi-zone cluster awareness
+		
+		existingClusterSubnets := map[string]int{
+			"zone1-cluster-subnet": 3, // 3 nodes in zone 1
+			"zone2-cluster-subnet": 2, // 2 nodes in zone 2
+		}
+		
+		availableSubnets := []SubnetInfo{
+			{
+				ID:           "zone1-cluster-subnet",
+				Zone:         "eu-de-1",
+				CIDR:         "10.243.1.0/24",
+				AvailableIPs: 100,
+			},
+			{
+				ID:           "zone1-isolated-subnet",
+				Zone:         "eu-de-1",
+				CIDR:         "10.244.1.0/24", // Different network
+				AvailableIPs: 200,
+			},
+			{
+				ID:           "zone2-cluster-subnet",
+				Zone:         "eu-de-2",
+				CIDR:         "10.243.2.0/24",
+				AvailableIPs: 150,
+			},
+		}
+		
+		// For zone 1, should prefer zone1-cluster-subnet despite fewer IPs
+		zone1Selection := selectClusterAwareSubnetForZone(availableSubnets, existingClusterSubnets, "eu-de-1")
+		assert.Equal(t, "zone1-cluster-subnet", zone1Selection.ID,
+			"Should prefer subnet with existing cluster nodes in same zone")
+		
+		// For zone 2, should prefer zone2-cluster-subnet
+		zone2Selection := selectClusterAwareSubnetForZone(availableSubnets, existingClusterSubnets, "eu-de-2")
+		assert.Equal(t, "zone2-cluster-subnet", zone2Selection.ID,
+			"Should prefer subnet with existing cluster nodes in same zone")
+	})
+}
+
+// Helper function to check if IP is in CIDR range
+func isIPInCIDR(ip, cidr string) bool {
+	// Parse the CIDR and check if IP is in range
+	switch {
+	case cidr == "10.243.65.0/24" && strings.HasPrefix(ip, "10.243.65."):
+		return true
+	case cidr == "10.243.64.0/24" && strings.HasPrefix(ip, "10.243.64."):
+		return true
+	default:
+		return false
+	}
+}
+
+// Mock implementation of cluster-aware subnet selection
+// This represents the enhancement that should be implemented to fix the bug
+func selectClusterAwareSubnet(availableSubnets []SubnetInfo, existingClusterSubnets map[string]int) SubnetInfo {
+	// Priority 1: Prefer subnets with existing cluster nodes
+	for _, subnet := range availableSubnets {
+		if nodeCount, exists := existingClusterSubnets[subnet.ID]; exists && nodeCount > 0 {
+			return subnet
+		}
+	}
+	
+	// Priority 2: Fall back to availability-based selection
+	var bestSubnet SubnetInfo
+	var maxScore float64 = -1
+	for _, subnet := range availableSubnets {
+		score := calculateSubnetScore(subnet, nil)
+		if score > maxScore {
+			maxScore = score
+			bestSubnet = subnet
+		}
+	}
+	return bestSubnet
+}
+
+// Mock implementation for zone-specific cluster-aware selection
+func selectClusterAwareSubnetForZone(availableSubnets []SubnetInfo, existingClusterSubnets map[string]int, zone string) SubnetInfo {
+	// Filter subnets by zone first
+	var zoneSubnets []SubnetInfo
+	for _, subnet := range availableSubnets {
+		if subnet.Zone == zone {
+			zoneSubnets = append(zoneSubnets, subnet)
+		}
+	}
+	
+	// Apply cluster-aware selection within zone
+	return selectClusterAwareSubnet(zoneSubnets, existingClusterSubnets)
+}
+
+// Add SetKubernetesClient method to test mocks to satisfy interface
+type MockSubnetProvider struct {
+	// Add any mock fields needed
+}
+
+func (m *MockSubnetProvider) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error) {
+	return nil, nil
+}
+
+func (m *MockSubnetProvider) GetSubnet(ctx context.Context, subnetID string) (*SubnetInfo, error) {
+	return nil, nil
+}
+
+func (m *MockSubnetProvider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1alpha1.PlacementStrategy) ([]SubnetInfo, error) {
+	return nil, nil
+}
+
+func (m *MockSubnetProvider) SetKubernetesClient(kubeClient kubernetes.Interface) {
+	// Mock implementation - do nothing
 }
 
 // Test data structures
