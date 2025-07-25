@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -63,6 +64,10 @@ func (m *MockSubnetProvider) GetSubnet(ctx context.Context, subnetID string) (*s
 func (m *MockSubnetProvider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1alpha1.PlacementStrategy) ([]subnet.SubnetInfo, error) {
 	args := m.Called(ctx, vpcID, strategy)
 	return args.Get(0).([]subnet.SubnetInfo), args.Error(1)
+}
+
+func (m *MockSubnetProvider) SetKubernetesClient(kubeClient kubernetes.Interface) {
+	// Mock implementation - do nothing
 }
 
 func getTestScheme() *runtime.Scheme {
