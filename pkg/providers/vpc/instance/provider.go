@@ -133,6 +133,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			securityGroups = append(securityGroups, &vpcv1.SecurityGroupIdentity{ID: &sg})
 		}
 		primaryNetworkInterface.SecurityGroups = securityGroups
+		logger.Info("Applying security groups to instance", "security_groups", nodeClass.Spec.SecurityGroups, "count", len(securityGroups))
 	} else {
 		// Get default security group for VPC
 		defaultSG, sgErr := p.getDefaultSecurityGroup(ctx, vpcClient, nodeClass.Spec.VPC)
@@ -142,6 +143,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		primaryNetworkInterface.SecurityGroups = []vpcv1.SecurityGroupIdentityIntf{
 			&vpcv1.SecurityGroupIdentity{ID: defaultSG.ID},
 		}
+		logger.Info("Using default security group for instance", "security_group", *defaultSG.ID)
 	}
 
 	// Resolve image identifier to image ID
@@ -237,6 +239,15 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	}
 
 	logger.Info("VPC instance created successfully", "instance_id", *instance.ID, "name", *instance.Name)
+	
+	// Verify security groups were applied correctly
+	if instance.PrimaryNetworkInterface != nil && instance.PrimaryNetworkInterface.ID != nil {
+		logger.Info("Instance created with primary network interface", "interface_id", *instance.PrimaryNetworkInterface.ID)
+		// Note: Security groups information may not be available in the instance creation response
+		// This would require a separate GetInstance call to verify security groups
+	} else {
+		logger.Info("Instance created but primary network interface information not available in response")
+	}
 
 	// Create Node representation
 	node := &corev1.Node{
