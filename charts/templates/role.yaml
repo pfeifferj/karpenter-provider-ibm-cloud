@@ -8,11 +8,15 @@ rules:
   - ""
   resources:
   - configmaps
-  - pods
-  - services
+  - nodes
+  - secrets
   verbs:
+  - create
+  - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - ""
@@ -24,15 +28,11 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - nodes
-  - secrets
+  - pods
+  - services
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - apps

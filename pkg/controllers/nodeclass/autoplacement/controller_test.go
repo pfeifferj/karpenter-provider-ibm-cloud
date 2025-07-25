@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -127,6 +128,10 @@ func (m *mockSubnetProvider) SelectSubnets(ctx context.Context, vpcID string, st
 			AvailableIPs: 100,
 		},
 	}, nil
+}
+
+func (m *mockSubnetProvider) SetKubernetesClient(kubeClient kubernetes.Interface) {
+	// Mock implementation - do nothing
 }
 
 func TestUpdateCondition(t *testing.T) {
