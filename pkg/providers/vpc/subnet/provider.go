@@ -18,10 +18,15 @@ package subnet
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	v1alpha1 "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -50,10 +55,14 @@ type Provider interface {
 
 	// SelectSubnets returns subnets that meet the placement criteria
 	SelectSubnets(ctx context.Context, vpcID string, strategy *v1alpha1.PlacementStrategy) ([]SubnetInfo, error)
+
+	// SetKubernetesClient sets the Kubernetes client for cluster-aware subnet selection
+	SetKubernetesClient(kubeClient kubernetes.Interface)
 }
 
 type provider struct {
 	client      *ibm.Client
+	kubeClient  kubernetes.Interface
 	subnetCache *cache.Cache
 }
 
@@ -61,8 +70,14 @@ type provider struct {
 func NewProvider(client *ibm.Client) Provider {
 	return &provider{
 		client:      client,
+		kubeClient:  nil, // Will be set when needed via SetKubernetesClient
 		subnetCache: cache.New(5 * time.Minute), // Cache subnets for 5 minutes
 	}
+}
+
+// SetKubernetesClient sets the Kubernetes client for cluster-aware subnet selection
+func (p *provider) SetKubernetesClient(kubeClient kubernetes.Interface) {
+	p.kubeClient = kubeClient
 }
 
 // subnetScore represents a subnet's suitability score
@@ -94,6 +109,9 @@ func (p *provider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1
 	if err != nil {
 		return nil, fmt.Errorf("failed to list subnets: %w", err)
 	}
+
+	// Get existing cluster subnet preferences
+	clusterSubnets := p.getExistingClusterSubnets(ctx)
 
 	var eligibleSubnets []SubnetInfo
 
@@ -132,12 +150,14 @@ func (p *provider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1
 		return nil, fmt.Errorf("no eligible subnets found in VPC %s", vpcID)
 	}
 
-	// Score and rank subnets
+	// Score and rank subnets with cluster awareness
 	scores := make([]subnetScore, len(eligibleSubnets))
 	for i, subnet := range eligibleSubnets {
+		baseScore := calculateSubnetScore(subnet, strategy.SubnetSelection)
+		clusterAwareScore := p.applyClusterAwareness(subnet, baseScore, clusterSubnets)
 		scores[i] = subnetScore{
 			subnet: subnet,
-			score:  calculateSubnetScore(subnet, strategy.SubnetSelection),
+			score:  clusterAwareScore,
 		}
 	}
 
@@ -186,6 +206,129 @@ func (p *provider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1
 	}
 
 	return selectedSubnets, nil
+}
+
+// getExistingClusterSubnets extracts subnet information from existing cluster nodes
+func (p *provider) getExistingClusterSubnets(ctx context.Context) map[string]int {
+	clusterSubnets := make(map[string]int)
+
+	// If no Kubernetes client is available, return empty map (fall back to availability-based selection)
+	if p.kubeClient == nil {
+		return clusterSubnets
+	}
+
+	// Get existing cluster nodes
+	nodes, err := p.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		// Log error but don't fail - fall back to availability-based selection
+		return clusterSubnets
+	}
+
+	// Extract subnet information from each node
+	for _, node := range nodes.Items {
+		subnetID := p.extractSubnetFromNode(node)
+		if subnetID != "" {
+			clusterSubnets[subnetID]++
+		}
+	}
+
+	return clusterSubnets
+}
+
+// extractSubnetFromNode attempts to determine the subnet ID for a node
+func (p *provider) extractSubnetFromNode(node v1.Node) string {
+	// Method 1: Try to extract from provider ID
+	if node.Spec.ProviderID != "" {
+		if subnetID := p.parseSubnetFromProviderID(node.Spec.ProviderID); subnetID != "" {
+			return subnetID
+		}
+	}
+
+	// Method 2: Use internal IP to find matching subnet
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == v1.NodeInternalIP {
+			if subnetID := p.findSubnetByIP(addr.Address); subnetID != "" {
+				return subnetID
+			}
+		}
+	}
+
+	return ""
+}
+
+// parseSubnetFromProviderID extracts subnet ID from IBM Cloud provider ID format
+func (p *provider) parseSubnetFromProviderID(providerID string) string {
+	// IBM Cloud provider ID format: "ibm:///region/instance_id"
+	// This doesn't directly contain subnet info, so we'll need to query the instance
+	parts := strings.Split(providerID, "/")
+	if len(parts) >= 4 && parts[0] == "ibm:" {
+		instanceID := parts[len(parts)-1]
+		return p.getSubnetForInstance(instanceID)
+	}
+	return ""
+}
+
+// getSubnetForInstance queries IBM Cloud API to get subnet for an instance
+func (p *provider) getSubnetForInstance(instanceID string) string {
+	if p.client == nil {
+		return ""
+	}
+
+	// Get VPC client
+	vpcClient, err := p.client.GetVPCClient()
+	if err != nil {
+		return ""
+	}
+
+	// Use context with timeout for API call
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	instance, err := vpcClient.GetInstance(ctx, instanceID)
+	if err != nil {
+		return ""
+	}
+
+	// Extract subnet ID from primary network interface
+	if instance.PrimaryNetworkInterface != nil && instance.PrimaryNetworkInterface.Subnet != nil {
+		return *instance.PrimaryNetworkInterface.Subnet.ID
+	}
+
+	return ""
+}
+
+// findSubnetByIP finds which subnet contains the given IP address
+func (p *provider) findSubnetByIP(ipAddress string) string {
+	// Parse the IP
+	ip := net.ParseIP(ipAddress)
+	if ip == nil {
+		return ""
+	}
+
+	// This would require querying all subnets and checking CIDR ranges
+	// For now, we'll return empty and rely on provider ID method
+	// In a full implementation, we'd cache subnet CIDR mappings
+	return ""
+}
+
+// applyClusterAwareness modifies the subnet score based on existing cluster topology
+func (p *provider) applyClusterAwareness(subnet SubnetInfo, baseScore float64, clusterSubnets map[string]int) float64 {
+	nodeCount, hasExistingNodes := clusterSubnets[subnet.ID]
+
+	// If this subnet has existing cluster nodes, give it a significant bonus
+	if hasExistingNodes {
+		// Bonus increases with the number of existing nodes in the subnet
+		clusterBonus := 50.0 + float64(nodeCount)*10.0 // 50-100+ point bonus
+		return baseScore + clusterBonus
+	}
+
+	// If no existing cluster nodes found, apply a small penalty to prefer cluster subnets
+	if len(clusterSubnets) > 0 {
+		return baseScore - 5.0 // Small penalty for non-cluster subnets
+	}
+
+	// If no cluster information available, return base score unchanged
+	return baseScore
 }
 
 // ListSubnets returns all subnets in the VPC

@@ -26,10 +26,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"k8s.io/apimachinery/pkg/types"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/events"
@@ -141,6 +142,10 @@ func (m *mockSubnetProvider) GetSubnet(ctx context.Context, subnetID string) (*s
 
 func (m *mockSubnetProvider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1alpha1.PlacementStrategy) ([]subnet.SubnetInfo, error) {
 	return m.ListSubnets(ctx, vpcID)
+}
+
+func (m *mockSubnetProvider) SetKubernetesClient(kubeClient kubernetes.Interface) {
+	// Mock implementation - do nothing
 }
 
 func TestCloudProviderCreation(t *testing.T) {

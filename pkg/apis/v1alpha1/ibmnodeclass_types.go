@@ -317,10 +317,13 @@ type IBMNodeClassSpec struct {
 	// +optional
 	UserData string `json:"userData,omitempty"`
 
-	// SSHKeys is a list of SSH key names to add to the instance
+	// SSHKeys is a list of SSH key IDs to add to the instance.
+	// Must be valid IBM Cloud SSH key IDs in the format "r###-########-####-####-####-############".
+	// Example: "r010-82091c89-68e4-4b3f-bd2b-4e63ca2f67da"
+	// To find SSH key IDs: ibmcloud is keys --output json | jq '.[] | {name, id}'
 	// +optional
 	// +kubebuilder:validation:Items:MinLength=1
-	// +kubebuilder:validation:Items:Pattern="^[a-z0-9-]+$"
+	// +kubebuilder:validation:Items:Pattern="^r[0-9]{3}-[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$"
 	SSHKeys []string `json:"sshKeys,omitempty"`
 
 	// ResourceGroup is the ID of the resource group for the instance
