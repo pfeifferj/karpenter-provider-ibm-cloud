@@ -334,7 +334,11 @@ spec:
                 minItems: 1
                 type: array
               sshKeys:
-                description: SSHKeys is a list of SSH key names to add to the instance
+                description: |-
+                  SSHKeys is a list of SSH key IDs to add to the instance.
+                  Must be valid IBM Cloud SSH key IDs in the format "r###-########-####-####-####-############".
+                  Example: "r010-82091c89-68e4-4b3f-bd2b-4e63ca2f67da"
+                  To find SSH key IDs: ibmcloud is keys --output json | jq '.[] | {name, id}'
                 items:
                   type: string
                 type: array
