@@ -124,6 +124,9 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		Subnet: &vpcv1.SubnetIdentity{
 			ID: &subnet,
 		},
+		// Allow IP spoofing 
+		AllowIPSpoofing: &[]bool{false}[0],
+		Name: &[]string{fmt.Sprintf("%s-primary", nodeClaim.Name)}[0],
 	}
 
 	// Add security groups if specified, otherwise use default
@@ -182,6 +185,11 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		},
 		PrimaryNetworkInterface: primaryNetworkInterface,
 		BootVolumeAttachment:    bootVolumeAttachment,
+		
+		// Add availability policy 
+		AvailabilityPolicy: &vpcv1.InstanceAvailabilityPolicyPrototype{
+			HostFailure: &[]string{"restart"}[0],
+		},
 	}
 
 	// Add placement target if specified
@@ -223,7 +231,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	instancePrototype.MetadataService = &vpcv1.InstanceMetadataServicePrototype{
 		Enabled:         &[]bool{true}[0],
 		Protocol:        &[]string{"http"}[0],
-		ResponseHopLimit: &[]int64{1}[0],
+		ResponseHopLimit: &[]int64{2}[0],
 	}
 
 	// Create the instance
