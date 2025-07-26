@@ -91,6 +91,44 @@ spec:
             {{- include "karpenter.cr.environmentConfig" . | nindent 12 }}
             {{- include "karpenter.cr.bootstrapConfig" . | nindent 12 }}
             {{- end }}
+            {{- if .Values.circuitBreaker.enabled }}
+            # Circuit breaker configuration from ConfigMap
+            - name: CIRCUIT_BREAKER_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-circuit-breaker
+                  key: enabled
+            - name: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-circuit-breaker
+                  key: failure-threshold
+            - name: CIRCUIT_BREAKER_FAILURE_WINDOW
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-circuit-breaker
+                  key: failure-window
+            - name: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-circuit-breaker
+                  key: recovery-timeout
+            - name: CIRCUIT_BREAKER_HALF_OPEN_MAX_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-circuit-breaker
+                  key: half-open-max-requests
+            - name: CIRCUIT_BREAKER_RATE_LIMIT_PER_MINUTE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-circuit-breaker
+                  key: rate-limit-per-minute
+            - name: CIRCUIT_BREAKER_MAX_CONCURRENT_INSTANCES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-circuit-breaker
+                  key: max-concurrent-instances
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.controller.metrics.port }}

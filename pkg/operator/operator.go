@@ -26,6 +26,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
 )
 
@@ -61,6 +62,10 @@ func NewOperator(ctx context.Context, coreOperator *operator.Operator) (context.
 	// Create provider factory with all providers
 	providerFactory := providers.NewProviderFactory(ibmClient, coreOperator.GetClient(), kubernetesClient)
 	unavailableOfferings := cache.NewUnavailableOfferings()
+
+	// Create options with environment variables (including circuit breaker config)
+	opts := options.NewOptions()
+	ctx = opts.ToContext(ctx)
 
 	return ctx, &Operator{
 		Operator:             coreOperator,
