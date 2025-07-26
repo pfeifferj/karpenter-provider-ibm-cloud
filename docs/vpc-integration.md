@@ -111,8 +111,8 @@ spec:
   # Optional: Bootstrap mode (cloud-init, iks-api, or auto)
   bootstrapMode: cloud-init
   
-  # Optional: Custom API server endpoint (if automatic discovery doesn't work)
-  apiServerEndpoint: "https://10.243.65.4:6443"
+  # REQUIRED: Internal API server endpoint (find with: kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes)
+  apiServerEndpoint: "https://<INTERNAL-API-SERVER-IP>:6443"
   
   # Optional: IKS cluster ID (required when bootstrapMode is "iks-api")
   iksClusterID: bng6n48d0t6vj7b33kag

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Karpenter IBM Cloud Provider includes a circuit breaker implementation to prevent scale-up storms and protect against cascading failures during node provisioning.
+The Karpenter IBM Cloud Provider includes a circuit breaker implementation to prevent scale-up storms and protect against cascading failures during node provisioning. The circuit breaker is configurable through Helm values, environment variables, and ConfigMaps.
 
 ## Problem Statement
 
@@ -47,6 +47,85 @@ func DefaultCircuitBreakerConfig() *CircuitBreakerConfig {
     }
 }
 ```
+
+## Configuration Options
+
+### Helm Values
+
+Configure the circuit breaker in your `values.yaml`:
+
+```yaml
+circuitBreaker:
+  enabled: true
+  
+  # Use a preset configuration
+  preset: "balanced"  # Options: conservative, balanced, aggressive, demo, custom
+  
+  # Custom configuration (when preset: "custom")
+  config:
+    failureThreshold: 3
+    failureWindow: "5m"
+    recoveryTimeout: "15m"
+    halfOpenMaxRequests: 2
+    rateLimitPerMinute: 10
+    maxConcurrentInstances: 5
+```
+
+### Environment Variables
+
+Configure using environment variables:
+
+```bash
+export CIRCUIT_BREAKER_ENABLED=true
+export CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+export CIRCUIT_BREAKER_FAILURE_WINDOW=5m
+export CIRCUIT_BREAKER_RECOVERY_TIMEOUT=15m
+export CIRCUIT_BREAKER_HALF_OPEN_MAX_REQUESTS=2
+export CIRCUIT_BREAKER_RATE_LIMIT_PER_MINUTE=10
+export CIRCUIT_BREAKER_MAX_CONCURRENT_INSTANCES=5
+```
+
+### Available Presets
+
+#### Conservative (Production)
+```yaml
+circuitBreaker:
+  preset: "conservative"
+```
+- Failure Threshold: 2 
+- Rate Limit: 2/minute
+- Recovery: 20 minutes
+- Best for production with strict SLAs
+
+#### Balanced (Default)
+```yaml
+circuitBreaker:
+  preset: "balanced"
+```
+- Failure Threshold: 3
+- Rate Limit: 5/minute  
+- Recovery: 15 minutes
+- Good balance for most workloads
+
+#### Aggressive
+```yaml
+circuitBreaker:
+  preset: "aggressive"
+```
+- Failure Threshold: 5
+- Rate Limit: 10/minute
+- Recovery: 5 minutes
+- Higher throughput for development
+
+#### Demo
+```yaml
+circuitBreaker:
+  preset: "demo"
+```
+- Failure Threshold: 10
+- Rate Limit: 20/minute
+- Recovery: 1 minute
+- Optimized for demonstrations
 
 ## Circuit Breaker States
 

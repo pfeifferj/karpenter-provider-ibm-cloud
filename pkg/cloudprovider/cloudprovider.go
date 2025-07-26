@@ -65,16 +65,20 @@ func New(kubeClient client.Client,
 	recorder events.Recorder,
 	ibmClient *ibm.Client,
 	instanceTypeProvider instancetype.Provider,
-	subnetProvider subnet.Provider) *CloudProvider {
+	subnetProvider subnet.Provider,
+	circuitBreakerConfig *CircuitBreakerConfig) *CloudProvider {
 	// Determine the default provider mode based on environment
 	defaultMode := commonTypes.VPCMode
 	if os.Getenv("IKS_CLUSTER_ID") != "" {
 		defaultMode = commonTypes.IKSMode
 	}
 
-	// Initialize circuit breaker with default config
+	// Initialize circuit breaker with provided config or default
 	logger := log.FromContext(context.Background()).WithName("circuit-breaker")
-	circuitBreaker := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logger)
+	if circuitBreakerConfig == nil {
+		circuitBreakerConfig = DefaultCircuitBreakerConfig()
+	}
+	circuitBreaker := NewCircuitBreaker(circuitBreakerConfig, logger)
 
 	return &CloudProvider{
 		kubeClient: kubeClient,
