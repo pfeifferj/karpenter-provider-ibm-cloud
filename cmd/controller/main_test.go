@@ -177,6 +177,7 @@ func TestCloudProviderCreation(t *testing.T) {
 		&ibm.Client{},
 		&mockInstanceTypeProvider{},
 		&mockSubnetProvider{},
+		nil, // Use default circuit breaker config for tests
 	)
 
 	// Test cloud provider is created successfully
@@ -193,6 +194,7 @@ func TestCloudProviderCreation(t *testing.T) {
 			&ibm.Client{},
 			&mockInstanceTypeProvider{},
 			&mockSubnetProvider{},
+			nil, // Use default circuit breaker config for tests
 		)
 	})
 }

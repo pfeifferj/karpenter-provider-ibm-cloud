@@ -20,6 +20,7 @@ import (
 	"flag"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,8 @@ func TestNewOptions(t *testing.T) {
 	_ = os.Unsetenv("IBMCLOUD_REGION")
 	_ = os.Unsetenv("IBMCLOUD_ZONE")
 	_ = os.Unsetenv("IBMCLOUD_RESOURCE_GROUP_ID")
+	_ = os.Unsetenv("CIRCUIT_BREAKER_ENABLED")
+	_ = os.Unsetenv("CIRCUIT_BREAKER_RATE_LIMIT_PER_MINUTE")
 
 	opts := NewOptions()
 
@@ -40,6 +43,15 @@ func TestNewOptions(t *testing.T) {
 	assert.Empty(t, opts.Region)
 	assert.Empty(t, opts.Zone)
 	assert.Empty(t, opts.ResourceGroupID)
+	
+	// Check circuit breaker defaults
+	assert.True(t, opts.CircuitBreakerEnabled)
+	assert.Equal(t, 3, opts.CircuitBreakerFailureThreshold)
+	assert.Equal(t, 5*time.Minute, opts.CircuitBreakerFailureWindow)
+	assert.Equal(t, 15*time.Minute, opts.CircuitBreakerRecoveryTimeout)
+	assert.Equal(t, 2, opts.CircuitBreakerHalfOpenMaxRequests)
+	assert.Equal(t, 10, opts.CircuitBreakerRateLimitPerMinute)
+	assert.Equal(t, 5, opts.CircuitBreakerMaxConcurrentInstances)
 }
 
 func TestNewOptionsWithEnvironment(t *testing.T) {
@@ -305,4 +317,231 @@ func TestOptionsDefaults(t *testing.T) {
 	assert.Empty(t, opts.Region)
 	assert.Empty(t, opts.Zone)
 	assert.Empty(t, opts.ResourceGroupID)
+}
+
+// Circuit Breaker specific tests
+
+func TestCircuitBreakerConfigParsing(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		validate func(t *testing.T, opts *Options)
+	}{
+		{
+			name: "default circuit breaker values",
+			envVars: map[string]string{},
+			validate: func(t *testing.T, opts *Options) {
+				assert.True(t, opts.CircuitBreakerEnabled)
+				assert.Equal(t, 3, opts.CircuitBreakerFailureThreshold)
+				assert.Equal(t, 5*time.Minute, opts.CircuitBreakerFailureWindow)
+				assert.Equal(t, 15*time.Minute, opts.CircuitBreakerRecoveryTimeout)
+				assert.Equal(t, 2, opts.CircuitBreakerHalfOpenMaxRequests)
+				assert.Equal(t, 10, opts.CircuitBreakerRateLimitPerMinute)
+				assert.Equal(t, 5, opts.CircuitBreakerMaxConcurrentInstances)
+			},
+		},
+		{
+			name: "custom values from environment",
+			envVars: map[string]string{
+				"CIRCUIT_BREAKER_ENABLED":                  "false",
+				"CIRCUIT_BREAKER_FAILURE_THRESHOLD":        "5",
+				"CIRCUIT_BREAKER_FAILURE_WINDOW":           "10m",
+				"CIRCUIT_BREAKER_RECOVERY_TIMEOUT":         "30m",
+				"CIRCUIT_BREAKER_HALF_OPEN_MAX_REQUESTS":   "3",
+				"CIRCUIT_BREAKER_RATE_LIMIT_PER_MINUTE":    "20",
+				"CIRCUIT_BREAKER_MAX_CONCURRENT_INSTANCES": "10",
+			},
+			validate: func(t *testing.T, opts *Options) {
+				assert.False(t, opts.CircuitBreakerEnabled)
+				assert.Equal(t, 5, opts.CircuitBreakerFailureThreshold)
+				assert.Equal(t, 10*time.Minute, opts.CircuitBreakerFailureWindow)
+				assert.Equal(t, 30*time.Minute, opts.CircuitBreakerRecoveryTimeout)
+				assert.Equal(t, 3, opts.CircuitBreakerHalfOpenMaxRequests)
+				assert.Equal(t, 20, opts.CircuitBreakerRateLimitPerMinute)
+				assert.Equal(t, 10, opts.CircuitBreakerMaxConcurrentInstances)
+			},
+		},
+		{
+			name: "invalid duration values use defaults",
+			envVars: map[string]string{
+				"CIRCUIT_BREAKER_FAILURE_WINDOW":   "invalid",
+				"CIRCUIT_BREAKER_RECOVERY_TIMEOUT": "not-a-duration",
+			},
+			validate: func(t *testing.T, opts *Options) {
+				assert.Equal(t, 5*time.Minute, opts.CircuitBreakerFailureWindow)
+				assert.Equal(t, 15*time.Minute, opts.CircuitBreakerRecoveryTimeout)
+			},
+		},
+		{
+			name: "invalid integer values use defaults",
+			envVars: map[string]string{
+				"CIRCUIT_BREAKER_FAILURE_THRESHOLD":      "not-a-number",
+				"CIRCUIT_BREAKER_RATE_LIMIT_PER_MINUTE": "-5",
+			},
+			validate: func(t *testing.T, opts *Options) {
+				assert.Equal(t, 3, opts.CircuitBreakerFailureThreshold)
+				assert.Equal(t, 10, opts.CircuitBreakerRateLimitPerMinute)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set environment variables
+			for k, v := range tt.envVars {
+				_ = os.Setenv(k, v)
+			}
+			defer func() {
+				// Clean up environment variables
+				for k := range tt.envVars {
+					_ = os.Unsetenv(k)
+				}
+			}()
+
+			opts := &Options{}
+			opts.parseCircuitBreakerConfig()
+			tt.validate(t, opts)
+		})
+	}
+}
+
+func TestGetCircuitBreakerConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    *Options
+		want    *CircuitBreakerConfig
+		wantNil bool
+	}{
+		{
+			name: "returns config when enabled",
+			opts: &Options{
+				CircuitBreakerEnabled:                true,
+				CircuitBreakerFailureThreshold:       3,
+				CircuitBreakerFailureWindow:          5 * time.Minute,
+				CircuitBreakerRecoveryTimeout:        15 * time.Minute,
+				CircuitBreakerHalfOpenMaxRequests:    2,
+				CircuitBreakerRateLimitPerMinute:     10,
+				CircuitBreakerMaxConcurrentInstances: 5,
+			},
+			want: &CircuitBreakerConfig{
+				FailureThreshold:       3,
+				FailureWindow:          5 * time.Minute,
+				RecoveryTimeout:        15 * time.Minute,
+				HalfOpenMaxRequests:    2,
+				RateLimitPerMinute:     10,
+				MaxConcurrentInstances: 5,
+			},
+		},
+		{
+			name: "returns nil when disabled",
+			opts: &Options{
+				CircuitBreakerEnabled: false,
+			},
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.opts.GetCircuitBreakerConfig()
+			if tt.wantNil {
+				assert.Nil(t, got)
+			} else {
+				assert.NotNil(t, got)
+				assert.Equal(t, tt.want.FailureThreshold, got.FailureThreshold)
+				assert.Equal(t, tt.want.FailureWindow, got.FailureWindow)
+				assert.Equal(t, tt.want.RecoveryTimeout, got.RecoveryTimeout)
+				assert.Equal(t, tt.want.HalfOpenMaxRequests, got.HalfOpenMaxRequests)
+				assert.Equal(t, tt.want.RateLimitPerMinute, got.RateLimitPerMinute)
+				assert.Equal(t, tt.want.MaxConcurrentInstances, got.MaxConcurrentInstances)
+			}
+		})
+	}
+}
+
+func TestCircuitBreakerValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    *Options
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid circuit breaker configuration",
+			opts: &Options{
+				APIKey:                               "test-key",
+				Region:                               "us-south",
+				Zone:                                 "us-south-1",
+				ResourceGroupID:                      "test-rg",
+				CircuitBreakerEnabled:                true,
+				CircuitBreakerFailureThreshold:       3,
+				CircuitBreakerFailureWindow:          5 * time.Minute,
+				CircuitBreakerRecoveryTimeout:        15 * time.Minute,
+				CircuitBreakerHalfOpenMaxRequests:    2,
+				CircuitBreakerRateLimitPerMinute:     10,
+				CircuitBreakerMaxConcurrentInstances: 5,
+			},
+			wantErr: false,
+		},
+		{
+			name: "disabled circuit breaker skips validation",
+			opts: &Options{
+				APIKey:                          "test-key",
+				Region:                          "us-south", 
+				Zone:                            "us-south-1",
+				ResourceGroupID:                 "test-rg",
+				CircuitBreakerEnabled:           false,
+				CircuitBreakerFailureThreshold:  0, // Invalid, but should be ignored
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid failure threshold",
+			opts: &Options{
+				APIKey:                               "test-key",
+				Region:                               "us-south",
+				Zone:                                 "us-south-1", 
+				ResourceGroupID:                      "test-rg",
+				CircuitBreakerEnabled:                true,
+				CircuitBreakerFailureThreshold:       0,
+				CircuitBreakerFailureWindow:          5 * time.Minute,
+				CircuitBreakerRecoveryTimeout:        15 * time.Minute,
+				CircuitBreakerHalfOpenMaxRequests:    2,
+				CircuitBreakerRateLimitPerMinute:     10,
+				CircuitBreakerMaxConcurrentInstances: 5,
+			},
+			wantErr: true,
+			errMsg:  "circuit breaker failure threshold must be at least 1",
+		},
+		{
+			name: "invalid rate limit",
+			opts: &Options{
+				APIKey:                               "test-key",
+				Region:                               "us-south",
+				Zone:                                 "us-south-1",
+				ResourceGroupID:                      "test-rg", 
+				CircuitBreakerEnabled:                true,
+				CircuitBreakerFailureThreshold:       3,
+				CircuitBreakerFailureWindow:          5 * time.Minute,
+				CircuitBreakerRecoveryTimeout:        15 * time.Minute,
+				CircuitBreakerHalfOpenMaxRequests:    2,
+				CircuitBreakerRateLimitPerMinute:     0,
+				CircuitBreakerMaxConcurrentInstances: 5,
+			},
+			wantErr: true,
+			errMsg:  "circuit breaker rate limit must be at least 1 per minute",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.opts.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
