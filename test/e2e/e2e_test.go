@@ -113,6 +113,7 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 		ibmClient,
 		instanceTypeProvider,
 		subnetProvider,
+		nil, // Use default circuit breaker config for tests
 	)
 
 	return &E2ETestSuite{
