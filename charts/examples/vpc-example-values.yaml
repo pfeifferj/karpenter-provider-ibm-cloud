@@ -1,10 +1,11 @@
 # Example values for VPC mode deployment
 # This configures Karpenter IBM Cloud Provider for self-managed Kubernetes clusters on IBM Cloud VPC
 
-# Required IBM Cloud credentials
-ibmApiKey: ""  # Set via --set or external secret
-region: "us-south"
-vpcApiKey: ""  # Set via --set or external secret
+# Required IBM Cloud credentials - these should be under credentials section
+credentials:
+  ibmApiKey: ""  # Set via --set credentials.ibmApiKey=<key> or external secret
+  vpcApiKey: ""  # Set via --set credentials.vpcApiKey=<key> or external secret
+  region: "us-south"
 
 # Cluster identification
 clusterName: "my-vpc-cluster"
