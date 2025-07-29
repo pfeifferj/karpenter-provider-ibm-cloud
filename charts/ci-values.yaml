@@ -1,6 +1,6 @@
 credentials:
-  ibm_api_key: "test-api-key"
-  vpc_api_key: "test-vpc-key"
+  ibmApiKey: "test-api-key"
+  vpcApiKey: "test-vpc-key"
   region: "us-south"
 
 image:

@@ -74,16 +74,16 @@ podDisruptionBudget:
 # IBM Cloud credentials configuration
 credentials:
   # Required: ibm cloud api key for general operations
-  ibm_api_key: ""
+  ibmApiKey: ""
   # Required: ibm cloud region (e.g., us-south, eu-de)
   region: ""
   # Optional: vpc api endpoint url
   # If not provided, defaults to https://{region}.iaas.cloud.ibm.com/v1
-  vpc_url: ""
+  vpcUrl: ""
   # Optional: vpc authentication type
-  vpc_auth_type: "iam"
+  vpcAuthType: "iam"
   # Required: vpc api key for vpc operations
-  vpc_api_key: ""
+  vpcApiKey: ""
 
 # IKS cluster configuration (for IKS integration)
 # Optional: IKS cluster ID for IKS API integration
