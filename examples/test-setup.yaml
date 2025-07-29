@@ -35,7 +35,7 @@ spec:
           operator: In
           values: ["test-nodeclass"]
       nodeClassRef:
-        apiVersion: karpenter.ibm.sh/v1alpha1
+        group: karpenter.ibm.sh
         kind: IBMNodeClass
         name: test-nodeclass
       taints:
