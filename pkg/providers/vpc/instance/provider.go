@@ -117,13 +117,23 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		return nil, fmt.Errorf("subnet not specified in NodeClass")
 	}
 
-	logger.Info("Creating VPC instance", "instance_profile", instanceProfile, "zone", zone, "subnet", subnet)
+	logger.Info("Creating VPC instance with VNI", "instance_profile", instanceProfile, "zone", zone, "subnet", subnet)
 
-	// Create primary network interface with subnet
-	primaryNetworkInterface := &vpcv1.NetworkInterfacePrototype{
+	// Create virtual network interface for proper VPC service network access
+	vniPrototype := &vpcv1.InstanceNetworkAttachmentPrototypeVirtualNetworkInterfaceVirtualNetworkInterfacePrototypeInstanceNetworkAttachmentContext{
 		Subnet: &vpcv1.SubnetIdentity{
 			ID: &subnet,
 		},
+		// Enable infrastructure NAT for proper VPC service network routing
+		EnableInfrastructureNat: &[]bool{true}[0],
+		// Allow IP spoofing set to false for security
+		AllowIPSpoofing: &[]bool{false}[0],
+		// Set protocol state filtering to auto for proper instance network attachment
+		ProtocolStateFilteringMode: &[]string{"auto"}[0],
+		// Set explicit name for debugging
+		Name: &[]string{fmt.Sprintf("%s-vni", nodeClaim.Name)}[0],
+		// Auto-delete when instance is deleted
+		AutoDelete: &[]bool{true}[0],
 	}
 
 	// Add security groups if specified, otherwise use default
@@ -132,16 +142,24 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		for _, sg := range nodeClass.Spec.SecurityGroups {
 			securityGroups = append(securityGroups, &vpcv1.SecurityGroupIdentity{ID: &sg})
 		}
-		primaryNetworkInterface.SecurityGroups = securityGroups
+		vniPrototype.SecurityGroups = securityGroups
+		logger.Info("Applying security groups to VNI", "security_groups", nodeClass.Spec.SecurityGroups, "count", len(securityGroups))
 	} else {
 		// Get default security group for VPC
 		defaultSG, sgErr := p.getDefaultSecurityGroup(ctx, vpcClient, nodeClass.Spec.VPC)
 		if sgErr != nil {
 			return nil, fmt.Errorf("getting default security group for VPC %s: %w", nodeClass.Spec.VPC, sgErr)
 		}
-		primaryNetworkInterface.SecurityGroups = []vpcv1.SecurityGroupIdentityIntf{
+		vniPrototype.SecurityGroups = []vpcv1.SecurityGroupIdentityIntf{
 			&vpcv1.SecurityGroupIdentity{ID: defaultSG.ID},
 		}
+		logger.Info("Using default security group for VNI", "security_group", *defaultSG.ID)
+	}
+
+	// Create primary network attachment with VNI
+	primaryNetworkAttachment := &vpcv1.InstanceNetworkAttachmentPrototype{
+		Name: &[]string{fmt.Sprintf("%s-primary-attachment", nodeClaim.Name)}[0],
+		VirtualNetworkInterface: vniPrototype,
 	}
 
 	// Resolve image identifier to image ID
@@ -163,7 +181,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		DeleteVolumeOnInstanceDelete: &[]bool{true}[0],
 	}
 
-	// Create instance prototype with all required fields using InstancePrototypeInstanceByImage
+	// Create instance prototype with VNI for proper VPC service network access
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImage{
 		Name: &nodeClaim.Name,
 		Zone: &vpcv1.ZoneIdentity{
@@ -178,8 +196,14 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
 		},
-		PrimaryNetworkInterface: primaryNetworkInterface,
-		BootVolumeAttachment:    bootVolumeAttachment,
+		// Use PrimaryNetworkAttachment with VNI for proper VPC service network routing
+		PrimaryNetworkAttachment: primaryNetworkAttachment,
+		BootVolumeAttachment:     bootVolumeAttachment,
+		
+		// Add availability policy for better instance management
+		AvailabilityPolicy: &vpcv1.InstanceAvailabilityPolicyPrototype{
+			HostFailure: &[]string{"restart"}[0],
+		},
 	}
 
 	// Add placement target if specified
@@ -221,7 +245,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	instancePrototype.MetadataService = &vpcv1.InstanceMetadataServicePrototype{
 		Enabled:         &[]bool{true}[0],
 		Protocol:        &[]string{"http"}[0],
-		ResponseHopLimit: &[]int64{1}[0],
+		ResponseHopLimit: &[]int64{2}[0],
 	}
 
 	// Create the instance
@@ -237,6 +261,15 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	}
 
 	logger.Info("VPC instance created successfully", "instance_id", *instance.ID, "name", *instance.Name)
+	
+	// Verify security groups were applied correctly
+	if instance.PrimaryNetworkInterface != nil && instance.PrimaryNetworkInterface.ID != nil {
+		logger.Info("Instance created with primary network interface", "interface_id", *instance.PrimaryNetworkInterface.ID)
+		// Note: Security groups information may not be available in the instance creation response
+		// This would require a separate GetInstance call to verify security groups
+	} else {
+		logger.Info("Instance created but primary network interface information not available in response")
+	}
 
 	// Create Node representation
 	node := &corev1.Node{
