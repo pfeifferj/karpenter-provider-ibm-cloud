@@ -28,10 +28,10 @@ jobs:
       run: |
         cat > charts/ci-values.yaml << EOF
         credentials:
-          ibm_api_key: "ci-test-key"
+          ibmApiKey: "ci-test-key"
           region: "us-south"
-          vpc_api_key: "ci-test-vpc-key"
-          vpc_url: "https://us-south.iaas.cloud.ibm.com/v1"
+          vpcApiKey: "ci-test-vpc-key"
+          vpcUrl: "https://us-south.iaas.cloud.ibm.com/v1"
         EOF
 
     - name: Create yamllint config
