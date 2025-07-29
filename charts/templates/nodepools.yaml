@@ -97,7 +97,7 @@ spec:
       
       # Node class reference
       nodeClassRef:
-        apiVersion: karpenter.ibm.sh/v1alpha1
+        group: karpenter.ibm.sh
         kind: IBMNodeClass
         name: {{ $pool.nodeClassRef | default $.Values.customResources.nodeClass.name | default "default" }}
   
