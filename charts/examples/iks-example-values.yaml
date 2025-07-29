@@ -1,10 +1,11 @@
 # Example values for IKS mode deployment
 # This configures Karpenter IBM Cloud Provider for IBM Kubernetes Service (IKS) clusters
 
-# Required IBM Cloud credentials
-ibmApiKey: ""  # Set via --set or external secret
-region: "us-south"
-vpcApiKey: ""  # Set via --set or external secret
+# Required IBM Cloud credentials - these should be under credentials section
+credentials:
+  ibmApiKey: ""  # Set via --set credentials.ibmApiKey=<key> or external secret
+  vpcApiKey: ""  # Set via --set credentials.vpcApiKey=<key> or external secret
+  region: "us-south"
 
 # IKS cluster identification
 iksClusterID: "bng6n48d0t6vj7b33kag"  # Your IKS cluster ID
