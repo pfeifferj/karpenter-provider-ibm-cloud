@@ -91,6 +91,23 @@ jobs:
               
               if (!dryRun) {
                 try {
+                  // First, try to get the version to confirm it exists
+                  try {
+                    await github.rest.packages.getPackageVersionForOrganization({
+                      package_type: 'container',
+                      package_name: packageName,
+                      org: context.repo.owner,
+                      package_version_id: version.id,
+                    });
+                  } catch (getError) {
+                    if (getError.status === 404) {
+                      console.warn(`Version ${version.name} (${version.id}) not found, skipping deletion.`);
+                      continue;
+                    }
+                    throw getError;
+                  }
+                  
+                  // Version exists, proceed with deletion
                   await github.rest.packages.deletePackageVersionForOrg({
                     package_type: 'container',
                     package_name: packageName,
@@ -99,7 +116,11 @@ jobs:
                   });
                   console.log(`Deleted version: ${version.name}`);
                 } catch (error) {
-                  console.error(`Failed to delete version ${version.name}: ${error.message}`);
+                  if (error.status === 404) {
+                    console.warn(`Version ${version.name} (${version.id}) not found during deletion, skipping.`);
+                  } else {
+                    console.error(`Failed to delete version ${version.name}: ${error.message}`);
+                  }
                 }
               }
             }
