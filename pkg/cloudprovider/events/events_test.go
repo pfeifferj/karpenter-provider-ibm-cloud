@@ -152,3 +152,56 @@ func TestNilObjectHandling(t *testing.T) {
 		assert.Contains(t, event.Message, "Failed to resolve NodeClass for NodePool <unknown>")
 	})
 }
+
+func TestNodeClaimCircuitBreakerBlocked(t *testing.T) {
+	tests := []struct {
+		name      string
+		nodeClaim *karpv1.NodeClaim
+		reason    string
+		expected  string
+	}{
+		{
+			name: "NodeClaim with name",
+			nodeClaim: &karpv1.NodeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclaim",
+				},
+			},
+			reason:   "circuit breaker OPEN",
+			expected: "Circuit breaker blocked provisioning for NodeClaim test-nodeclaim: circuit breaker OPEN",
+		},
+		{
+			name:      "NodeClaim is nil",
+			nodeClaim: nil,
+			reason:    "rate limit exceeded",
+			expected:  "Circuit breaker blocked provisioning for NodeClaim <unknown>: rate limit exceeded",
+		},
+		{
+			name: "NodeClaim with empty name",
+			nodeClaim: &karpv1.NodeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "",
+				},
+			},
+			reason:   "concurrency limit exceeded",
+			expected: "Circuit breaker blocked provisioning for NodeClaim : concurrency limit exceeded",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := NodeClaimCircuitBreakerBlocked(tt.nodeClaim, tt.reason)
+
+			assert.Equal(t, corev1.EventTypeWarning, event.Type)
+			assert.Equal(t, "CircuitBreakerBlocked", event.Reason)
+			assert.Equal(t, tt.expected, event.Message)
+		})
+	}
+
+	assert.NotPanics(t, func() {
+		event := NodeClaimCircuitBreakerBlocked(nil, "test reason")
+		assert.Equal(t, corev1.EventTypeWarning, event.Type)
+		assert.Equal(t, "CircuitBreakerBlocked", event.Reason)
+		assert.Contains(t, event.Message, "Circuit breaker blocked provisioning for NodeClaim <unknown>: test reason")
+	})
+}
