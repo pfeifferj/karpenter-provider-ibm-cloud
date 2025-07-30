@@ -47,3 +47,15 @@ func NodePoolFailedToResolveNodeClass(nodePool *karpv1.NodePool) events.Event {
 		Message: fmt.Sprintf("Failed to resolve NodeClass for NodePool %s", name),
 	}
 }
+
+func NodeClaimCircuitBreakerBlocked(nodeClaim *karpv1.NodeClaim, reason string) events.Event {
+	name := "<unknown>"
+	if nodeClaim != nil {
+		name = nodeClaim.Name
+	}
+	return events.Event{
+		Type:    corev1.EventTypeWarning,
+		Reason:  "CircuitBreakerBlocked",
+		Message: fmt.Sprintf("Circuit breaker blocked provisioning for NodeClaim %s: %s", name, reason),
+	}
+}
