@@ -297,7 +297,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		log.Error(cbErr, "Circuit breaker blocked provisioning",
 			"nodeClass", nodeClass.Name,
 			"region", nodeClass.Spec.Region)
-		c.recorder.Publish(ibmevents.NodeClaimFailedToResolveNodeClass(nodeClaim))
+		c.recorder.Publish(ibmevents.NodeClaimCircuitBreakerBlocked(nodeClaim, cbErr.Error()))
 		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("circuit breaker blocked provisioning: %w", cbErr))
 	}
 
