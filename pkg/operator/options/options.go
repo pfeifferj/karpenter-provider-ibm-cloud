@@ -229,20 +229,16 @@ func (o *Options) Validate() error {
 	if o.Region == "" {
 		missingFields = append(missingFields, "IBMCLOUD_REGION")
 	}
-	if o.Zone == "" {
-		missingFields = append(missingFields, "IBMCLOUD_ZONE")
-	}
-	if o.ResourceGroupID == "" {
-		missingFields = append(missingFields, "IBMCLOUD_RESOURCE_GROUP_ID")
-	}
 
 	if len(missingFields) > 0 {
 		return fmt.Errorf("missing required environment variables: %v", missingFields)
 	}
 
-	// Validate region/zone pair
-	if err := validateRegionZonePair(o.Region, o.Zone); err != nil {
-		return err
+	// Validate region/zone pair only if zone is provided
+	if o.Zone != "" {
+		if err := validateRegionZonePair(o.Region, o.Zone); err != nil {
+			return err
+		}
 	}
 
 	// Validate circuit breaker configuration if enabled
