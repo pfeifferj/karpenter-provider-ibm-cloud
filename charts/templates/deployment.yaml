@@ -44,16 +44,26 @@ spec:
               value: {{ .Values.verboseLogLevel | default "5" | quote }}
             - name: KARPENTER_DEBUG
               value: {{ .Values.debug | default "true" | quote }}
-            - name: IBM_API_KEY
+            - name: IBMCLOUD_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
                   key: ibm_api_key
-            - name: IBM_REGION
+            - name: IBMCLOUD_REGION
               valueFrom:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
                   key: region
+            - name: IBMCLOUD_ZONE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-credentials
+                  key: zone
+            - name: IBMCLOUD_RESOURCE_GROUP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-credentials
+                  key: resource_group_id
             - name: VPC_URL
               valueFrom:
                 secretKeyRef:
