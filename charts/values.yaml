@@ -77,6 +77,10 @@ credentials:
   ibmApiKey: ""
   # Required: ibm cloud region (e.g., us-south, eu-de)
   region: ""
+  # Required: ibm cloud zone (e.g., us-south-1, eu-de-2)
+  zone: ""
+  # Required: ibm cloud resource group ID
+  resourceGroupId: ""
   # Optional: vpc api endpoint url
   # If not provided, defaults to https://{region}.iaas.cloud.ibm.com/v1
   vpcUrl: ""
