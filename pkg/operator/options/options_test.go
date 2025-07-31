@@ -232,17 +232,89 @@ func TestOptionsValidation(t *testing.T) {
 	}
 }
 
+func TestOptionsValidateRequiredFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		opts        *Options
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "all required fields present",
+			opts: &Options{
+				APIKey: "test-api-key",
+				Region: "us-south",
+			},
+			expectError: false,
+		},
+		{
+			name: "missing API key",
+			opts: &Options{
+				Region: "us-south",
+			},
+			expectError: true,
+			errorMsg:    "missing required environment variables: [IBMCLOUD_API_KEY]",
+		},
+		{
+			name: "missing region",
+			opts: &Options{
+				APIKey: "test-api-key",
+			},
+			expectError: true,
+			errorMsg:    "missing required environment variables: [IBMCLOUD_REGION]",
+		},
+		{
+			name: "zone and resource group ID are optional",
+			opts: &Options{
+				APIKey: "test-api-key",
+				Region: "us-south",
+				// Zone and ResourceGroupID are not set
+			},
+			expectError: false,
+		},
+		{
+			name: "valid with zone but no resource group",
+			opts: &Options{
+				APIKey: "test-api-key",
+				Region: "us-south",
+				Zone:   "us-south-1",
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid zone for region",
+			opts: &Options{
+				APIKey: "test-api-key",
+				Region: "us-south",
+				Zone:   "eu-de-1", // Wrong zone for us-south region
+			},
+			expectError: true,
+			errorMsg:    "invalid zone eu-de-1 for region us-south",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.opts.Validate()
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestOptionsParse(t *testing.T) {
-	// Set up valid environment for parsing
+	// Set up valid environment for parsing - only required fields
 	_ = os.Setenv("IBMCLOUD_API_KEY", "test-key")
 	_ = os.Setenv("IBMCLOUD_REGION", "us-south")
-	_ = os.Setenv("IBMCLOUD_ZONE", "us-south-1")
-	_ = os.Setenv("IBMCLOUD_RESOURCE_GROUP_ID", "test-rg")
 	defer func() {
 		_ = os.Unsetenv("IBMCLOUD_API_KEY")
 		_ = os.Unsetenv("IBMCLOUD_REGION")
-		_ = os.Unsetenv("IBMCLOUD_ZONE")
-		_ = os.Unsetenv("IBMCLOUD_RESOURCE_GROUP_ID")
 	}()
 
 	opts := &Options{}
