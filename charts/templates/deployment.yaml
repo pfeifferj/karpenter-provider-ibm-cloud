@@ -54,6 +54,20 @@ spec:
                 secretKeyRef:
                   name: {{ include "karpenter.fullname" . }}-credentials
                   key: region
+            {{- if .Values.credentials.zone }}
+            - name: IBMCLOUD_ZONE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-credentials
+                  key: zone
+            {{- end }}
+            {{- if .Values.credentials.resourceGroupId }}
+            - name: IBMCLOUD_RESOURCE_GROUP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "karpenter.fullname" . }}-credentials
+                  key: resource_group_id
+            {{- end }}
             - name: VPC_URL
               valueFrom:
                 secretKeyRef:
