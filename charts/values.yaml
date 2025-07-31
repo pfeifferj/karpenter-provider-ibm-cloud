@@ -8,7 +8,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/pfeifferj/karpenter-provider-ibm-cloud/controller
-  tag: v0.3.56
+  tag: v0.3.57
   pullPolicy: IfNotPresent
   # digest: "sha256:98e1441aa5d15f6e23e58a466c2526942e853d49281eefffa64e22361f7a19ad"
   # Overrides the image tag whose default is the chart appVersion.
@@ -77,6 +77,10 @@ credentials:
   ibmApiKey: ""
   # Required: ibm cloud region (e.g., us-south, eu-de)
   region: ""
+  # Required: ibm cloud zone (e.g., us-south-1, eu-de-2)
+  zone: ""
+  # Required: ibm cloud resource group ID
+  resourceGroupId: ""
   # Optional: vpc api endpoint url
   # If not provided, defaults to https://{region}.iaas.cloud.ibm.com/v1
   vpcUrl: ""

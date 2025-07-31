@@ -106,15 +106,31 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		}
 	}
 
-	// Determine zone and subnet
+	// Determine zone and subnet - support both explicit and dynamic selection
 	zone := nodeClass.Spec.Zone
-	if zone == "" {
-		return nil, fmt.Errorf("zone not specified in NodeClass")
-	}
-
 	subnet := nodeClass.Spec.Subnet
-	if subnet == "" {
-		return nil, fmt.Errorf("subnet not specified in NodeClass")
+	
+	if zone == "" && subnet == "" {
+		// Neither zone nor subnet specified - use placement strategy for multi-AZ
+		if nodeClass.Spec.PlacementStrategy == nil {
+			return nil, fmt.Errorf("zone selection requires either explicit zone/subnet or placement strategy")
+		}
+		
+		// Use subnet provider to select optimal subnet based on placement strategy
+		// Note: This would require access to subnet provider - for now return error
+		return nil, fmt.Errorf("dynamic zone/subnet selection not yet implemented - specify zone and subnet explicitly")
+	} else if zone == "" && subnet != "" {
+		// Subnet specified but no zone - derive zone from subnet
+		// Note: This would require subnet lookup - for now return error
+		return nil, fmt.Errorf("zone derivation from subnet not yet implemented - specify zone explicitly")  
+	} else if zone != "" && subnet == "" {
+		// Zone specified but no subnet - need subnet selection
+		return nil, fmt.Errorf("subnet selection within zone not yet implemented - specify subnet explicitly")
+	}
+	
+	// Both zone and subnet specified - use them directly (existing behavior)
+	if zone == "" || subnet == "" {
+		return nil, fmt.Errorf("both zone and subnet must be specified")
 	}
 
 	logger.Info("Creating VPC instance with VNI", "instance_profile", instanceProfile, "zone", zone, "subnet", subnet)
