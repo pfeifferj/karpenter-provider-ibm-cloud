@@ -19,6 +19,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,12 +155,6 @@ func TestE2EFullWorkflow(t *testing.T) {
 
 	t.Logf("Starting E2E test: %s", testName)
 
-	// Clean up resources at the end
-	defer func() {
-		t.Logf("Cleaning up E2E test resources")
-		suite.cleanupTestResources(t, testName)
-	}()
-
 	// Step 1: Create NodeClass
 	nodeClass := suite.createTestNodeClass(t, testName)
 	t.Logf("Created NodeClass: %s", nodeClass.Name)
@@ -183,6 +179,10 @@ func TestE2EFullWorkflow(t *testing.T) {
 	suite.verifyInstanceInIBMCloud(t, nodeClaim.Name)
 	t.Logf("Verified instance exists in IBM Cloud")
 
+	// Step 6.5: Dump bootstrap logs for debugging
+	suite.dumpBootstrapLogs(t, nodeClaim.Name)
+	t.Logf("Bootstrap logs dumped for debugging")
+
 	// Step 7: Test instance deletion
 	suite.deleteNodeClaim(t, nodeClaim.Name)
 	t.Logf("Deleted NodeClaim: %s", nodeClaim.Name)
@@ -190,6 +190,10 @@ func TestE2EFullWorkflow(t *testing.T) {
 	// Step 8: Wait for instance to be deleted
 	suite.waitForInstanceDeletion(t, nodeClaim.Name)
 	t.Logf("Instance deleted for NodeClaim: %s", nodeClaim.Name)
+
+	// Step 9: Clean up remaining resources ONLY after all verification is complete
+	t.Logf("Cleaning up remaining test resources")
+	suite.cleanupTestResources(t, testName)
 
 	t.Logf("E2E test completed successfully: %s", testName)
 }
@@ -200,17 +204,22 @@ func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alp
 			Name: fmt.Sprintf("%s-nodeclass", testName),
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
-			Region:          s.testRegion,
-			Zone:            s.testZone,
-			InstanceProfile: "bx2-2x8", // Small instance for testing
-			Image:           s.testImage,
-			VPC:             s.testVPC,
-			Subnet:          s.testSubnet,
-			SecurityGroups:  []string{os.Getenv("TEST_SECURITY_GROUP_ID")},
+			Region:            s.testRegion,
+			Zone:              s.testZone,
+			InstanceProfile:   "bx2-2x8", // Small instance for testing
+			Image:             s.testImage,
+			VPC:               s.testVPC,
+			Subnet:            s.testSubnet,
+			SecurityGroups:    []string{os.Getenv("TEST_SECURITY_GROUP_ID")},
+			APIServerEndpoint: os.Getenv("KUBERNETES_API_SERVER_ENDPOINT"), // Internal cluster endpoint
+			BootstrapMode:     &[]string{"cloud-init"}[0],  // Explicit bootstrap mode
+			ResourceGroup:     os.Getenv("IBM_RESOURCE_GROUP_ID"), // Resource group from env
+			SSHKeys:           []string{os.Getenv("IBM_SSH_KEY_ID")}, // SSH key for troubleshooting
 			Tags: map[string]string{
 				"test":       "e2e",
 				"test-name":  testName,
 				"created-by": "karpenter-e2e",
+				"purpose":    "e2e-verification",
 			},
 		},
 	}
@@ -318,11 +327,22 @@ func (s *E2ETestSuite) waitForInstanceCreation(t *testing.T, nodeClaimName strin
 			return false, err
 		}
 
-		// Check if ProviderID is set (indicates instance was created)
-		return nodeClaim.Status.ProviderID != "", nil
+		// Check if ProviderID is set and instance is launched
+		if nodeClaim.Status.ProviderID == "" {
+			return false, nil
+		}
+
+		// Check if Launched condition is True
+		for _, condition := range nodeClaim.Status.Conditions {
+			if condition.Type == "Launched" && condition.Status == metav1.ConditionTrue {
+				return true, nil
+			}
+		}
+
+		return false, nil
 	})
 
-	require.NoError(t, err, "NodeClaim should get ProviderID within timeout")
+	require.NoError(t, err, "NodeClaim should be launched within timeout")
 }
 
 func (s *E2ETestSuite) verifyInstanceInIBMCloud(t *testing.T, nodeClaimName string) {
@@ -333,6 +353,11 @@ func (s *E2ETestSuite) verifyInstanceInIBMCloud(t *testing.T, nodeClaimName stri
 	err := s.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaimName}, &nodeClaim)
 	require.NoError(t, err)
 	require.NotEmpty(t, nodeClaim.Status.ProviderID)
+
+	t.Logf("Verifying instance with ProviderID: %s", nodeClaim.Status.ProviderID)
+	
+	// Add a small delay to ensure instance is fully available in IBM Cloud API
+	time.Sleep(5 * time.Second)
 
 	// Verify instance exists via cloud provider
 	retrievedNodeClaim, err := s.cloudProvider.Get(ctx, nodeClaim.Status.ProviderID)
@@ -453,7 +478,6 @@ func TestE2ENodeClassValidation(t *testing.T) {
 	ctx := context.Background()
 
 	testName := fmt.Sprintf("validation-test-%d", time.Now().Unix())
-	defer suite.cleanupTestResources(t, testName)
 
 	// Test invalid NodeClass (invalid resource references)
 	invalidNodeClass := &v1alpha1.IBMNodeClass{
@@ -494,6 +518,9 @@ func TestE2ENodeClassValidation(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "Invalid NodeClass should have Ready=False condition")
+	
+	// Clean up test resources after validation is complete
+	suite.cleanupTestResources(t, testName)
 }
 
 // TestE2EInstanceTypeSelection tests automatic instance type selection
@@ -501,7 +528,6 @@ func TestE2EInstanceTypeSelection(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
 
 	testName := fmt.Sprintf("instancetype-test-%d", time.Now().Unix())
-	defer suite.cleanupTestResources(t, testName)
 
 	// Test NodeClass with instance requirements instead of specific profile
 	nodeClass := &v1alpha1.IBMNodeClass{
@@ -539,6 +565,9 @@ func TestE2EInstanceTypeSelection(t *testing.T) {
 
 	assert.NotEmpty(t, updatedNodeClass.Status.SelectedInstanceTypes, "Instance types should be auto-selected")
 	t.Logf("Auto-selected instance types: %v", updatedNodeClass.Status.SelectedInstanceTypes)
+	
+	// Clean up test resources after validation is complete
+	suite.cleanupTestResources(t, testName)
 }
 
 // BenchmarkE2EInstanceCreation benchmarks instance creation performance
@@ -569,4 +598,257 @@ func BenchmarkE2EInstanceCreation(b *testing.B) {
 			suite.cleanupTestResources(&testing.T{}, testName)
 		}
 	})
+}
+
+// extractInstanceIDFromProviderID extracts the instance ID from a ProviderID
+func extractInstanceIDFromProviderID(providerID string) string {
+	// ProviderID format: "ibm:///region/instance_id"
+	parts := strings.Split(providerID, "/")
+	if len(parts) >= 4 {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
+// dumpBootstrapLogs attempts to SSH into the instance and dump bootstrap logs
+func (s *E2ETestSuite) dumpBootstrapLogs(t *testing.T, nodeClaimName string) {
+	ctx := context.Background()
+
+	// Get the NodeClaim to extract ProviderID
+	var nodeClaim karpv1.NodeClaim
+	err := s.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaimName}, &nodeClaim)
+	if err != nil {
+		t.Logf("Failed to get NodeClaim for bootstrap log dump: %v", err)
+		return
+	}
+
+	if nodeClaim.Status.ProviderID == "" {
+		t.Logf("NodeClaim has no ProviderID, cannot dump bootstrap logs")
+		return
+	}
+
+	instanceID := extractInstanceIDFromProviderID(nodeClaim.Status.ProviderID)
+	if instanceID == "" {
+		t.Logf("Failed to extract instance ID from ProviderID: %s", nodeClaim.Status.ProviderID)
+		return
+	}
+
+	t.Logf("Attempting to dump bootstrap logs for instance: %s", instanceID)
+
+	// Create floating IP for SSH access
+	floatingIP, err := s.createFloatingIPForInstance(t, instanceID, nodeClaimName)
+	if err != nil {
+		t.Logf("Failed to create floating IP for bootstrap log dump: %v", err)
+		return
+	}
+
+	// Ensure floating IP cleanup
+	defer func() {
+		if floatingIP != "" {
+			s.cleanupFloatingIP(t, floatingIP)
+		}
+	}()
+
+	// Wait a bit for floating IP to be ready
+	time.Sleep(10 * time.Second)
+
+	// Try to SSH and dump logs with retries
+	s.attemptBootstrapLogDump(t, floatingIP, instanceID, 5)
+}
+
+// createFloatingIPForInstance creates a floating IP and assigns it to the instance
+func (s *E2ETestSuite) createFloatingIPForInstance(t *testing.T, instanceID, instanceName string) (string, error) {
+	t.Logf("Creating floating IP for instance %s", instanceID)
+
+	// Use IBM Cloud CLI to create floating IP
+	cmd := exec.Command("ibmcloud", "is", "floating-ip-reserve", 
+		fmt.Sprintf("debug-%s", instanceName), 
+		"--zone", s.testZone, 
+		"--output", "json")
+	
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to create floating IP: %v", err)
+	}
+
+	// Parse the floating IP address from JSON output
+	// For simplicity, we'll use a basic string extraction
+	outputStr := string(output)
+	if !strings.Contains(outputStr, `"address"`) {
+		return "", fmt.Errorf("failed to parse floating IP from output: %s", outputStr)
+	}
+
+	// Extract IP using simple string operations (could use JSON parsing for production)
+	addressStart := strings.Index(outputStr, `"address": "`) + len(`"address": "`)
+	if addressStart < len(`"address": "`) {
+		return "", fmt.Errorf("failed to find address in output")
+	}
+	addressEnd := strings.Index(outputStr[addressStart:], `"`)
+	if addressEnd == -1 {
+		return "", fmt.Errorf("failed to parse address from output")
+	}
+	floatingIP := outputStr[addressStart : addressStart+addressEnd]
+
+	// Get instance network interface ID
+	cmd = exec.Command("ibmcloud", "is", "instance", instanceID, "--output", "json")
+	instanceOutput, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get instance details: %v", err)
+	}
+
+	instanceStr := string(instanceOutput)
+	
+	// Extract primary network interface ID (simplified - production would use JSON parsing)
+	nicStart := strings.Index(instanceStr, `"primary_network_interface"`)
+	if nicStart == -1 {
+		return "", fmt.Errorf("failed to find primary network interface")
+	}
+	
+	idStart := strings.Index(instanceStr[nicStart:], `"id": "`) + len(`"id": "`)
+	if idStart < len(`"id": "`) {
+		return "", fmt.Errorf("failed to find interface ID")
+	}
+	idStart += nicStart
+	idEnd := strings.Index(instanceStr[idStart:], `"`)
+	if idEnd == -1 {
+		return "", fmt.Errorf("failed to parse interface ID")
+	}
+	nicID := instanceStr[idStart : idStart+idEnd]
+
+	// Associate floating IP with instance
+	cmd = exec.Command("ibmcloud", "is", "instance-network-interface-floating-ip-add",
+		instanceID, nicID, floatingIP)
+	
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to associate floating IP: %v", err)
+	}
+
+	t.Logf("Created and associated floating IP %s with instance %s", floatingIP, instanceID)
+	return floatingIP, nil
+}
+
+// cleanupFloatingIP removes the floating IP
+func (s *E2ETestSuite) cleanupFloatingIP(t *testing.T, floatingIP string) {
+	t.Logf("Cleaning up floating IP: %s", floatingIP)
+	
+	// Get floating IP details to find ID
+	cmd := exec.Command("ibmcloud", "is", "floating-ips", "--output", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		t.Logf("Failed to list floating IPs for cleanup: %v", err)
+		return
+	}
+
+	outputStr := string(output)
+	if !strings.Contains(outputStr, floatingIP) {
+		t.Logf("Floating IP %s not found for cleanup", floatingIP)
+		return
+	}
+
+	// Find the ID for this floating IP (simplified extraction)
+	ipIndex := strings.Index(outputStr, floatingIP)
+	if ipIndex == -1 {
+		return
+	}
+	
+	// Look backwards for the ID field
+	beforeIP := outputStr[:ipIndex]
+	idStart := strings.LastIndex(beforeIP, `"id": "`) + len(`"id": "`)
+	if idStart < len(`"id": "`) {
+		t.Logf("Failed to find floating IP ID for cleanup")
+		return
+	}
+	idEnd := strings.Index(beforeIP[idStart:], `"`)
+	if idEnd == -1 {
+		t.Logf("Failed to parse floating IP ID for cleanup")
+		return
+	}
+	floatingIPID := beforeIP[idStart : idStart+idEnd]
+
+	// Release the floating IP
+	cmd = exec.Command("ibmcloud", "is", "floating-ip-release", floatingIPID, "--force")
+	if err := cmd.Run(); err != nil {
+		t.Logf("Failed to release floating IP %s: %v", floatingIPID, err)
+	} else {
+		t.Logf("Successfully released floating IP %s", floatingIP)
+	}
+}
+
+// attemptBootstrapLogDump tries to SSH and dump bootstrap logs with retries
+func (s *E2ETestSuite) attemptBootstrapLogDump(t *testing.T, floatingIP, instanceID string, maxRetries int) {
+	sshKey := "~/.ssh/eb"
+	
+	logFiles := []string{
+		"/var/log/cloud-init.log",
+		"/var/log/cloud-init-output.log", 
+		"/var/log/karpenter-bootstrap.log",
+		"/var/log/apt/history.log",
+	}
+
+	commands := []struct {
+		name string
+		cmd  string
+	}{
+		{"cloud-init status", "cloud-init status --long"},
+		{"systemd failed services", "systemctl --failed"},
+		{"journal errors", "journalctl -p err --no-pager -n 50"},
+		{"network status", "ip addr show && ip route show"},
+		{"DNS resolution", "nslookup archive.ubuntu.com"},
+		{"metadata service", "curl -sf -m 5 http://169.254.169.254/metadata/v1/instance || echo 'Metadata service failed'"},
+		{"disk space", "df -h"},
+		{"memory usage", "free -m"},
+		{"running processes", "ps aux | head -20"},
+	}
+
+	for retry := 1; retry <= maxRetries; retry++ {
+		t.Logf("Bootstrap log dump attempt %d/%d for instance %s (IP: %s)", retry, maxRetries, instanceID, floatingIP)
+
+		// Test SSH connectivity first
+		testCmd := exec.Command("ssh", "-i", sshKey, "-o", "StrictHostKeyChecking=no", 
+			"-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+			fmt.Sprintf("root@%s", floatingIP), "echo 'SSH_OK'")
+		
+		if output, err := testCmd.Output(); err != nil || !strings.Contains(string(output), "SSH_OK") {
+			t.Logf("SSH connectivity test failed (attempt %d): %v", retry, err)
+			if retry < maxRetries {
+				time.Sleep(time.Duration(retry*15) * time.Second) // Exponential backoff
+				continue
+			} else {
+				t.Logf("SSH never became available after %d attempts", maxRetries)
+				return
+			}
+		}
+
+		t.Logf("SSH connectivity confirmed for %s", floatingIP)
+
+		// Dump log files
+		for _, logFile := range logFiles {
+			t.Logf("=== Dumping %s ===", logFile)
+			cmd := exec.Command("ssh", "-i", sshKey, "-o", "StrictHostKeyChecking=no",
+				"-o", "ConnectTimeout=10", fmt.Sprintf("root@%s", floatingIP),
+				fmt.Sprintf("tail -50 %s 2>/dev/null || echo 'File %s not found or empty'", logFile, logFile))
+			
+			if output, err := cmd.Output(); err != nil {
+				t.Logf("Failed to read %s: %v", logFile, err)
+			} else {
+				t.Logf("Contents of %s:\n%s", logFile, string(output))
+			}
+		}
+
+		// Run diagnostic commands
+		for _, cmdInfo := range commands {
+			t.Logf("=== Running: %s ===", cmdInfo.name)
+			cmd := exec.Command("ssh", "-i", sshKey, "-o", "StrictHostKeyChecking=no",
+				"-o", "ConnectTimeout=10", fmt.Sprintf("root@%s", floatingIP), cmdInfo.cmd)
+			
+			if output, err := cmd.Output(); err != nil {
+				t.Logf("Command '%s' failed: %v", cmdInfo.name, err)
+			} else {
+				t.Logf("Output of '%s':\n%s", cmdInfo.name, string(output))
+			}
+		}
+
+		t.Logf("Bootstrap log dump completed successfully for instance %s", instanceID)
+		return
+	}
 }
