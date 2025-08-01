@@ -28,10 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"k8s.io/client-go/tools/clientcmd"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
@@ -70,13 +72,14 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 
 	// Verify required environment variables
 	requiredEnvVars := []string{
-		"IBM_API_KEY",
+		"IBMCLOUD_API_KEY",
 		"VPC_API_KEY",
-		"IBM_REGION",
+		"IBMCLOUD_REGION",
 		"TEST_VPC_ID",
 		"TEST_SUBNET_ID",
 		"TEST_IMAGE_ID",
 		"TEST_ZONE",
+		"TEST_SECURITY_GROUP_ID",
 	}
 
 	for _, envVar := range requiredEnvVars {
@@ -85,14 +88,27 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 		}
 	}
 
-	// Create Kubernetes client
-	cfg, err := config.GetConfig()
-	require.NoError(t, err)
+	// Create Kubernetes client using local kubeconfig
+	cfg, err := config.GetConfigWithContext("kubernetes-admin@kubernetes")
+	if err != nil {
+		// Fallback to local kubeconfig file
+		cfg, err = clientcmd.BuildConfigFromFlags("", "../../kubeconfig")
+		require.NoError(t, err)
+	}
 
+	// Use the global scheme which has Karpenter v1 types registered automatically
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
-	// Note: Karpenter v1 API doesn't expose AddToScheme, using standard scheme
 	require.NoError(t, corev1.AddToScheme(scheme))
+	
+	// Add Karpenter v1 types manually with proper group version registration
+	karpenterGV := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
+	metav1.AddToGroupVersion(scheme, karpenterGV)
+	scheme.AddKnownTypes(karpenterGV,
+		&karpv1.NodePool{},
+		&karpv1.NodePoolList{},
+		&karpv1.NodeClaim{},
+		&karpv1.NodeClaimList{})
 
 	kubeClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	require.NoError(t, err)
@@ -123,7 +139,7 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 		testVPC:       os.Getenv("TEST_VPC_ID"),
 		testSubnet:    os.Getenv("TEST_SUBNET_ID"),
 		testImage:     os.Getenv("TEST_IMAGE_ID"),
-		testRegion:    os.Getenv("IBM_REGION"),
+		testRegion:    os.Getenv("IBMCLOUD_REGION"),
 		testZone:      os.Getenv("TEST_ZONE"),
 	}
 }
@@ -190,6 +206,7 @@ func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alp
 			Image:           s.testImage,
 			VPC:             s.testVPC,
 			Subnet:          s.testSubnet,
+			SecurityGroups:  []string{os.Getenv("TEST_SECURITY_GROUP_ID")},
 			Tags: map[string]string{
 				"test":       "e2e",
 				"test-name":  testName,
@@ -213,7 +230,9 @@ func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName 
 			Template: karpv1.NodeClaimTemplate{
 				Spec: karpv1.NodeClaimTemplateSpec{
 					NodeClassRef: &karpv1.NodeClassReference{
-						Name: nodeClassName,
+						Group: "karpenter.ibm.sh",
+						Kind:  "IBMNodeClass",
+						Name:  nodeClassName,
 					},
 					Requirements: []karpv1.NodeSelectorRequirementWithMinValues{
 						{
@@ -242,7 +261,9 @@ func (s *E2ETestSuite) createTestNodeClaim(t *testing.T, testName, nodeClassName
 		},
 		Spec: karpv1.NodeClaimSpec{
 			NodeClassRef: &karpv1.NodeClassReference{
-				Name: nodeClassName,
+				Group: "karpenter.ibm.sh",
+				Kind:  "IBMNodeClass",
+				Name:  nodeClassName,
 			},
 			Requirements: []karpv1.NodeSelectorRequirementWithMinValues{
 				{
@@ -383,10 +404,22 @@ func (s *E2ETestSuite) cleanupTestResources(t *testing.T, testName string) {
 			continue
 		}
 
-		// Use reflection to get items from the list
-		items := resource.listObj.(interface {
-			GetItems() []client.Object
-		}).GetItems()
+		// Extract items based on resource type
+		var items []client.Object
+		switch list := resource.listObj.(type) {
+		case *karpv1.NodeClaimList:
+			for i := range list.Items {
+				items = append(items, &list.Items[i])
+			}
+		case *karpv1.NodePoolList:
+			for i := range list.Items {
+				items = append(items, &list.Items[i])
+			}
+		case *v1alpha1.IBMNodeClassList:
+			for i := range list.Items {
+				items = append(items, &list.Items[i])
+			}
+		}
 
 		for _, item := range items {
 			// Check if this resource belongs to our test
@@ -422,7 +455,7 @@ func TestE2ENodeClassValidation(t *testing.T) {
 	testName := fmt.Sprintf("validation-test-%d", time.Now().Unix())
 	defer suite.cleanupTestResources(t, testName)
 
-	// Test invalid NodeClass (missing required fields)
+	// Test invalid NodeClass (invalid resource references)
 	invalidNodeClass := &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-invalid", testName),
@@ -431,8 +464,13 @@ func TestE2ENodeClassValidation(t *testing.T) {
 			},
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
-			Region: "us-south",
-			// Missing VPC and Image
+			Region:          "us-south",
+			Zone:            "us-south-1", 
+			InstanceProfile: "bx2-2x8",
+			Image:           "r010-00000000-0000-0000-0000-000000000000", // Valid format but non-existent image
+			VPC:             "r010-00000000-0000-0000-0000-000000000000", // Valid format but non-existent VPC
+			Subnet:          "02b7-00000000-0000-0000-0000-000000000000", // Valid format but non-existent subnet
+			SecurityGroups:  []string{"r010-00000000-0000-0000-0000-000000000000"}, // Valid format but non-existent security group
 		},
 	}
 
@@ -474,11 +512,12 @@ func TestE2EInstanceTypeSelection(t *testing.T) {
 			},
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
-			Region: suite.testRegion,
-			Zone:   suite.testZone,
-			Image:  suite.testImage,
-			VPC:    suite.testVPC,
-			Subnet: suite.testSubnet,
+			Region:         suite.testRegion,
+			Zone:           suite.testZone,
+			Image:          suite.testImage,
+			VPC:            suite.testVPC,
+			Subnet:         suite.testSubnet,
+			SecurityGroups: []string{os.Getenv("TEST_SECURITY_GROUP_ID")},
 			InstanceRequirements: &v1alpha1.InstanceTypeRequirements{
 				MinimumCPU:    2,
 				MinimumMemory: 8,

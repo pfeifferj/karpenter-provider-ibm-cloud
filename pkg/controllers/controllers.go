@@ -60,6 +60,7 @@ import (
 	nodeclaimregistration "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
 	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
+	nodeclassautoplacement "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/autoplacement"
 	nodeclaasstatus "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/status"
 	nodeclasstermination "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/termination"
 	providersinstancetype "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/providers/instancetype"
@@ -125,6 +126,12 @@ func NewControllers(
 		logger.Error(err, "failed to create hash controller")
 	} else {
 		controllers = append(controllers, hashCtrl)
+	}
+
+	if _, err := nodeclassautoplacement.NewController(mgr, instanceTypeProvider, nil); err != nil {
+		logger.Error(err, "failed to create autoplacement controller")
+	} else {
+		logger.Info("successfully registered autoplacement controller")
 	}
 
 	if statusCtrl, err := nodeclaasstatus.NewController(kubeClient); err != nil {
