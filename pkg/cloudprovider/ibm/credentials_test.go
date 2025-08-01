@@ -219,38 +219,38 @@ func TestEnvironmentCredentialProvider(t *testing.T) {
 		{
 			name: "all credentials present",
 			env: map[string]string{
-				"VPC_API_KEY": "vpc-key",
-				"IBM_API_KEY": "ibm-key",
-				"IBM_REGION":  "us-south",
+				"VPC_API_KEY":      "vpc-key",
+				"IBMCLOUD_API_KEY": "ibm-key",
+				"IBMCLOUD_REGION":  "us-south",
 			},
 			wantError: false,
 		},
 		{
 			name: "missing VPC_API_KEY",
 			env: map[string]string{
-				"IBM_API_KEY": "ibm-key",
-				"IBM_REGION":  "us-south",
+				"IBMCLOUD_API_KEY": "ibm-key",
+				"IBMCLOUD_REGION":  "us-south",
 			},
 			wantError: true,
 			errorMsg:  "VPC_API_KEY environment variable is required",
 		},
 		{
-			name: "missing IBM_API_KEY",
+			name: "missing IBMCLOUD_API_KEY",
 			env: map[string]string{
-				"VPC_API_KEY": "vpc-key",
-				"IBM_REGION":  "us-south",
+				"VPC_API_KEY":     "vpc-key",
+				"IBMCLOUD_REGION": "us-south",
 			},
 			wantError: true,
-			errorMsg:  "IBM_API_KEY environment variable is required",
+			errorMsg:  "IBMCLOUD_API_KEY environment variable is required",
 		},
 		{
-			name: "missing IBM_REGION",
+			name: "missing IBMCLOUD_REGION",
 			env: map[string]string{
-				"VPC_API_KEY": "vpc-key",
-				"IBM_API_KEY": "ibm-key",
+				"VPC_API_KEY":      "vpc-key",
+				"IBMCLOUD_API_KEY": "ibm-key",
 			},
 			wantError: true,
-			errorMsg:  "IBM_REGION environment variable is required",
+			errorMsg:  "IBMCLOUD_REGION environment variable is required",
 		},
 	}
 
@@ -258,8 +258,8 @@ func TestEnvironmentCredentialProvider(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clear env vars
 			_ = os.Unsetenv("VPC_API_KEY")
-			_ = os.Unsetenv("IBM_API_KEY")
-			_ = os.Unsetenv("IBM_REGION")
+			_ = os.Unsetenv("IBMCLOUD_API_KEY")
+			_ = os.Unsetenv("IBMCLOUD_REGION")
 
 			// Set test env vars
 			for k, v := range tt.env {
@@ -275,8 +275,8 @@ func TestEnvironmentCredentialProvider(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.env["VPC_API_KEY"], creds.VPCAPIKey)
-				assert.Equal(t, tt.env["IBM_API_KEY"], creds.IBMAPIKey)
-				assert.Equal(t, tt.env["IBM_REGION"], creds.Region)
+				assert.Equal(t, tt.env["IBMCLOUD_API_KEY"], creds.IBMAPIKey)
+				assert.Equal(t, tt.env["IBMCLOUD_REGION"], creds.Region)
 			}
 		})
 	}

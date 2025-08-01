@@ -57,43 +57,43 @@ func TestNewClient(t *testing.T) {
 		{
 			name: "valid configuration",
 			envVars: map[string]string{
-				"VPC_API_KEY": "test-vpc-key",
-				"IBM_API_KEY": "test-ibm-key",
-				"IBM_REGION":  "us-south",
+				"VPC_API_KEY":      "test-vpc-key",
+				"IBMCLOUD_API_KEY": "test-ibm-key",
+				"IBMCLOUD_REGION":  "us-south",
 			},
 			wantError: false,
 		},
 		{
 			name: "valid configuration with custom VPC URL",
 			envVars: map[string]string{
-				"VPC_URL":     "https://custom.vpc.url/v1",
-				"VPC_API_KEY": "test-vpc-key",
-				"IBM_API_KEY": "test-ibm-key",
-				"IBM_REGION":  "us-south",
+				"VPC_URL":          "https://custom.vpc.url/v1",
+				"VPC_API_KEY":      "test-vpc-key",
+				"IBMCLOUD_API_KEY": "test-ibm-key",
+				"IBMCLOUD_REGION":  "us-south",
 			},
 			wantError: false,
 		},
 		{
 			name: "missing VPC API key",
 			envVars: map[string]string{
-				"IBM_API_KEY": "test-ibm-key",
-				"IBM_REGION":  "us-south",
+				"IBMCLOUD_API_KEY": "test-ibm-key",
+				"IBMCLOUD_REGION":  "us-south",
 			},
 			wantError: true,
 		},
 		{
 			name: "missing IBM API key",
 			envVars: map[string]string{
-				"VPC_API_KEY": "test-vpc-key",
-				"IBM_REGION":  "us-south",
+				"VPC_API_KEY":     "test-vpc-key",
+				"IBMCLOUD_REGION": "us-south",
 			},
 			wantError: true,
 		},
 		{
 			name: "missing region",
 			envVars: map[string]string{
-				"VPC_API_KEY": "test-vpc-key",
-				"IBM_API_KEY": "test-ibm-key",
+				"VPC_API_KEY":      "test-vpc-key",
+				"IBMCLOUD_API_KEY": "test-ibm-key",
 			},
 			wantError: true,
 		},
@@ -131,8 +131,8 @@ func TestNewClient(t *testing.T) {
 				if client.iamClient == nil {
 					t.Error("iamClient should not be nil")
 				}
-				if client.GetRegion() != tt.envVars["IBM_REGION"] {
-					t.Errorf("expected region %s, got %s", tt.envVars["IBM_REGION"], client.GetRegion())
+				if client.GetRegion() != tt.envVars["IBMCLOUD_REGION"] {
+					t.Errorf("expected region %s, got %s", tt.envVars["IBMCLOUD_REGION"], client.GetRegion())
 				}
 			}
 		})
