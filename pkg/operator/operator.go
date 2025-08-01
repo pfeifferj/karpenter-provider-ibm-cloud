@@ -76,7 +76,7 @@ func NewOperator(ctx context.Context, coreOperator *operator.Operator) (context.
 }
 
 func validateIBMCredentials(ctx context.Context) error {
-	requiredEnvVars := []string{"IBM_REGION", "IBM_API_KEY", "VPC_API_KEY"}
+	requiredEnvVars := []string{"IBMCLOUD_REGION", "IBMCLOUD_API_KEY", "VPC_API_KEY"}
 	for _, envVar := range requiredEnvVars {
 		if os.Getenv(envVar) == "" {
 			return fmt.Errorf("%s environment variable is not set", envVar)
