@@ -1,0 +1,139 @@
+name: E2E Tests (In-Cluster Runner)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_benchmarks:
+        description: 'Run performance benchmarks'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  pull_request:
+    types: [labeled]
+    
+jobs:
+  e2e-tests:
+    # Use self-hosted runner with 'ibm-e2e' label
+    runs-on: [self-hosted, ibm-e2e]
+    if: |
+      github.event_name == 'workflow_dispatch' || 
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' && contains(github.event.label.name, 'run-e2e'))
+    
+    # Prevent concurrent e2e runs
+    concurrency:
+      group: e2e-tests
+      cancel-in-progress: false
+    
+    timeout-minutes: 60
+    
+    container:
+      # Run in a container with necessary tools
+      image: golang:1.24.4
+      options: --user 0
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        apt-get update && apt-get install -y curl jq
+        
+        # Install kubectl
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        mv kubectl /usr/local/bin/
+        
+        # Install IBM Cloud CLI
+        curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+        ibmcloud plugin install vpc-infrastructure
+
+    - name: Verify cluster access
+      run: |
+        # In-cluster runner should have ServiceAccount with proper RBAC
+        kubectl cluster-info
+        kubectl auth can-i create nodeclaims --all-namespaces
+        kubectl auth can-i create nodepools --all-namespaces
+        kubectl auth can-i create ibmnodeclasses --all-namespaces
+
+    - name: Configure IBM Cloud CLI
+      env:
+        IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+      run: |
+        ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r ${{ vars.IBMCLOUD_REGION }}
+
+    - name: Deploy latest version
+      run: |
+        # Install or update Karpenter CRDs
+        kubectl apply -f charts/crds/
+        
+        # Restart operator pods to pull latest upstream image tag  
+        kubectl rollout restart deployment/karpenter-karpenter-ibm -n karpenter
+
+    - name: Run E2E tests
+      env:
+        RUN_E2E_TESTS: "true"
+        IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+        VPC_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+        IBMCLOUD_REGION: ${{ vars.IBMCLOUD_REGION }}
+        TEST_VPC_ID: ${{ vars.E2E_TEST_VPC_ID }}
+        TEST_SUBNET_ID: ${{ vars.E2E_TEST_SUBNET_ID }}
+        TEST_IMAGE_ID: ${{ vars.E2E_TEST_IMAGE_ID }}
+        TEST_ZONE: ${{ vars.E2E_TEST_ZONE }}
+        TEST_SECURITY_GROUP_ID: ${{ vars.E2E_TEST_SECURITY_GROUP_ID }}
+        VPC_URL: ${{ vars.VPC_URL }}
+        KUBERNETES_API_SERVER_ENDPOINT: ${{ vars.KUBERNETES_API_SERVER_ENDPOINT }}
+        IBM_RESOURCE_GROUP_ID: ${{ vars.IBM_RESOURCE_GROUP_ID }}
+        IBM_SSH_KEY_ID: ${{ vars.IBM_SSH_KEY_ID }}
+        RUN_E2E_BENCHMARKS: ${{ inputs.run_benchmarks }}
+        # Use in-cluster config
+        KUBERNETES_SERVICE_HOST: "kubernetes.default.svc"
+        KUBERNETES_SERVICE_PORT: "443"
+      run: |
+        # The in-cluster config will be automatically detected
+        go test -v -timeout 45m ./test/e2e/... -run TestE2E
+        
+        # Run benchmarks if requested
+        if [[ "$RUN_E2E_BENCHMARKS" == "true" ]]; then
+          go test -v -timeout 30m ./test/e2e/... -run=^$ -bench=.
+        fi
+
+    - name: Collect test artifacts
+      if: always()
+      run: |
+        mkdir -p test-artifacts
+        
+        # Collect logs and events
+        kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=1000 > test-artifacts/karpenter-logs.txt || true
+        kubectl get events -A --sort-by='.lastTimestamp' > test-artifacts/events.txt || true
+        kubectl get nodes -o wide > test-artifacts/nodes.txt || true
+        kubectl get nodeclaims -o yaml > test-artifacts/nodeclaims.yaml || true
+        kubectl get nodepools -o yaml > test-artifacts/nodepools.yaml || true
+        kubectl get ibmnodeclasses -o yaml > test-artifacts/ibmnodeclasses.yaml || true
+
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: e2e-test-artifacts-${{ github.run_id }}
+        path: test-artifacts/
+        retention-days: 7
+
+    - name: Cleanup test resources
+      if: always()
+      env:
+        IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+      run: |
+        # Clean up Kubernetes resources
+        kubectl delete nodeclaims -l test=e2e --all --timeout=5m || true
+        kubectl delete nodepools -l test=e2e --all --timeout=5m || true
+        kubectl delete ibmnodeclasses -l test=e2e --all --timeout=5m || true
+        
+        # Clean up IBM Cloud instances
+        ibmcloud is instances --output json | \
+          jq -r '.[] | select(.tags | index("karpenter-e2e")) | .id' | \
+          xargs -I {} ibmcloud is instance-delete {} --force || true
