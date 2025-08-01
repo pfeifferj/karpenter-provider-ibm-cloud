@@ -283,14 +283,14 @@ func (e *EnvironmentCredentialProvider) GetCredentials(ctx context.Context) (*Cr
 		return nil, fmt.Errorf("VPC_API_KEY environment variable is required")
 	}
 
-	ibmAPIKey := os.Getenv("IBM_API_KEY")
+	ibmAPIKey := os.Getenv("IBMCLOUD_API_KEY")
 	if ibmAPIKey == "" {
-		return nil, fmt.Errorf("IBM_API_KEY environment variable is required")
+		return nil, fmt.Errorf("IBMCLOUD_API_KEY environment variable is required")
 	}
 
-	region := os.Getenv("IBM_REGION")
+	region := os.Getenv("IBMCLOUD_REGION")
 	if region == "" {
-		return nil, fmt.Errorf("IBM_REGION environment variable is required")
+		return nil, fmt.Errorf("IBMCLOUD_REGION environment variable is required")
 	}
 
 	return &Credentials{
