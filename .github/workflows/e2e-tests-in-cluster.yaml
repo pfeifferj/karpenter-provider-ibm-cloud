@@ -52,9 +52,23 @@ jobs:
         curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
         ibmcloud plugin install vpc-infrastructure
 
-    - name: Verify cluster access
+    - name: Setup kubeconfig
+      env:
+        KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
       run: |
-        # In-cluster runner should have ServiceAccount with proper RBAC
+        # Create kubeconfig from secret 
+        printf '%s' "$KUBECONFIG_CONTENT" | base64 -d > /tmp/kubeconfig
+        chmod 600 /tmp/kubeconfig
+        export KUBECONFIG=/tmp/kubeconfig
+        
+        # Verify the kubeconfig works
+        kubectl version --client
+
+    - name: Verify cluster access
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+      run: |
+        # Verify cluster access with provided kubeconfig
         kubectl cluster-info
         kubectl auth can-i create nodeclaims --all-namespaces
         kubectl auth can-i create nodepools --all-namespaces
@@ -67,6 +81,8 @@ jobs:
         ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r ${{ vars.IBMCLOUD_REGION }}
 
     - name: Deploy latest version
+      env:
+        KUBECONFIG: /tmp/kubeconfig
       run: |
         # Install or update Karpenter CRDs
         kubectl apply -f charts/crds/
@@ -90,9 +106,8 @@ jobs:
         IBM_RESOURCE_GROUP_ID: ${{ vars.IBM_RESOURCE_GROUP_ID }}
         IBM_SSH_KEY_ID: ${{ vars.IBM_SSH_KEY_ID }}
         RUN_E2E_BENCHMARKS: ${{ inputs.run_benchmarks }}
-        # Use in-cluster config
-        KUBERNETES_SERVICE_HOST: "kubernetes.default.svc"
-        KUBERNETES_SERVICE_PORT: "443"
+        # Use the kubeconfig we set up
+        KUBECONFIG: /tmp/kubeconfig
       run: |
         # The in-cluster config will be automatically detected
         go test -v -timeout 45m ./test/e2e/... -run TestE2E
@@ -104,6 +119,8 @@ jobs:
 
     - name: Collect test artifacts
       if: always()
+      env:
+        KUBECONFIG: /tmp/kubeconfig
       run: |
         mkdir -p test-artifacts
         
@@ -127,6 +144,7 @@ jobs:
       if: always()
       env:
         IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+        KUBECONFIG: /tmp/kubeconfig
       run: |
         # Clean up Kubernetes resources
         kubectl delete nodeclaims -l test=e2e --all --timeout=5m || true
