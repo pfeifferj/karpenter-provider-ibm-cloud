@@ -36,11 +36,11 @@ jobs:
             
             // Get all package versions
             const versions = await github.paginate(
-              github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+              github.rest.packages.getAllPackageVersionsForPackageOwnedByUser,
               {
                 package_type: 'container',
                 package_name: packageName,
-                org: context.repo.owner,
+                username: context.repo.owner,
               }
             );
             
@@ -93,10 +93,10 @@ jobs:
                 try {
                   // First, try to get the version to confirm it exists
                   try {
-                    await github.rest.packages.getPackageVersionForOrganization({
+                    await github.rest.packages.getPackageVersionForUser({
                       package_type: 'container',
                       package_name: packageName,
-                      org: context.repo.owner,
+                      username: context.repo.owner,
                       package_version_id: version.id,
                     });
                   } catch (getError) {
@@ -108,10 +108,10 @@ jobs:
                   }
                   
                   // Version exists, proceed with deletion
-                  await github.rest.packages.deletePackageVersionForOrg({
+                  await github.rest.packages.deletePackageVersionForUser({
                     package_type: 'container',
                     package_name: packageName,
-                    org: context.repo.owner,
+                    username: context.repo.owner,
                     package_version_id: version.id,
                   });
                   console.log(`Deleted version: ${version.name}`);
