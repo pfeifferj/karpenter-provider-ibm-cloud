@@ -523,13 +523,31 @@ func TestE2ENodeClassValidation(t *testing.T) {
 	err := suite.kubeClient.Create(ctx, invalidNodeClass)
 	require.NoError(t, err)
 
-	// Wait a bit for controllers to process
-	time.Sleep(5 * time.Second)
+	// Wait for status controller to process validation
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 
-	// Check that NodeClass has validation errors
 	var updatedNodeClass v1alpha1.IBMNodeClass
-	err = suite.kubeClient.Get(ctx, types.NamespacedName{Name: invalidNodeClass.Name}, &updatedNodeClass)
-	require.NoError(t, err)
+	err = wait.PollUntilContextTimeout(ctx, 5*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+		err := suite.kubeClient.Get(ctx, types.NamespacedName{Name: invalidNodeClass.Name}, &updatedNodeClass)
+		if err != nil {
+			return false, err
+		}
+
+		// Check if validation has been processed (either Ready=True or Ready=False)
+		for _, condition := range updatedNodeClass.Status.Conditions {
+			if condition.Type == "Ready" {
+				t.Logf("NodeClass validation processed: Ready=%s, Reason=%s, Message=%s", 
+					condition.Status, condition.Reason, condition.Message)
+				return true, nil
+			}
+		}
+		
+		t.Logf("Waiting for status controller to process NodeClass validation...")
+		return false, nil
+	})
+	
+	require.NoError(t, err, "Status controller should process NodeClass validation within timeout")
 
 	// Should have conditions indicating validation failure
 	found := false
@@ -577,24 +595,50 @@ func TestE2EInstanceTypeSelection(t *testing.T) {
 	err := suite.kubeClient.Create(context.Background(), nodeClass)
 	require.NoError(t, err)
 
-	// Wait for NodeClass to be processed and instance types selected
-	suite.waitForNodeClassReady(t, nodeClass.Name)
+	// Wait for autoplacement controller to process instance requirements
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
 
-	// Wait a bit more for the autoplacement controller to process
-	time.Sleep(5 * time.Second)
-
-	// Verify that instance types were selected
 	var updatedNodeClass v1alpha1.IBMNodeClass
-	err = suite.kubeClient.Get(context.Background(), types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass)
-	require.NoError(t, err)
+	err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 3*time.Minute, true, func(ctx context.Context) (bool, error) {
+		err := suite.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass)
+		if err != nil {
+			return false, err
+		}
 
-	// If no instance types were selected, try to list them directly for debugging
-	if len(updatedNodeClass.Status.SelectedInstanceTypes) == 0 {
-		t.Logf("No instance types auto-selected, checking instance type provider...")
+		// Check if autoplacement has been processed - either instance profile is set or status has selected types
+		if updatedNodeClass.Spec.InstanceProfile != "" {
+			t.Logf("Autoplacement controller set InstanceProfile: %s", updatedNodeClass.Spec.InstanceProfile)
+			return true, nil
+		}
+		
+		if len(updatedNodeClass.Status.SelectedInstanceTypes) > 0 {
+			t.Logf("Autoplacement controller populated SelectedInstanceTypes: %v", updatedNodeClass.Status.SelectedInstanceTypes)
+			return true, nil
+		}
+		
+		// Check conditions for autoplacement status
+		for _, condition := range updatedNodeClass.Status.Conditions {
+			if condition.Type == "AutoPlacement" {
+				t.Logf("AutoPlacement condition: Status=%s, Reason=%s, Message=%s", 
+					condition.Status, condition.Reason, condition.Message)
+				if condition.Status == metav1.ConditionFalse {
+					return false, fmt.Errorf("autoplacement failed: %s", condition.Message)
+				}
+			}
+		}
+		
+		t.Logf("Waiting for autoplacement controller to process instance requirements...")
+		return false, nil
+	})
+
+	// If autoplacement didn't work, debug by listing available instance types
+	if err != nil || (updatedNodeClass.Spec.InstanceProfile == "" && len(updatedNodeClass.Status.SelectedInstanceTypes) == 0) {
+		t.Logf("Autoplacement failed or didn't complete, debugging...")
 		
 		// List available instance types to debug
-		ctx := context.Background()
-		instanceTypes, listErr := suite.instanceTypeProvider.List(ctx)
+		debugCtx := context.Background()
+		instanceTypes, listErr := suite.instanceTypeProvider.List(debugCtx)
 		if listErr != nil {
 			t.Logf("Failed to list instance types: %v", listErr)
 		} else {
@@ -608,7 +652,7 @@ func TestE2EInstanceTypeSelection(t *testing.T) {
 		
 		// Also check if we can filter instance types
 		if nodeClass.Spec.InstanceRequirements != nil {
-			filteredTypes, filterErr := suite.instanceTypeProvider.FilterInstanceTypes(ctx, nodeClass.Spec.InstanceRequirements)
+			filteredTypes, filterErr := suite.instanceTypeProvider.FilterInstanceTypes(debugCtx, nodeClass.Spec.InstanceRequirements)
 			if filterErr != nil {
 				t.Logf("Failed to filter instance types: %v", filterErr)
 			} else {
@@ -617,6 +661,7 @@ func TestE2EInstanceTypeSelection(t *testing.T) {
 		}
 	}
 
+	require.NoError(t, err, "Autoplacement controller should process NodeClass within timeout")
 	assert.NotEmpty(t, updatedNodeClass.Status.SelectedInstanceTypes, "Instance types should be auto-selected")
 	t.Logf("Auto-selected instance types: %v", updatedNodeClass.Status.SelectedInstanceTypes)
 	
@@ -693,6 +738,14 @@ func (s *E2ETestSuite) dumpBootstrapLogs(t *testing.T, nodeClaimName string) {
 	floatingIP, err := s.createFloatingIPForInstance(t, instanceID, nodeClaimName)
 	if err != nil {
 		t.Logf("Failed to create floating IP for bootstrap log dump: %v", err)
+		
+		// Check if it's the network attachment issue
+		if strings.Contains(err.Error(), "network_attachment is used") {
+			t.Logf("Instance uses network attachment - trying alternative troubleshooting method")
+			s.useAlternativeTroubleshooting(t, instanceID)
+		} else {
+			t.Logf("Unable to troubleshoot instance bootstrap: %v", err)
+		}
 		return
 	}
 
@@ -714,9 +767,17 @@ func (s *E2ETestSuite) dumpBootstrapLogs(t *testing.T, nodeClaimName string) {
 func (s *E2ETestSuite) createFloatingIPForInstance(t *testing.T, instanceID, instanceName string) (string, error) {
 	t.Logf("Creating floating IP for instance %s", instanceID)
 
+	// First check if instance exists and get its details
+	cmd := exec.Command("ibmcloud", "is", "instance", instanceID, "--output", "json")
+	instanceOutput, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get instance details: %v", err)
+	}
+
 	// Use IBM Cloud CLI to create floating IP
-	cmd := exec.Command("ibmcloud", "is", "floating-ip-reserve", 
-		fmt.Sprintf("debug-%s", instanceName), 
+	fipName := fmt.Sprintf("e2e-debug-%s", instanceName)
+	cmd = exec.Command("ibmcloud", "is", "floating-ip-reserve", 
+		fipName, 
 		"--zone", s.testZone, 
 		"--output", "json")
 	
@@ -725,14 +786,13 @@ func (s *E2ETestSuite) createFloatingIPForInstance(t *testing.T, instanceID, ins
 		return "", fmt.Errorf("failed to create floating IP: %v", err)
 	}
 
-	// Parse the floating IP address from JSON output
-	// For simplicity, we'll use a basic string extraction
+	// Parse the floating IP details from JSON output
 	outputStr := string(output)
 	if !strings.Contains(outputStr, `"address"`) {
 		return "", fmt.Errorf("failed to parse floating IP from output: %s", outputStr)
 	}
 
-	// Extract IP using simple string operations (could use JSON parsing for production)
+	// Extract floating IP address
 	addressStart := strings.Index(outputStr, `"address": "`) + len(`"address": "`)
 	if addressStart < len(`"address": "`) {
 		return "", fmt.Errorf("failed to find address in output")
@@ -743,16 +803,19 @@ func (s *E2ETestSuite) createFloatingIPForInstance(t *testing.T, instanceID, ins
 	}
 	floatingIP := outputStr[addressStart : addressStart+addressEnd]
 
-	// Get instance network interface ID
-	cmd = exec.Command("ibmcloud", "is", "instance", instanceID, "--output", "json")
-	instanceOutput, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get instance details: %v", err)
+	// Extract floating IP ID
+	fipIDStart := strings.Index(outputStr, `"id": "`) + len(`"id": "`)
+	if fipIDStart < len(`"id": "`) {
+		return "", fmt.Errorf("failed to find floating IP ID in output")
 	}
+	fipIDEnd := strings.Index(outputStr[fipIDStart:], `"`)
+	if fipIDEnd == -1 {
+		return "", fmt.Errorf("failed to parse floating IP ID from output")
+	}
+	fipID := outputStr[fipIDStart : fipIDStart+fipIDEnd]
 
+	// Extract primary network interface ID from instance details
 	instanceStr := string(instanceOutput)
-	
-	// Extract primary network interface ID (simplified - production would use JSON parsing)
 	nicStart := strings.Index(instanceStr, `"primary_network_interface"`)
 	if nicStart == -1 {
 		return "", fmt.Errorf("failed to find primary network interface")
@@ -769,22 +832,15 @@ func (s *E2ETestSuite) createFloatingIPForInstance(t *testing.T, instanceID, ins
 	}
 	nicID := instanceStr[idStart : idStart+idEnd]
 
-	// Get the floating IP ID from the response
-	fipIDStart := strings.Index(outputStr, `"id": "`) + len(`"id": "`)
-	if fipIDStart < len(`"id": "`) {
-		return "", fmt.Errorf("failed to find floating IP ID in output")
-	}
-	fipIDEnd := strings.Index(outputStr[fipIDStart:], `"`)
-	if fipIDEnd == -1 {
-		return "", fmt.Errorf("failed to parse floating IP ID from output")
-	}
-	fipID := outputStr[fipIDStart : fipIDStart+fipIDEnd]
-
 	// Associate floating IP with instance using the FIP ID
 	cmd = exec.Command("ibmcloud", "is", "instance-network-interface-floating-ip-add",
 		instanceID, nicID, fipID)
 	
 	if output, err := cmd.CombinedOutput(); err != nil {
+		// Check if it's the network attachment error we've seen
+		if strings.Contains(string(output), "network_attachment is used") {
+			return "", fmt.Errorf("cannot associate floating IP: instance uses network attachment (this is expected for some configurations)")
+		}
 		return "", fmt.Errorf("failed to associate floating IP: %v, output: %s", err, string(output))
 	}
 
