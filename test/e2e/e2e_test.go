@@ -24,8 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/zapr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"k8s.io/client-go/tools/clientcmd"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
@@ -51,11 +54,25 @@ const (
 	pollInterval = 10 * time.Second
 )
 
+func init() {
+	// Initialize logger for controller-runtime to avoid warnings
+	zapConfig := zap.NewDevelopmentConfig()
+	
+	// Reduce noise in e2e tests unless verbose mode is enabled
+	if os.Getenv("E2E_VERBOSE") != "true" {
+		zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+	
+	zapLogger, _ := zapConfig.Build()
+	log.SetLogger(zapr.NewLogger(zapLogger))
+}
+
 // E2ETestSuite contains the test environment
 type E2ETestSuite struct {
-	kubeClient    client.Client
-	ibmClient     *ibm.Client
-	cloudProvider *ibmcloud.CloudProvider
+	kubeClient           client.Client
+	ibmClient            *ibm.Client
+	cloudProvider        *ibmcloud.CloudProvider
+	instanceTypeProvider instancetype.Provider
 
 	// Test IBM Cloud resources
 	testVPC    string
@@ -135,14 +152,15 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 	)
 
 	return &E2ETestSuite{
-		kubeClient:    kubeClient,
-		ibmClient:     ibmClient,
-		cloudProvider: cloudProvider,
-		testVPC:       os.Getenv("TEST_VPC_ID"),
-		testSubnet:    os.Getenv("TEST_SUBNET_ID"),
-		testImage:     os.Getenv("TEST_IMAGE_ID"),
-		testRegion:    os.Getenv("IBMCLOUD_REGION"),
-		testZone:      os.Getenv("TEST_ZONE"),
+		kubeClient:           kubeClient,
+		ibmClient:            ibmClient,
+		cloudProvider:        cloudProvider,
+		instanceTypeProvider: instanceTypeProvider,
+		testVPC:              os.Getenv("TEST_VPC_ID"),
+		testSubnet:           os.Getenv("TEST_SUBNET_ID"),
+		testImage:            os.Getenv("TEST_IMAGE_ID"),
+		testRegion:           os.Getenv("IBMCLOUD_REGION"),
+		testZone:             os.Getenv("TEST_ZONE"),
 	}
 }
 
@@ -377,10 +395,12 @@ func (s *E2ETestSuite) deleteNodeClaim(t *testing.T, nodeClaimName string) {
 }
 
 func (s *E2ETestSuite) waitForInstanceDeletion(t *testing.T, nodeClaimName string) {
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	// Use longer timeout for deletion as IBM Cloud instances can take time to clean up
+	deletionTimeout := 15 * time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), deletionTimeout)
 	defer cancel()
 
-	err := wait.PollUntilContextTimeout(ctx, pollInterval, testTimeout, true, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, deletionTimeout, true, func(ctx context.Context) (bool, error) {
 		var nodeClaim karpv1.NodeClaim
 		err := s.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaimName}, &nodeClaim)
 		if errors.IsNotFound(err) {
@@ -390,6 +410,8 @@ func (s *E2ETestSuite) waitForInstanceDeletion(t *testing.T, nodeClaimName strin
 			return false, err
 		}
 
+		// Log the current status to help debug timeout issues
+		t.Logf("NodeClaim %s still exists, status: %+v", nodeClaimName, nodeClaim.Status)
 		return false, nil // Still exists
 	})
 
@@ -558,10 +580,42 @@ func TestE2EInstanceTypeSelection(t *testing.T) {
 	// Wait for NodeClass to be processed and instance types selected
 	suite.waitForNodeClassReady(t, nodeClass.Name)
 
+	// Wait a bit more for the autoplacement controller to process
+	time.Sleep(5 * time.Second)
+
 	// Verify that instance types were selected
 	var updatedNodeClass v1alpha1.IBMNodeClass
 	err = suite.kubeClient.Get(context.Background(), types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass)
 	require.NoError(t, err)
+
+	// If no instance types were selected, try to list them directly for debugging
+	if len(updatedNodeClass.Status.SelectedInstanceTypes) == 0 {
+		t.Logf("No instance types auto-selected, checking instance type provider...")
+		
+		// List available instance types to debug
+		ctx := context.Background()
+		instanceTypes, listErr := suite.instanceTypeProvider.List(ctx)
+		if listErr != nil {
+			t.Logf("Failed to list instance types: %v", listErr)
+		} else {
+			t.Logf("Available instance types: %d", len(instanceTypes))
+			for i, it := range instanceTypes {
+				if i < 5 { // Log first 5
+					t.Logf("  - %s", it.Name)
+				}
+			}
+		}
+		
+		// Also check if we can filter instance types
+		if nodeClass.Spec.InstanceRequirements != nil {
+			filteredTypes, filterErr := suite.instanceTypeProvider.FilterInstanceTypes(ctx, nodeClass.Spec.InstanceRequirements)
+			if filterErr != nil {
+				t.Logf("Failed to filter instance types: %v", filterErr)
+			} else {
+				t.Logf("Filtered instance types: %d", len(filteredTypes))
+			}
+		}
+	}
 
 	assert.NotEmpty(t, updatedNodeClass.Status.SelectedInstanceTypes, "Instance types should be auto-selected")
 	t.Logf("Auto-selected instance types: %v", updatedNodeClass.Status.SelectedInstanceTypes)
@@ -715,12 +769,23 @@ func (s *E2ETestSuite) createFloatingIPForInstance(t *testing.T, instanceID, ins
 	}
 	nicID := instanceStr[idStart : idStart+idEnd]
 
-	// Associate floating IP with instance
+	// Get the floating IP ID from the response
+	fipIDStart := strings.Index(outputStr, `"id": "`) + len(`"id": "`)
+	if fipIDStart < len(`"id": "`) {
+		return "", fmt.Errorf("failed to find floating IP ID in output")
+	}
+	fipIDEnd := strings.Index(outputStr[fipIDStart:], `"`)
+	if fipIDEnd == -1 {
+		return "", fmt.Errorf("failed to parse floating IP ID from output")
+	}
+	fipID := outputStr[fipIDStart : fipIDStart+fipIDEnd]
+
+	// Associate floating IP with instance using the FIP ID
 	cmd = exec.Command("ibmcloud", "is", "instance-network-interface-floating-ip-add",
-		instanceID, nicID, floatingIP)
+		instanceID, nicID, fipID)
 	
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to associate floating IP: %v", err)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("failed to associate floating IP: %v, output: %s", err, string(output))
 	}
 
 	t.Logf("Created and associated floating IP %s with instance %s", floatingIP, instanceID)
