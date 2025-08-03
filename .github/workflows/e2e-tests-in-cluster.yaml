@@ -78,7 +78,7 @@ jobs:
       env:
         IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
       run: |
-        ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r ${{ vars.IBMCLOUD_REGION }}
+        ibmcloud login --apikey "${{ secrets.IBMCLOUD_API_KEY }}" -r "${{ secrets.IBMCLOUD_REGION }}"
 
     - name: Deploy latest version
       env:
@@ -95,16 +95,16 @@ jobs:
         RUN_E2E_TESTS: "true"
         IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
         VPC_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
-        IBMCLOUD_REGION: ${{ vars.IBMCLOUD_REGION }}
-        TEST_VPC_ID: ${{ vars.E2E_TEST_VPC_ID }}
-        TEST_SUBNET_ID: ${{ vars.E2E_TEST_SUBNET_ID }}
-        TEST_IMAGE_ID: ${{ vars.E2E_TEST_IMAGE_ID }}
-        TEST_ZONE: ${{ vars.E2E_TEST_ZONE }}
-        TEST_SECURITY_GROUP_ID: ${{ vars.E2E_TEST_SECURITY_GROUP_ID }}
-        VPC_URL: ${{ vars.VPC_URL }}
-        KUBERNETES_API_SERVER_ENDPOINT: ${{ vars.KUBERNETES_API_SERVER_ENDPOINT }}
-        IBM_RESOURCE_GROUP_ID: ${{ vars.IBM_RESOURCE_GROUP_ID }}
-        IBM_SSH_KEY_ID: ${{ vars.IBM_SSH_KEY_ID }}
+        IBMCLOUD_REGION: ${{ secrets.IBMCLOUD_REGION }}
+        TEST_VPC_ID: ${{ secrets.E2E_TEST_VPC_ID }}
+        TEST_SUBNET_ID: ${{ secrets.E2E_TEST_SUBNET_ID }}
+        TEST_IMAGE_ID: ${{ secrets.E2E_TEST_IMAGE_ID }}
+        TEST_ZONE: ${{ secrets.E2E_TEST_ZONE }}
+        TEST_SECURITY_GROUP_ID: ${{ secrets.E2E_TEST_SECURITY_GROUP_ID }}
+        VPC_URL: ${{ secrets.VPC_URL }}
+        KUBERNETES_API_SERVER_ENDPOINT: ${{ secrets.KUBERNETES_API_SERVER_ENDPOINT }}
+        IBM_RESOURCE_GROUP_ID: ${{ secrets.IBM_RESOURCE_GROUP_ID }}
+        IBM_SSH_KEY_ID: ${{ secrets.IBM_SSH_KEY_ID }}
         RUN_E2E_BENCHMARKS: ${{ inputs.run_benchmarks }}
         # Use the kubeconfig we set up
         KUBECONFIG: /tmp/kubeconfig
