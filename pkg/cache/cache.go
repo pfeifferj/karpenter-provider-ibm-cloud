@@ -32,6 +32,7 @@ type Cache struct {
 	items    map[string]*Entry
 	ttl      time.Duration
 	stopChan chan struct{}
+	stopOnce sync.Once
 }
 
 // New creates a new cache with the specified TTL
@@ -50,20 +51,31 @@ func New(ttl time.Duration) *Cache {
 
 // Get retrieves a value from the cache
 func (c *Cache) Get(key string) (interface{}, bool) {
+	// First, try with read lock for the common case (non-expired entries)
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	entry, exists := c.items[key]
 	if !exists {
+		c.mu.RUnlock()
 		return nil, false
 	}
 
-	if time.Now().After(entry.Expiration) {
+	now := time.Now()
+	if !now.After(entry.Expiration) {
+		defer c.mu.RUnlock()
+		return entry.Value, true
+	}
+
+	// Entry is expired, upgrade to write lock to clean it up
+	c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Double-check the entry still exists and is still expired (race condition protection)
+	entry, exists = c.items[key]
+	if exists && now.After(entry.Expiration) {
 		delete(c.items, key)
-		return nil, false
 	}
-
-	return entry.Value, true
+	return nil, false
 }
 
 // Set stores a value in the cache with the default TTL
@@ -111,13 +123,9 @@ func (c *Cache) Clear() {
 
 // Stop stops the cleanup goroutine
 func (c *Cache) Stop() {
-	select {
-	case <-c.stopChan:
-		// Already stopped
-		return
-	default:
+	c.stopOnce.Do(func() {
 		close(c.stopChan)
-	}
+	})
 }
 
 // cleanup periodically removes expired entries
