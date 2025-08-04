@@ -588,6 +588,7 @@ func TestCloudProvider_Create_CircuitBreakerEventPublishing(t *testing.T) {
 	assert.Equal(t, corev1.EventTypeWarning, event.Type)
 }
 
+
 func TestCloudProvider_Delete(t *testing.T) {
 	tests := []struct {
 		name             string
