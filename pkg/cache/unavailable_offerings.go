@@ -49,17 +49,31 @@ func (u *UnavailableOfferings) Remove(offeringID string) {
 
 // IsUnavailable checks if an offering is marked as unavailable
 func (u *UnavailableOfferings) IsUnavailable(offeringID string) bool {
+	// First, try with read lock for the common case (non-expired entries)
 	u.mu.RLock()
-	defer u.mu.RUnlock()
 	expiry, exists := u.offerings[offeringID]
 	if !exists {
+		u.mu.RUnlock()
 		return false
 	}
-	if time.Now().After(expiry) {
+	
+	now := time.Now()
+	if !now.After(expiry) {
+		u.mu.RUnlock()
+		return true
+	}
+	
+	// Entry is expired, upgrade to write lock to clean it up
+	u.mu.RUnlock()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	
+	// Double-check the entry still exists and is still expired (race condition protection)
+	expiry, exists = u.offerings[offeringID]
+	if exists && now.After(expiry) {
 		delete(u.offerings, offeringID)
-		return false
 	}
-	return true
+	return false
 }
 
 // Cleanup removes expired entries
