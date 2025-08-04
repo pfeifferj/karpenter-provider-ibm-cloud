@@ -529,9 +529,8 @@ func TestE2ENodeClassValidation(t *testing.T) {
 
 	var updatedNodeClass v1alpha1.IBMNodeClass
 	err = wait.PollUntilContextTimeout(ctx, 5*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
-		err := suite.kubeClient.Get(ctx, types.NamespacedName{Name: invalidNodeClass.Name}, &updatedNodeClass)
-		if err != nil {
-			return false, err
+		if getErr := suite.kubeClient.Get(ctx, types.NamespacedName{Name: invalidNodeClass.Name}, &updatedNodeClass); getErr != nil {
+			return false, getErr
 		}
 
 		// Check if validation has been processed (either Ready=True or Ready=False)
@@ -601,9 +600,8 @@ func TestE2EInstanceTypeSelection(t *testing.T) {
 
 	var updatedNodeClass v1alpha1.IBMNodeClass
 	err = wait.PollUntilContextTimeout(ctx, 10*time.Second, 3*time.Minute, true, func(ctx context.Context) (bool, error) {
-		err := suite.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass)
-		if err != nil {
-			return false, err
+		if getErr := suite.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &updatedNodeClass); getErr != nil {
+			return false, getErr
 		}
 
 		// Check if autoplacement has been processed - either instance profile is set or status has selected types
@@ -741,10 +739,9 @@ func (s *E2ETestSuite) dumpBootstrapLogs(t *testing.T, nodeClaimName string) {
 		
 		// Check if it's the network attachment issue
 		if strings.Contains(err.Error(), "network_attachment is used") {
-			t.Logf("Instance uses network attachment - trying alternative troubleshooting method")
-			s.useAlternativeTroubleshooting(t, instanceID)
+			t.Logf("Instance uses network attachment - SSH troubleshooting not available for this configuration")
 		} else {
-			t.Logf("Unable to troubleshoot instance bootstrap: %v", err)
+			t.Logf("SSH troubleshooting not available: %v", err)
 		}
 		return
 	}
