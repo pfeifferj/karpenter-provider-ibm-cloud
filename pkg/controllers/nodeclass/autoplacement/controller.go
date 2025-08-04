@@ -129,17 +129,6 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			return reconcile.Result{}, err
 		}
 
-		// Update spec with selected instance type
-		nodeClass.Spec.InstanceProfile = instanceTypes[0].Name
-		if err := c.client.Update(ctx, nodeClass); err != nil {
-			return reconcile.Result{}, fmt.Errorf("updating nodeclass spec: %w", err)
-		}
-
-		// Get fresh copy after spec update
-		if err := c.client.Get(ctx, req.NamespacedName, nodeClass); err != nil {
-			return reconcile.Result{}, fmt.Errorf("getting updated nodeclass: %w", err)
-		}
-
 		// Update status with selected instance types
 		var selectedTypes []string
 		for _, it := range instanceTypes {
