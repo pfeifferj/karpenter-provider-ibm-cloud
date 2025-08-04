@@ -258,7 +258,8 @@ func TestReconcile(t *testing.T) {
 	// Verify instance type selection
 	t.Logf("Instance Profile: %s", updatedNodeClass.Spec.InstanceProfile)
 	t.Logf("Selected Instance Types: %v", updatedNodeClass.Status.SelectedInstanceTypes)
-	assert.Equal(t, "test-instance-type", updatedNodeClass.Spec.InstanceProfile, "Instance profile should be set")
+	// When using instanceRequirements, the instanceProfile should remain empty (they are mutually exclusive)
+	assert.Empty(t, updatedNodeClass.Spec.InstanceProfile, "Instance profile should remain empty when using instanceRequirements")
 	assert.NotEmpty(t, updatedNodeClass.Status.SelectedInstanceTypes, "SelectedInstanceTypes should not be empty")
 	assert.Contains(t, updatedNodeClass.Status.SelectedInstanceTypes, "test-instance-type", "SelectedInstanceTypes should contain test-instance-type")
 
