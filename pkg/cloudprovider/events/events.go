@@ -30,9 +30,10 @@ func NodeClaimFailedToResolveNodeClass(nodeClaim *karpv1.NodeClaim) events.Event
 		name = nodeClaim.Name
 	}
 	return events.Event{
-		Type:    corev1.EventTypeWarning,
-		Reason:  "FailedToResolveNodeClass",
-		Message: fmt.Sprintf("Failed to resolve NodeClass for NodeClaim %s", name),
+		InvolvedObject: nodeClaim,
+		Type:           corev1.EventTypeWarning,
+		Reason:         "FailedToResolveNodeClass",
+		Message:        fmt.Sprintf("Failed to resolve NodeClass for NodeClaim %s", name),
 	}
 }
 
@@ -42,9 +43,10 @@ func NodePoolFailedToResolveNodeClass(nodePool *karpv1.NodePool) events.Event {
 		name = nodePool.Name
 	}
 	return events.Event{
-		Type:    corev1.EventTypeWarning,
-		Reason:  "FailedToResolveNodeClass",
-		Message: fmt.Sprintf("Failed to resolve NodeClass for NodePool %s", name),
+		InvolvedObject: nodePool,
+		Type:           corev1.EventTypeWarning,
+		Reason:         "FailedToResolveNodeClass",
+		Message:        fmt.Sprintf("Failed to resolve NodeClass for NodePool %s", name),
 	}
 }
 
@@ -54,8 +56,9 @@ func NodeClaimCircuitBreakerBlocked(nodeClaim *karpv1.NodeClaim, reason string) 
 		name = nodeClaim.Name
 	}
 	return events.Event{
-		Type:    corev1.EventTypeWarning,
-		Reason:  "CircuitBreakerBlocked",
-		Message: fmt.Sprintf("Circuit breaker blocked provisioning for NodeClaim %s: %s", name, reason),
+		InvolvedObject: nodeClaim,
+		Type:           corev1.EventTypeWarning,
+		Reason:         "CircuitBreakerBlocked",
+		Message:        fmt.Sprintf("Circuit breaker blocked provisioning for NodeClaim %s: %s", name, reason),
 	}
 }
