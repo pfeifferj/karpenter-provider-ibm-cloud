@@ -131,6 +131,8 @@ func TestEventStructure(t *testing.T) {
 	assert.NotEmpty(t, event.Type)
 	assert.NotEmpty(t, event.Reason)
 	assert.NotEmpty(t, event.Message)
+	assert.NotNil(t, event.InvolvedObject)
+	assert.Equal(t, nodeClaim, event.InvolvedObject)
 
 	// Ensure event type is valid
 	assert.Contains(t, []string{corev1.EventTypeNormal, corev1.EventTypeWarning}, event.Type)
@@ -143,6 +145,7 @@ func TestNilObjectHandling(t *testing.T) {
 		assert.Equal(t, corev1.EventTypeWarning, event.Type)
 		assert.Equal(t, "FailedToResolveNodeClass", event.Reason)
 		assert.Contains(t, event.Message, "Failed to resolve NodeClass for NodeClaim <unknown>")
+		assert.Nil(t, event.InvolvedObject)
 	})
 
 	assert.NotPanics(t, func() {
@@ -150,6 +153,7 @@ func TestNilObjectHandling(t *testing.T) {
 		assert.Equal(t, corev1.EventTypeWarning, event.Type)
 		assert.Equal(t, "FailedToResolveNodeClass", event.Reason)
 		assert.Contains(t, event.Message, "Failed to resolve NodeClass for NodePool <unknown>")
+		assert.Nil(t, event.InvolvedObject)
 	})
 }
 
@@ -203,5 +207,6 @@ func TestNodeClaimCircuitBreakerBlocked(t *testing.T) {
 		assert.Equal(t, corev1.EventTypeWarning, event.Type)
 		assert.Equal(t, "CircuitBreakerBlocked", event.Reason)
 		assert.Contains(t, event.Message, "Circuit breaker blocked provisioning for NodeClaim <unknown>: test reason")
+		assert.Nil(t, event.InvolvedObject)
 	})
 }
