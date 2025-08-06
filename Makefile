@@ -75,7 +75,7 @@ test: vendor unit
 ci: vendor unit lint ## Run all CI checks (tests + linting)
 
 .PHONY: unit
-unit: 
+unit:
 	go test $(GTEST_ARGS) ./...
 
 .PHONY: e2e
