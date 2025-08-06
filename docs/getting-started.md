@@ -100,8 +100,8 @@ helm install karpenter karpenter-ibm/karpenter-ibm \
   --namespace karpenter \
   --create-namespace \
   --set credentials.region="us-south" \
-  --set credentials.ibm_api_key="your-general-api-key" \
-  --set credentials.vpc_api_key="your-vpc-api-key"
+  --set credentials.ibmApiKey="your-general-api-key" \
+  --set credentials.vpcApiKey="your-vpc-api-key"
 ```
 
 ### Step 2: Verify Installation
