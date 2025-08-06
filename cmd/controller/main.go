@@ -16,11 +16,14 @@ limitations under the License.
 package main
 
 import (
+	"os"
+
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options"
 
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
 	corecontrollers "sigs.k8s.io/karpenter/pkg/controllers"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
@@ -63,7 +66,8 @@ func main() {
 
 	// Register bootstrap controller
 	if err := controllers.RegisterBootstrapController(op.Manager); err != nil {
-		panic(err)
+		log.FromContext(ctx).Error(err, "failed to register bootstrap controller")
+		os.Exit(1)
 	}
 
 	// Register controllers using the proper operator pattern

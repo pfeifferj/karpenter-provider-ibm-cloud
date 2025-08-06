@@ -361,7 +361,11 @@ func (p *VPCBootstrapProvider) getLatestCNIVersion(ctx context.Context, cniPlugi
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch CNI version from %s: %w", repoURL, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.FromContext(ctx).V(1).Info("failed to close response body", "error", closeErr)
+		}
+	}()
 
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
