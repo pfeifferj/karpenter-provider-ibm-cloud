@@ -12,7 +12,7 @@ require (
 	github.com/go-openapi/strfmt v0.23.0
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/onsi/ginkgo/v2 v2.23.4
-	github.com/onsi/gomega v1.37.0
+	github.com/onsi/gomega v1.38.0
 	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis v0.0.0-20250718142453-c2e324ac0173
 	github.com/prometheus/client_golang v1.23.0
 	github.com/samber/lo v1.51.0
@@ -85,9 +85,9 @@ require (
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.38.0 // indirect
+	golang.org/x/crypto v0.39.0 // indirect
 	golang.org/x/mod v0.25.0 // indirect
-	golang.org/x/net v0.40.0 // indirect
+	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
