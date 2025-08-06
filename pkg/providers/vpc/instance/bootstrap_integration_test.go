@@ -86,11 +86,9 @@ func TestBootstrapIntegration(t *testing.T) {
 			}
 
 			if tt.expectDynamic {
-				// Should attempt dynamic generation (will fallback to basic in test environment)
-				assert.NoError(t, err)
-				assert.Contains(t, userData, "Basic bootstrap for region")
-				assert.Contains(t, userData, tt.nodeClass.Spec.Region)
-				// In real environment with kubernetes client, would contain dynamic script
+				// Should fail without kubernetes client in test environment
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "failed to")
 			}
 		})
 	}
@@ -105,23 +103,6 @@ func TestBootstrapBehavior(t *testing.T) {
 	assert.NoError(t, err)
 
 	vpcProvider := provider.(*VPCInstanceProvider)
-
-	t.Run("Basic bootstrap script contains required information", func(t *testing.T) {
-		nodeClass := &v1alpha1.IBMNodeClass{
-			Spec: v1alpha1.IBMNodeClassSpec{
-				Region: "eu-de",
-			},
-		}
-
-		basicScript := vpcProvider.getBasicBootstrapScript(nodeClass)
-
-		// Verify basic script contains essential information
-		assert.Contains(t, basicScript, "#!/bin/bash")
-		assert.Contains(t, basicScript, "eu-de")
-		assert.Contains(t, basicScript, "Bootstrap token")
-		assert.Contains(t, basicScript, "Internal API endpoint")
-		assert.Contains(t, basicScript, "hostname configuration")
-	})
 
 	t.Run("Manual userData takes precedence", func(t *testing.T) {
 		nodeClass := &v1alpha1.IBMNodeClass{
@@ -165,16 +146,13 @@ func TestBootstrapProviderLazyInitialization(t *testing.T) {
 		},
 	}
 
-	userData, err := vpcProvider.generateBootstrapUserData(
+	_, err = vpcProvider.generateBootstrapUserData(
 		context.Background(),
 		nodeClass,
 		types.NamespacedName{Name: "test", Namespace: "default"},
 	)
 
-	// Should not error (falls back to basic bootstrap)
-	assert.NoError(t, err)
-	assert.NotEmpty(t, userData)
-
-	// In test environment, it falls back to basic bootstrap
-	assert.Contains(t, userData, "Basic bootstrap")
+	// In test environment without kubernetes client, this will fail
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create kubernetes client")
 }
