@@ -51,37 +51,76 @@ type VPCInstanceProvider struct {
 	vpcClientManager  *vpcclient.Manager
 }
 
-// NewVPCInstanceProvider creates a new VPC instance provider
-func NewVPCInstanceProvider(client *ibm.Client, kubeClient client.Client) (commonTypes.VPCInstanceProvider, error) {
-	if client == nil {
-		return nil, fmt.Errorf("IBM client cannot be nil")
-	}
+// Option configures the VPCInstanceProvider
+type Option func(*VPCInstanceProvider) error
 
-	return &VPCInstanceProvider{
-		client:            client,
-		kubeClient:        kubeClient,
-		k8sClient:         nil, // Will be set via dependency injection
-		bootstrapProvider: nil, // Will be lazily initialized when needed
-		vpcClientManager:  vpcclient.NewManager(client, 30*time.Minute),
-	}, nil
+// WithKubernetesClient sets the Kubernetes client for the provider
+func WithKubernetesClient(k8sClient kubernetes.Interface) Option {
+	return func(p *VPCInstanceProvider) error {
+		if k8sClient == nil {
+			return fmt.Errorf("kubernetes client cannot be nil when provided")
+		}
+		p.k8sClient = k8sClient
+		// Create bootstrap provider immediately with proper dependency injection
+		p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, k8sClient, p.kubeClient)
+		return nil
+	}
 }
 
-// NewVPCInstanceProviderWithKubernetesClient creates a new VPC instance provider with proper kubernetes client injection
-func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient client.Client, kubernetesClient kubernetes.Interface) (commonTypes.VPCInstanceProvider, error) {
+// WithBootstrapProvider sets a custom bootstrap provider
+func WithBootstrapProvider(bootstrapProvider *bootstrap.VPCBootstrapProvider) Option {
+	return func(p *VPCInstanceProvider) error {
+		if bootstrapProvider == nil {
+			return fmt.Errorf("bootstrap provider cannot be nil when provided")
+		}
+		p.bootstrapProvider = bootstrapProvider
+		return nil
+	}
+}
+
+// WithVPCClientManager sets a custom VPC client manager
+func WithVPCClientManager(manager *vpcclient.Manager) Option {
+	return func(p *VPCInstanceProvider) error {
+		if manager == nil {
+			return fmt.Errorf("VPC client manager cannot be nil when provided")
+		}
+		p.vpcClientManager = manager
+		return nil
+	}
+}
+
+// NewVPCInstanceProvider creates a new VPC instance provider with optional configuration
+func NewVPCInstanceProvider(client *ibm.Client, kubeClient client.Client, opts ...Option) (commonTypes.VPCInstanceProvider, error) {
 	if client == nil {
 		return nil, fmt.Errorf("IBM client cannot be nil")
 	}
+	if kubeClient == nil {
+		return nil, fmt.Errorf("kubernetes client cannot be nil")
+	}
 
-	// Create bootstrap provider immediately with proper dependency injection
-	bootstrapProvider := bootstrap.NewVPCBootstrapProvider(client, kubernetesClient, kubeClient)
-
-	return &VPCInstanceProvider{
+	// Create base provider with defaults
+	provider := &VPCInstanceProvider{
 		client:            client,
 		kubeClient:        kubeClient,
-		k8sClient:         kubernetesClient,
-		bootstrapProvider: bootstrapProvider,
+		k8sClient:         nil, // Will be set via options if provided
+		bootstrapProvider: nil, // Will be lazily initialized or set via options
 		vpcClientManager:  vpcclient.NewManager(client, 30*time.Minute),
-	}, nil
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		if err := opt(provider); err != nil {
+			return nil, fmt.Errorf("applying option: %w", err)
+		}
+	}
+
+	return provider, nil
+}
+
+// Deprecated: Use NewVPCInstanceProvider with WithKubernetesClient option instead
+// NewVPCInstanceProviderWithKubernetesClient creates a new VPC instance provider with kubernetes client
+func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient client.Client, kubernetesClient kubernetes.Interface) (commonTypes.VPCInstanceProvider, error) {
+	return NewVPCInstanceProvider(client, kubeClient, WithKubernetesClient(kubernetesClient))
 }
 
 // Create provisions a new VPC instance
@@ -103,13 +142,10 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		return nil, err
 	}
 
-	// Extract instance profile - prefer NodeClass, fallback to labels
+	// Extract instance profile from NodeClass
 	instanceProfile := nodeClass.Spec.InstanceProfile
 	if instanceProfile == "" {
-		instanceProfile = nodeClaim.Labels["node.kubernetes.io/instance-type"]
-		if instanceProfile == "" {
-			return nil, fmt.Errorf("instance profile not specified in NodeClass or node claim")
-		}
+		return nil, fmt.Errorf("instance profile not specified in NodeClass")
 	}
 
 	// Determine zone and subnet - support both explicit and dynamic selection
@@ -626,7 +662,7 @@ func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nod
 func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceID(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID string) (string, error) {
 	logger := log.FromContext(ctx)
 
-	// If manual userData is provided, use it as-is (fallback behavior)
+	// Use manual userData if provided
 	if nodeClass.Spec.UserData != "" {
 		logger.Info("Using manual userData from IBMNodeClass")
 		return nodeClass.Spec.UserData, nil
@@ -638,11 +674,10 @@ func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceID(ctx contex
 			// Use properly injected kubernetes client
 			p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, p.k8sClient, p.kubeClient)
 		} else {
-			// Fallback to creating kubernetes client (for backward compatibility)
+			// Create kubernetes client
 			k8sClient, err := p.createKubernetesClient(ctx)
 			if err != nil {
-				logger.Error(err, "Failed to create kubernetes client, falling back to basic bootstrap")
-				return p.getBasicBootstrapScript(nodeClass), nil
+				return "", fmt.Errorf("failed to create kubernetes client: %w", err)
 			}
 
 			p.k8sClient = k8sClient
@@ -654,8 +689,7 @@ func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceID(ctx contex
 	logger.Info("Generating dynamic bootstrap script with automatic cluster discovery", "instanceID", instanceID)
 	userData, err := p.bootstrapProvider.GetUserDataWithInstanceID(ctx, nodeClass, nodeClaim, instanceID)
 	if err != nil {
-		logger.Error(err, "Failed to generate bootstrap user data, falling back to basic bootstrap")
-		return p.getBasicBootstrapScript(nodeClass), nil
+		return "", fmt.Errorf("failed to generate bootstrap user data: %w", err)
 	}
 
 	logger.Info("Successfully generated dynamic bootstrap script")
@@ -680,23 +714,3 @@ func (p *VPCInstanceProvider) createKubernetesClient(ctx context.Context) (kuber
 	return clientset, nil
 }
 
-// getBasicBootstrapScript returns a basic bootstrap script when automatic generation fails
-func (p *VPCInstanceProvider) getBasicBootstrapScript(nodeClass *v1alpha1.IBMNodeClass) string {
-	return fmt.Sprintf(`#!/bin/bash
-# Karpenter IBM Cloud Provider - Basic Bootstrap
-# This is a fallback script when automatic bootstrap generation fails
-echo "$(date): Basic bootstrap for region %s"
-
-# Essential system configuration for kubeadm (CRITICAL FIX)
-echo "$(date): Configuring system for kubeadm..."
-echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf && sysctl -p
-swapoff -a && sed -i '/swap/d' /etc/fstab
-
-echo "$(date): Manual configuration required for cluster joining"
-echo "$(date): Set nodeClass.spec.userData with proper bootstrap script"
-# To make nodes join the cluster, you need to provide:
-# 1. Bootstrap token: kubectl create token --print-join-command
-# 2. Internal API endpoint (not external)
-# 3. Proper hostname configuration for IBM Cloud
-`, nodeClass.Spec.Region)
-}
