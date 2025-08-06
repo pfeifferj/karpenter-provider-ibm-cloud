@@ -93,8 +93,10 @@ e2e-benchmark: ## Run e2e performance benchmarks
 	RUN_E2E_BENCHMARKS=true go test -v -timeout 30m ./test/e2e/... -run=^$$ -bench=.
 
 .PHONY: lint
-lint: ## Run golangci-lint
-	golangci-lint run --timeout=5m
+lint:
+	@echo "Executing pre-commit for all files"
+	pre-commit run --all-files
+	@echo "pre-commit executed."
 
 .PHONY: vendor
 vendor: ## update modules and populate local vendor directory
