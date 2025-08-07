@@ -3,7 +3,7 @@ module github.com/pfeifferj/karpenter-provider-ibm-cloud
 go 1.24.4
 
 require (
-	github.com/IBM/go-sdk-core/v5 v5.20.1
+	github.com/IBM/go-sdk-core/v5 v5.21.0
 	github.com/IBM/platform-services-go-sdk v0.85.1
 	github.com/IBM/vpc-go-sdk v0.70.1
 	github.com/awslabs/operatorpkg v0.0.0-20250717190115-4fddcf1f444e
