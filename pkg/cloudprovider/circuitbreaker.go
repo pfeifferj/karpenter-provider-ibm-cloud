@@ -212,11 +212,20 @@ func (cb *CircuitBreaker) RecordFailure(nodeClass, region string, err error) {
 	if recentFailures >= cb.config.FailureThreshold {
 		if cb.state != CircuitBreakerOpen {
 			cb.transitionToOpen()
+			// Include recent failure details for better debugging
+			recentErrors := make([]string, 0, len(cb.failures))
+			for _, f := range cb.failures {
+				if f.Timestamp.After(time.Now().Add(-cb.config.FailureWindow)) {
+					recentErrors = append(recentErrors, fmt.Sprintf("%s: %s", f.Timestamp.Format("15:04:05"), f.Error))
+				}
+			}
 			cb.logger.Error(fmt.Errorf("circuit breaker opened due to failure threshold exceeded"), "Circuit breaker OPENED",
 				"failures", recentFailures,
 				"threshold", cb.config.FailureThreshold,
 				"nodeClass", nodeClass,
-				"region", region)
+				"region", region,
+				"recentErrors", recentErrors,
+				"recoveryTimeout", cb.config.RecoveryTimeout)
 		}
 	} else if cb.state == CircuitBreakerHalfOpen {
 		// Failure in half-open state - go back to open
