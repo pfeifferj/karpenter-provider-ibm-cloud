@@ -9,7 +9,7 @@
 
 This repository contains the Karpenter Provider implementation for IBM Cloud, enabling dynamic node provisioning in IBM Cloud Kubernetes clusters using Karpenter.
 
-**[View Full Documentation](https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/)** | 🚀 **[Getting Started Guide](https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/getting-started/)**
+**[View Full Documentation](https://pfeifferj.github.io/karpenter-provider-ibm-cloud/docs/)** | 🚀 **[Getting Started Guide](https://pfeifferj.github.io/karpenter-provider-ibm-cloud/getting-started/)**
 
 ## Overview
 
