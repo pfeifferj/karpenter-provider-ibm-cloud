@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -300,13 +301,10 @@ func (p *testVPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.
 		return nil, fmt.Errorf("getting VPC client: %w", err)
 	}
 
-	// Extract instance profile - prefer NodeClass, fallback to labels (matching real implementation)
+	// Extract instance profile from NodeClass (matching real implementation)
 	instanceProfile := nodeClass.Spec.InstanceProfile
 	if instanceProfile == "" {
-		instanceProfile = nodeClaim.Labels["node.kubernetes.io/instance-type"]
-		if instanceProfile == "" {
-			return nil, fmt.Errorf("instance profile not specified in NodeClass or node claim")
-		}
+		return nil, fmt.Errorf("instance profile not specified in NodeClass")
 	}
 
 	if nodeClass.Spec.Zone == "" {
@@ -1358,7 +1356,7 @@ func TestNewVPCInstanceProviderWithKubernetesClient(t *testing.T) {
 			name:        "successful creation with k8s client",
 			client:      &ibm.Client{},
 			kubeClient:  fake.NewClientBuilder().Build(),
-			k8sClient:   nil, // Simulate kubernetes client
+			k8sClient:   k8sfake.NewSimpleClientset(),
 			expectError: false,
 		},
 		{
@@ -1440,45 +1438,12 @@ func TestVPCInstanceProvider_BootstrapUserData(t *testing.T) {
 			},
 			expectedData: "#!/bin/bash\necho 'custom script'",
 		},
-		{
-			name: "basic bootstrap fallback",
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{
-					Region: "us-south",
-					// No UserData, should generate basic bootstrap
-				},
-			},
-			containsData: "Basic bootstrap for region us-south",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Test the basic bootstrap script generation logic
-			if tt.expectedData != "" {
-				// Test manual userData
-				assert.Equal(t, tt.expectedData, tt.nodeClass.Spec.UserData)
-			} else if tt.containsData != "" {
-				// Test basic bootstrap generation logic (mimics getBasicBootstrapScript)
-				basicScript := fmt.Sprintf(`#!/bin/bash
-Karpenter IBM Cloud Provider - Basic Bootstrap
-# This is a fallback script when automatic bootstrap generation fails
-echo "$(date): Basic bootstrap for region %s"
-
-# Essential system configuration for kubeadm (CRITICAL FIX)
-echo "$(date): Configuring system for kubeadm..."
-echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf && sysctl -p
-swapoff -a && sed -i '/swap/d' /etc/fstab
-
-echo "$(date): Manual configuration required for cluster joining"
-echo "$(date): Set nodeClass.spec.userData with proper bootstrap script"
-# To make nodes join the cluster, you need to provide:
-# 1. Bootstrap token: kubectl create token --print-join-command
-# 2. Internal API endpoint (not external)
-# 3. Proper hostname configuration for IBM Cloud
-`, tt.nodeClass.Spec.Region)
-				assert.Contains(t, basicScript, tt.containsData)
-			}
+			// Test manual userData
+			assert.Equal(t, tt.expectedData, tt.nodeClass.Spec.UserData)
 		})
 	}
 }
@@ -1515,7 +1480,7 @@ func TestVPCInstanceProvider_ValidationErrors(t *testing.T) {
 			expectedError: "instance profile not specified",
 		},
 		{
-			name: "fallback to label when nodeclass instance profile missing",
+			name: "fail when nodeclass instance profile missing",
 			nodeClass: &v1alpha1.IBMNodeClass{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-nodeclass"},
 				Spec: v1alpha1.IBMNodeClassSpec{
@@ -1524,21 +1489,21 @@ func TestVPCInstanceProvider_ValidationErrors(t *testing.T) {
 					Subnet: "test-subnet",
 					Image:  "test-image-id",
 					VPC:    "test-vpc-id",
-					// Missing InstanceProfile - should fallback to label
+					// Missing InstanceProfile - should fail
 				},
 			},
 			nodeClaim: &karpv1.NodeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-nodeclaim",
 					Labels: map[string]string{
-						"node.kubernetes.io/instance-type": "bx2-4x16", // Fallback label
+						"node.kubernetes.io/instance-type": "bx2-4x16", // Should not use this
 					},
 				},
 				Spec: karpv1.NodeClaimSpec{
 					NodeClassRef: &karpv1.NodeClassReference{Name: "test-nodeclass"},
 				},
 			},
-			expectedError: "", // Should succeed with label fallback
+			expectedError: "instance profile not specified",
 		},
 	}
 
@@ -1733,7 +1698,8 @@ func TestRealVPCInstanceProvider_Methods(t *testing.T) {
 		// Test with valid client
 		client := &ibm.Client{}
 		fakeKubeClient := fake.NewClientBuilder().WithScheme(getTestScheme()).Build()
-		provider, err = NewVPCInstanceProviderWithKubernetesClient(client, fakeKubeClient, nil)
+		fakeK8sClient := k8sfake.NewSimpleClientset()
+		provider, err = NewVPCInstanceProviderWithKubernetesClient(client, fakeKubeClient, fakeK8sClient)
 		assert.NoError(t, err)
 		assert.NotNil(t, provider)
 	})
@@ -1777,21 +1743,6 @@ func TestRealVPCInstanceProvider_Methods(t *testing.T) {
 				assert.Equal(t, tt.expected, result)
 			})
 		}
-	})
-
-	t.Run("getBasicBootstrapScript", func(t *testing.T) {
-		provider := &VPCInstanceProvider{
-			client: &ibm.Client{},
-		}
-		nodeClass := getTestNodeClass()
-
-		script := provider.getBasicBootstrapScript(nodeClass)
-
-		assert.Contains(t, script, "#!/bin/bash")
-		assert.Contains(t, script, "Basic bootstrap for region us-south")
-		assert.Contains(t, script, "net.ipv4.ip_forward = 1")
-		assert.Contains(t, script, "swapoff -a")
-		assert.Contains(t, script, "Manual configuration required")
 	})
 }
 

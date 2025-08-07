@@ -58,41 +58,144 @@ kubectl logs -n karpenter deployment/karpenter | grep "Starting Controller"
 
 ### Node Registration Issues
 
-!!! error "Node failed to join cluster"
-    **Most Common Issue - Wrong API Server Endpoint:**
-    ```bash
-    # Symptoms: kubelet timeouts, nodes never register
-    # Error: "dial tcp 10.243.65.4:6443: i/o timeout"
+!!! error "Nodes not joining cluster after provisioning"
+    This is often caused by a chain of issues. Work through this systematic checklist:
 
-    # 1. Check what endpoint kubelet is trying to reach
-    ssh ubuntu@INSTANCE_IP "cat /var/lib/kubelet/bootstrap-kubeconfig | grep server"
+#### 1. Verify Instance Creation
 
-    # 2. Find correct internal API endpoint
-    kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes
+```bash
+# Check if instances are being created
+ibmcloud is instances --output json | jq '.[] | select(.name | contains("nodepool"))'
 
-    # 3. Update NodeClass with correct INTERNAL endpoint
-    kubectl patch ibmnodeclass YOUR-NODECLASS --type='merge' \
-      -p='{"spec":{"apiServerEndpoint":"https://INTERNAL-IP:6443"}}'
-    ```
+# Check NodeClaim status
+kubectl get nodeclaims -o wide
+kubectl describe nodeclaim NODECLAIM_NAME
+```
 
-    **Other Common Causes:**
+**Expected:** Instance status `running`, NodeClaim shows `Launched: True`
 
-    - VNI (Virtual Network Interface) not configured properly (v0.3.53+ required)
-    - Bootstrap token expiration
-    - Network connectivity problems
+#### 2. Check Network Connectivity (Most Common Issue)
 
-    **Debug steps:**
-    ```bash
-    # Check bootstrap logs on instance
-    ssh ubuntu@INSTANCE_IP "sudo journalctl -u cloud-final"
+**Step 2a: Verify Subnet Placement**
+```bash
+# Find which subnet your cluster nodes are in
+kubectl get nodes -o wide  # Note the INTERNAL-IP range
 
-    # Check kubelet status and errors
-    ssh ubuntu@INSTANCE_IP "sudo systemctl status kubelet"
-    ssh ubuntu@INSTANCE_IP "sudo journalctl -u kubelet --no-pager -n 50"
+# Check if Karpenter nodes are in the same subnet
+ibmcloud is instance INSTANCE_ID --output json | jq '.primary_network_interface.subnet'
 
-    # Test API server connectivity from node
-    ssh ubuntu@INSTANCE_IP "curl -k -m 10 https://API-SERVER-IP:6443/healthz"
-    ```
+# If different subnets, nodes may be network-isolated!
+```
+
+**Step 2b: Verify API Server Endpoint Configuration**
+```bash
+# Find the INTERNAL API endpoint (not external!)
+kubectl get endpoints kubernetes -o yaml
+# OR
+kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes
+
+# Check what's configured in IBMNodeClass
+kubectl get ibmnodeclass YOUR-NODECLASS -o yaml | grep apiServerEndpoint
+
+# Update if using external IP instead of internal
+kubectl patch ibmnodeclass YOUR-NODECLASS --type='merge' \
+  -p='{"spec":{"apiServerEndpoint":"https://INTERNAL-IP:6443"}}'
+```
+
+**Step 2c: Test Connectivity from Node**
+```bash
+# Attach floating IP for debugging 
+
+# Then SSH and test
+ssh -i ~/.ssh/eb root@FLOATING_IP
+
+# Test network layers
+ping INTERNAL_API_IP                          # Test ICMP
+telnet INTERNAL_API_IP 6443                   # Test TCP
+curl -k https://INTERNAL_API_IP:6443/healthz  # Test HTTPS
+```
+
+#### 3. Verify Security Groups
+
+!!! danger "Security Group Requirements"
+    Both worker and control plane security groups need proper rules for bidirectional communication.
+
+**Required Security Group Rules:**
+
+```bash
+# Check current security groups on instance
+ibmcloud is instance INSTANCE_ID --output json | \
+  jq '.network_interfaces[0].security_groups'
+
+# Worker Node Security Group needs:
+# Outbound rules
+- TCP 6443 to control plane subnet (Kubernetes API)
+- TCP 10250 to all nodes (Kubelet)
+- TCP/UDP 53 to 0.0.0.0/0 (DNS)
+- TCP 80,443 to 0.0.0.0/0 (Package downloads)
+
+# Inbound rules
+- TCP 6443 from control plane (API server callbacks)
+- TCP 10250 from all nodes (Kubelet peer communication)
+
+# Add missing rules example:
+ibmcloud is security-group-rule-add WORKER_SG_ID \
+  outbound tcp --port-min 6443 --port-max 6443 \
+  --remote CONTROL_PLANE_SUBNET_CIDR
+
+ibmcloud is security-group-rule-add WORKER_SG_ID \
+  inbound tcp --port-min 6443 --port-max 6443 \
+  --remote CONTROL_PLANE_SUBNET_CIDR
+```
+
+#### 4. Debug Bootstrap Process
+
+**Check Cloud-Init Status:**
+```bash
+# SSH to node (after attaching floating IP)
+ssh -i ~/.ssh/eb root@FLOATING_IP
+
+# Check cloud-init progress
+sudo cloud-init status --long
+
+# View bootstrap logs
+sudo tail -100 /var/log/cloud-init.log
+sudo tail -100 /var/log/cloud-init-output.log
+sudo cat /var/log/karpenter-bootstrap.log
+
+# Check if kubelet was installed
+sudo systemctl status kubelet
+sudo journalctl -u kubelet --no-pager -n 50
+```
+
+**Common Bootstrap Issues:**
+- Package repository access blocked (check security groups for HTTP/HTTPS)
+- CNI conflicts (check for pre-existing CNI configurations)
+
+#### 5. Verify IBMNodeClass Configuration
+
+```bash
+# Check for common configuration issues
+kubectl get ibmnodeclass YOUR-NODECLASS -o yaml
+
+# Key fields to verify:
+# - apiServerEndpoint: Must be INTERNAL cluster endpoint
+# - bootstrapMode: Should be "cloud-init" for VPC
+# - securityGroups: Must include proper security group IDs
+# - sshKeys: Must use SSH key IDs (r010-xxx format), not names
+```
+
+#### 6. Check Resource Group Configuration
+
+```bash
+# Verify instances are created in correct resource group
+ibmcloud is instances --output json | \
+  jq '.[] | select(.name | contains("nodepool")) | 
+  {name: .name, resource_group: .resource_group.id}'
+
+# Should match the resource group in IBMNodeClass
+kubectl get ibmnodeclass YOUR-NODECLASS -o yaml | grep resourceGroupID
+```
 
 ### Security Group Configuration
 

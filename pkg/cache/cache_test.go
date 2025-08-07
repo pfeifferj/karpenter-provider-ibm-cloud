@@ -23,6 +23,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// pollUntil polls a condition until it's true or timeout
+func pollUntil(t *testing.T, condition func() bool, timeout time.Duration, message string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond) // Small polling interval
+	}
+	t.Fatal(message)
+}
+
 func TestNewCache(t *testing.T) {
 	ttl := 5 * time.Minute
 	cache := New(ttl)
@@ -75,8 +88,11 @@ func TestCacheSetWithTTL(t *testing.T) {
 	assert.True(t, exists)
 	assert.Equal(t, value, retrieved)
 
-	// Wait for expiration
-	time.Sleep(150 * time.Millisecond)
+	// Wait for expiration using polling
+	pollUntil(t, func() bool {
+		_, expired := cache.Get(key)
+		return !expired
+	}, 500*time.Millisecond, "cache entry should have expired")
 
 	// Should be expired
 	retrieved, exists = cache.Get(key)
@@ -211,8 +227,12 @@ func TestCacheGetOrSetWithTTL(t *testing.T) {
 	assert.Equal(t, expectedValue, value)
 	assert.Equal(t, 1, callCount)
 
-	// Wait for expiration
-	time.Sleep(150 * time.Millisecond)
+	// Wait for expiration using polling
+	pollUntil(t, func() bool {
+		// Try to get the value - if it doesn't exist, it means it expired
+		_, expired := cache.Get(key)
+		return !expired
+	}, 500*time.Millisecond, "cache entry should have expired")
 
 	// Should fetch again after expiration
 	value, err = cache.GetOrSetWithTTL(key, ttl, fetchFunc)
@@ -231,8 +251,11 @@ func TestCacheExpiration(t *testing.T) {
 	cache.Set(key, value)
 	assert.True(t, cache.Has(key))
 
-	// Wait for expiration
-	time.Sleep(100 * time.Millisecond)
+	// Wait for expiration using polling
+	pollUntil(t, func() bool {
+		_, expired := cache.Get(key)
+		return !expired
+	}, 500*time.Millisecond, "cache entry should have expired")
 
 	// Get should remove expired item and return false
 	retrieved, exists := cache.Get(key)
@@ -250,8 +273,10 @@ func TestCacheCleanup(t *testing.T) {
 	cache.Set(key, value)
 	assert.Equal(t, 1, cache.Size())
 
-	// Wait for cleanup to run (cleanup runs every TTL/2)
-	time.Sleep(100 * time.Millisecond)
+	// Wait for cleanup to run using polling (cleanup runs every TTL/2)
+	pollUntil(t, func() bool {
+		return cache.Size() == 0
+	}, 500*time.Millisecond, "cache should be cleaned up")
 
 	// Size should be 0 after cleanup removes expired items
 	assert.Equal(t, 0, cache.Size())
