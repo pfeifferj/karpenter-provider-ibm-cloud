@@ -576,7 +576,7 @@ func TestCloudProvider_Create_CircuitBreakerEventPublishing(t *testing.T) {
 
 	// Verify error
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "circuit breaker blocked provisioning")
+	assert.Contains(t, err.Error(), "provisioning temporarily blocked by circuit breaker")
 
 	// Verify the correct event was published
 	assert.Len(t, eventRecorder.events, 1)
