@@ -73,11 +73,10 @@ func (f *ProviderFactory) GetInstanceProvider(nodeClass *v1alpha1.IBMNodeClass) 
 		return iksProvider.NewIKSWorkerPoolProvider(f.client, f.kubeClient)
 	case commonTypes.VPCMode:
 		if f.kubernetesClient != nil {
-			return vpcProvider.NewVPCInstanceProviderWithKubernetesClient(f.client, f.kubeClient, f.kubernetesClient)
-		} else {
-			// Fallback to standard constructor (will use in-cluster config)
-			return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
+			return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient, vpcProvider.WithKubernetesClient(f.kubernetesClient))
 		}
+		// Standard constructor without kubernetes client
+		return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
 	default:
 		return nil, fmt.Errorf("unknown provider mode: %s", mode)
 	}
@@ -95,11 +94,10 @@ func (f *ProviderFactory) GetVPCProvider(nodeClass *v1alpha1.IBMNodeClass) (comm
 	}
 
 	if f.kubernetesClient != nil {
-		return vpcProvider.NewVPCInstanceProviderWithKubernetesClient(f.client, f.kubeClient, f.kubernetesClient)
-	} else {
-		// Fallback to standard constructor (will use in-cluster config)
-		return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
+		return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient, vpcProvider.WithKubernetesClient(f.kubernetesClient))
 	}
+	// Standard constructor without kubernetes client
+	return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
 }
 
 // GetIKSProvider returns an IKS-specific provider

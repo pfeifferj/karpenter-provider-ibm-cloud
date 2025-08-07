@@ -35,12 +35,12 @@ ibmcloud ks cluster get --cluster <cluster-id>
 kubectl create namespace karpenter
 
 kubectl create secret generic karpenter-ibm-credentials \
-  --from-literal=api-key="your-general-api-key" \
-  --from-literal=vpc-api-key="your-vpc-api-key" \
+  --from-literal=ibmApiKey="your-general-api-key" \
+  --from-literal=vpcApiKey="your-vpc-api-key" \
   --namespace karpenter
 
 # Install via Helm
-helm repo add karpenter-ibm https://pfeifferj.github.io/karpenter-provider-ibm-cloud
+helm repo add karpenter-ibm https://karpenter-ibm.sh
 helm repo update
 helm install karpenter karpenter-ibm/karpenter-ibm \
   --namespace karpenter \

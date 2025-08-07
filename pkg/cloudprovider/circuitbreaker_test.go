@@ -11,6 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// pollUntil polls a condition until it's true or timeout
+func pollUntil(t *testing.T, condition func() bool, timeout time.Duration, message string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal(message)
+}
+
 func TestNewCircuitBreaker(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -176,16 +189,18 @@ func TestCircuitBreaker_RecoveryFlow(t *testing.T) {
 	cb.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("test error 2"))
 	assert.Equal(t, CircuitBreakerOpen, cb.state)
 
-	// Wait for recovery timeout
-	time.Sleep(150 * time.Millisecond)
+	// Wait for recovery timeout using polling
+	pollUntil(t, func() bool {
+		// Check if we can provision - if so, circuit breaker is in half-open
+		err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
+		return err == nil
+	}, 500*time.Millisecond, "circuit breaker should transition to half-open")
 
-	// Should transition to half-open and allow limited requests
-	err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
-	assert.NoError(t, err)
+	// Should be in half-open state now
 	assert.Equal(t, CircuitBreakerHalfOpen, cb.state)
 
 	// Second request should be blocked (exceeds HalfOpenMaxRequests)
-	err = cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
+	err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
 	assert.Error(t, err)
 	assert.IsType(t, &CircuitBreakerError{}, err)
 
@@ -215,11 +230,11 @@ func TestCircuitBreaker_HalfOpenFailureReturnsToOpen(t *testing.T) {
 	cb.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("test error 2"))
 	assert.Equal(t, CircuitBreakerOpen, cb.state)
 
-	// Wait for recovery and transition to half-open
-	time.Sleep(150 * time.Millisecond)
-	err := cb.CanProvision(context.Background(), "test-nodeclass", "us-south", 0)
-	assert.NoError(t, err)
-	assert.Equal(t, CircuitBreakerHalfOpen, cb.state)
+	// Wait for recovery and transition to half-open using polling
+	pollUntil(t, func() bool {
+		err := cb.CanProvision(context.Background(), "test-nodeclass", "us-south", 0)
+		return err == nil && cb.state == CircuitBreakerHalfOpen
+	}, 500*time.Millisecond, "circuit breaker should transition to half-open")
 
 	// Record failure in half-open state should return to open
 	cb.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("test error 3"))
@@ -362,13 +377,16 @@ func TestCircuitBreaker_CleanOldFailures(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, status.RecentFailures)
 
-	// Wait for failures to age out
-	time.Sleep(150 * time.Millisecond)
+	// Wait for failures to age out using polling
+	pollUntil(t, func() bool {
+		st, stErr := cb.GetState()
+		return stErr == nil && st.RecentFailures == 0
+	}, 500*time.Millisecond, "old failures should be cleaned up")
 
-	// Trigger cleanup by calling GetState
+	// Verify cleanup occurred
 	status, err = cb.GetState()
 	require.NoError(t, err)
-	assert.Equal(t, 0, status.RecentFailures) // Old failures should be cleaned up
+	assert.Equal(t, 0, status.RecentFailures)
 }
 
 func TestCircuitBreaker_ErrorTypes(t *testing.T) {

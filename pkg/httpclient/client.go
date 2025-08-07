@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // IBMCloudHTTPClient provides a centralized HTTP client for IBM Cloud API operations
@@ -129,7 +131,11 @@ func (c *IBMCloudHTTPClient) Do(ctx context.Context, config RequestConfig) (*Res
 	if err != nil {
 		return nil, fmt.Errorf("making request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.FromContext(ctx).V(1).Info("failed to close response body", "error", closeErr)
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
