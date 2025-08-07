@@ -104,7 +104,7 @@ kubectl patch ibmnodeclass YOUR-NODECLASS --type='merge' \
 
 **Step 2c: Test Connectivity from Node**
 ```bash
-# Attach floating IP for debugging 
+# Attach floating IP for debugging
 
 # Then SSH and test
 ssh -i ~/.ssh/eb root@FLOATING_IP
@@ -190,7 +190,7 @@ kubectl get ibmnodeclass YOUR-NODECLASS -o yaml
 ```bash
 # Verify instances are created in correct resource group
 ibmcloud is instances --output json | \
-  jq '.[] | select(.name | contains("nodepool")) | 
+  jq '.[] | select(.name | contains("nodepool")) |
   {name: .name, resource_group: .resource_group.id}'
 
 # Should match the resource group in IBMNodeClass
