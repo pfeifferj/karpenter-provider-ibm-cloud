@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -227,6 +228,42 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("resolving node class, %w", err))
 	}
 	log.Info("Resolved NodeClass", "nodeClass", nodeClass.Name)
+
+	// Validate critical NodeClass fields
+	if nodeClass.Spec.APIServerEndpoint == "" {
+		err := fmt.Errorf("apiServerEndpoint is required but not set in NodeClass %s", nodeClass.Name)
+		log.Error(err, "NodeClass validation failed")
+		c.recorder.Publish(ibmevents.NodeClaimFailedValidation(nodeClaim, "Missing apiServerEndpoint"))
+		return nil, cloudprovider.NewNodeClassNotReadyError(err)
+	}
+
+	// Validate security groups format (must be IDs, not names)
+	ibmResourceIDRegex := regexp.MustCompile(`^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
+	for _, sg := range nodeClass.Spec.SecurityGroups {
+		if !ibmResourceIDRegex.MatchString(sg) {
+			// Simple heuristic: if it doesn't contain hyphens or is very short, it's likely a name
+			if !strings.Contains(sg, "-") || len(sg) < 20 {
+				err := fmt.Errorf("security group '%s' appears to be a name, not an ID. Security groups must be specified as IDs (format: r###-########-####-####-####-############)", sg)
+				log.Error(err, "Invalid security group format", "securityGroup", sg)
+				c.recorder.Publish(ibmevents.NodeClaimFailedValidation(nodeClaim, fmt.Sprintf("Invalid security group: %s", sg)))
+				return nil, cloudprovider.NewNodeClassNotReadyError(err)
+			}
+		}
+	}
+
+	// Log bootstrap mode for debugging
+	bootstrapMode := "cloud-init"
+	if nodeClass.Spec.BootstrapMode != nil {
+		bootstrapMode = *nodeClass.Spec.BootstrapMode
+	}
+	log.Info("NodeClass configuration",
+		"apiServerEndpoint", nodeClass.Spec.APIServerEndpoint,
+		"bootstrapMode", bootstrapMode,
+		"securityGroups", nodeClass.Spec.SecurityGroups,
+		"image", nodeClass.Spec.Image,
+		"subnet", nodeClass.Spec.Subnet,
+		"vpc", nodeClass.Spec.VPC,
+		"zone", nodeClass.Spec.Zone)
 
 	// Check if the Ready condition exists and its status
 	readyCondition := metav1.Condition{
