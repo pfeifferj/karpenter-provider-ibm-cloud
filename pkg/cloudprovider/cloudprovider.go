@@ -228,6 +228,20 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 	log.Info("Resolved NodeClass", "nodeClass", nodeClass.Name)
 
+	// Log bootstrap mode for debugging
+	bootstrapMode := "cloud-init"
+	if nodeClass.Spec.BootstrapMode != nil {
+		bootstrapMode = *nodeClass.Spec.BootstrapMode
+	}
+	log.Info("NodeClass configuration",
+		"apiServerEndpoint", nodeClass.Spec.APIServerEndpoint,
+		"bootstrapMode", bootstrapMode,
+		"securityGroups", nodeClass.Spec.SecurityGroups,
+		"image", nodeClass.Spec.Image,
+		"subnet", nodeClass.Spec.Subnet,
+		"vpc", nodeClass.Spec.VPC,
+		"zone", nodeClass.Spec.Zone)
+
 	// Check if the Ready condition exists and its status
 	readyCondition := metav1.Condition{
 		Type:   "Ready",
