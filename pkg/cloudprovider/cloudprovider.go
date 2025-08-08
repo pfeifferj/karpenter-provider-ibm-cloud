@@ -298,7 +298,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 			"nodeClass", nodeClass.Name,
 			"region", nodeClass.Spec.Region)
 		c.recorder.Publish(ibmevents.NodeClaimCircuitBreakerBlocked(nodeClaim, cbErr.Error()))
-		return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("circuit breaker blocked provisioning: %w", cbErr))
+		return nil, fmt.Errorf("provisioning temporarily blocked by circuit breaker: %w", cbErr)
 	}
 
 	// Get the appropriate instance provider based on NodeClass configuration
@@ -311,7 +311,12 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 
 	node, err := instanceProvider.Create(ctx, nodeClaim)
 	if err != nil {
-		log.Error(err, "Failed to create instance")
+		// Log the actual error details for better troubleshooting
+		log.Error(err, "Failed to create instance",
+			"nodeClass", nodeClass.Name,
+			"region", nodeClass.Spec.Region,
+			"zone", nodeClass.Spec.Zone,
+			"instanceTypes", lo.Map(compatible, func(it *cloudprovider.InstanceType, _ int) string { return it.Name }))
 		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}

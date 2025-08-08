@@ -248,7 +248,7 @@ func TestParseKubeconfigWithSpacing(t *testing.T) {
 clusters:
 - cluster:
     certificate-authority-data:    ` + base64.StdEncoding.EncodeToString([]byte("test-ca-data")) + `
-    server:   https://test.example.com:6443   
+    server:   https://test.example.com:6443
   name: test-cluster`
 
 	endpoint, caData, err := ParseKubeconfig(kubeconfigWithSpacing)
