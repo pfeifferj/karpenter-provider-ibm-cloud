@@ -62,3 +62,16 @@ func NodeClaimCircuitBreakerBlocked(nodeClaim *karpv1.NodeClaim, reason string) 
 		Message:        fmt.Sprintf("Circuit breaker blocked provisioning for NodeClaim %s: %s", name, reason),
 	}
 }
+
+func NodeClaimFailedValidation(nodeClaim *karpv1.NodeClaim, reason string) events.Event {
+	name := "<unknown>"
+	if nodeClaim != nil {
+		name = nodeClaim.Name
+	}
+	return events.Event{
+		InvolvedObject: nodeClaim,
+		Type:           corev1.EventTypeWarning,
+		Reason:         "FailedValidation",
+		Message:        fmt.Sprintf("NodeClaim %s failed validation: %s", name, reason),
+	}
+}

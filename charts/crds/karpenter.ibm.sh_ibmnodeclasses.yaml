@@ -388,11 +388,11 @@ spec:
               rule: self.bootstrapMode != 'iks-api' || has(self.iksClusterID)
             - message: zone must be within the specified region
               rule: self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1])
-                || self.zone == ''
+                || self.zone == ”
             - message: vpc must be a valid IBM Cloud VPC ID format
               rule: self.vpc.matches('^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
             - message: subnet must be a valid IBM Cloud subnet ID format
-              rule: self.subnet == '' || self.subnet.matches('^[0-9a-z]{4}-[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$')
+              rule: self.subnet == ” || self.subnet.matches('^[0-9a-z]{4}-[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$')
             - message: image must contain only lowercase letters, numbers, and hyphens
               rule: self.image.matches('^[a-z0-9-]+$')
           status:

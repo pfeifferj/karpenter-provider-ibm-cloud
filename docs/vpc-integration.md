@@ -57,6 +57,12 @@ helm install karpenter karpenter-ibm/karpenter-ibm \
 ```
 
 ### Step 2: Create VPC NodeClass
+
+⚠️ **CRITICAL CONFIGURATION REQUIREMENTS:**
+- **API Server Endpoint is REQUIRED** - Without it, nodes cannot join the cluster
+- **Use Resource IDs, NOT Names** - Security groups, VPC, and subnet must be IDs
+- **Bootstrap Mode** - Explicitly set
+
 ```yaml
 apiVersion: karpenter.ibm.sh/v1alpha1
 kind: IBMNodeClass
@@ -65,18 +71,25 @@ metadata:
   annotations:
     karpenter.ibm.sh/description: "VPC self-managed cluster NodeClass"
 spec:
-  # REQUIRED: Replace with your actual values
-  region: us-south                      # Your IBM Cloud region
-  zone: us-south-1                      # Target availability zone
-  vpc: vpc-12345678                     # Your VPC ID
-  image: r006-12345678                  # Ubuntu 20.04 LTS recommended
+  # REQUIRED: Replace with your actual resource IDs (NOT names!)
+  region: us-south                                        # Your IBM Cloud region
+  zone: us-south-1                                        # Target availability zone
+  vpc: "r006-4225852b-4846-4a4a-88c4-9966471337c6"       # VPC ID format: r###-########-####-####-####-############
+  image: "r006-dd3c20fa-71d3-4dc0-913f-2f097bf3e500"     # Image ID (recommended) or name
 
-  # Security and networking
+  # CRITICAL: API Server Endpoint - nodes CANNOT join without this!
+  apiServerEndpoint: "https://10.240.0.1:6443"           # Your cluster's INTERNAL API endpoint
+
+  # REQUIRED: Bootstrap mode for VPC clusters
+  bootstrapMode: cloud-init                               # Valid: cloud-init, iks, user-data
+
+  # REQUIRED: Security groups (must be IDs, not names!)
   securityGroups:
-  - sg-k8s-workers                      # Security group allowing cluster communication
+    - "r006-36f045e2-86a1-4af8-917e-b17a41f8abe3"       # ID format: r###-########-####-####-####-############
+    # ❌ NOT "sg-k8s-workers" - names will cause validation errors!
 
-  # Optional: Specific subnet (auto-selected if not specified)
-  subnet: subnet-12345678               # Your subnet ID
+  # Optional: Specific subnet (must be ID if specified)
+  subnet: "02c7-718345b5-2de1-4a9a-b1de-fa7e307ee8c5"   # Format: ####-########-####-####-####-############
 
   # Optional: Instance requirements (alternative to specific instance profile)
   instanceRequirements:

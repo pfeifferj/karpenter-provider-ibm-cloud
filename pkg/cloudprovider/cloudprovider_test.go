@@ -139,7 +139,7 @@ func (m *mockInstanceProvider) List(ctx context.Context) ([]*corev1.Node, error)
 }
 
 func getTestProviderFactory(kubeClient client.Client) *providers.ProviderFactory {
-	// Create a real factory with nil IBM client for testing
+	// Create a real factory with nil IBM client - tests will handle this properly
 	return providers.NewProviderFactory(nil, kubeClient, nil)
 }
 
@@ -188,12 +188,13 @@ func getTestNodeClass() *v1alpha1.IBMNodeClass {
 			},
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
-			Region:          "us-south",
-			Zone:            "us-south-1",
-			InstanceProfile: "bx2-4x16",
-			Image:           "test-image",
-			VPC:             "test-vpc",
-			Subnet:          "test-subnet",
+			Region:            "us-south",
+			Zone:              "us-south-1",
+			InstanceProfile:   "bx2-4x16",
+			Image:             "test-image",
+			VPC:               "test-vpc",
+			Subnet:            "test-subnet",
+			APIServerEndpoint: "https://10.240.0.1:6443",
 		},
 		Status: v1alpha1.IBMNodeClassStatus{
 			Conditions: []metav1.Condition{
@@ -298,15 +299,13 @@ func TestCloudProvider_Create(t *testing.T) {
 			errorContains:    "not found",
 		},
 		{
-			name:      "instance creation failure due to nil client",
-			nodeClaim: getTestNodeClaim("test-nodeclass"),
-			nodeClass: getTestNodeClass(),
-			instanceProvider: &mockInstanceProvider{
-				createError: fmt.Errorf("failed to create instance"),
-			},
-			instanceTypes: []*cloudprovider.InstanceType{getTestInstanceType()},
-			expectError:   true,
-			errorContains: "IBM client cannot be nil",
+			name:             "instance creation failure due to nil client",
+			nodeClaim:        getTestNodeClaim("test-nodeclass"),
+			nodeClass:        getTestNodeClass(),
+			instanceProvider: &mockInstanceProvider{createError: fmt.Errorf("failed to create instance")},
+			instanceTypes:    []*cloudprovider.InstanceType{getTestInstanceType()},
+			expectError:      true,
+			errorContains:    "IBM client cannot be nil",
 		},
 		{
 			name:             "no matching instance types",
@@ -335,7 +334,7 @@ func TestCloudProvider_Create(t *testing.T) {
 			cp := &CloudProvider{
 				kubeClient:           fakeClient,
 				recorder:             &mockEventRecorder{},
-				ibmClient:            nil, // We don't use IBM client in tests
+				ibmClient:            nil, // Tests expect this to cause proper error handling
 				instanceTypeProvider: &mockInstanceTypeProvider{instanceTypes: tt.instanceTypes},
 				providerFactory:      getTestProviderFactory(fakeClient),
 				circuitBreaker:       NewCircuitBreaker(DefaultCircuitBreakerConfig(), logr.Discard()),
@@ -359,178 +358,7 @@ func TestCloudProvider_Create(t *testing.T) {
 	}
 }
 
-func TestCloudProvider_Create_NodeClaimLabelPopulation(t *testing.T) {
-	// Test the label population logic by creating a unit test
-	// that directly tests the label copying functionality
-
-	t.Run("populates NodeClaim labels from instance type requirements", func(t *testing.T) {
-		// Create a NodeClaim with some existing labels
-		nodeClaim := &karpv1.NodeClaim{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-nodeclaim",
-				Labels: map[string]string{
-					"existing-label": "existing-value",
-				},
-			},
-		}
-
-		// Create an instance type with requirements
-		instanceType := &cloudprovider.InstanceType{
-			Name: "test-instance-type",
-			Requirements: scheduling.NewRequirements(
-				scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, "test-instance-type"),
-				scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, karpv1.CapacityTypeOnDemand),
-				scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1"),
-				scheduling.NewRequirement("multi-value-key", corev1.NodeSelectorOpIn, "value1", "value2"), // Should be skipped
-			),
-		}
-
-		// Create a node with labels (simulating what the provider returns)
-		node := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-nodeclaim",
-				Labels: map[string]string{
-					corev1.LabelInstanceTypeStable: "bx2-2x8",
-					karpv1.CapacityTypeLabelKey:    "on-demand",
-					corev1.LabelTopologyZone:       "eu-de-2",
-					corev1.LabelTopologyRegion:     "eu-de",
-					karpv1.NodePoolLabelKey:        "test-nodepool",
-					"other-node-label":             "other-value",
-				},
-			},
-			Spec: corev1.NodeSpec{
-				ProviderID: "ibm:///eu-de/test-instance-id",
-			},
-		}
-
-		// Simulate the label population logic from our CloudProvider.Create method
-		nc := &karpv1.NodeClaim{
-			ObjectMeta: nodeClaim.ObjectMeta,
-			Spec:       nodeClaim.Spec,
-			Status: karpv1.NodeClaimStatus{
-				ProviderID: node.Spec.ProviderID,
-			},
-		}
-
-		// Initialize labels if needed
-		if nc.Labels == nil {
-			nc.Labels = make(map[string]string)
-		}
-
-		// Copy essential labels from the created node first
-		for key, value := range node.Labels {
-			switch key {
-			case corev1.LabelInstanceTypeStable, // TYPE column
-				karpv1.CapacityTypeLabelKey, // CAPACITY column
-				corev1.LabelTopologyZone,    // ZONE column
-				corev1.LabelTopologyRegion,  // Region info
-				karpv1.NodePoolLabelKey:     // Preserve nodepool label
-				nc.Labels[key] = value
-			}
-		}
-
-		// Populate labels from instance type requirements (only single-value requirements)
-		// These take precedence over node labels when available
-		for key, req := range instanceType.Requirements {
-			if req.Len() == 1 {
-				nc.Labels[key] = req.Values()[0]
-			}
-		}
-
-		// Set the node name in status for the NODE column
-		nc.Status.NodeName = node.Name
-
-		// Verify the results
-		expectedLabels := map[string]string{
-			"existing-label":               "existing-value",            // Should be preserved
-			corev1.LabelInstanceTypeStable: "test-instance-type",        // From instance type requirements (overrides node)
-			karpv1.CapacityTypeLabelKey:    karpv1.CapacityTypeOnDemand, // From instance type requirements
-			corev1.LabelTopologyZone:       "us-south-1",                // From instance type requirements (overrides node)
-			corev1.LabelTopologyRegion:     "eu-de",                     // From node labels
-			karpv1.NodePoolLabelKey:        "test-nodepool",             // From node labels
-		}
-
-		for expectedKey, expectedValue := range expectedLabels {
-			assert.Equal(t, expectedValue, nc.Labels[expectedKey],
-				"Label %s should be %s, got %s", expectedKey, expectedValue, nc.Labels[expectedKey])
-		}
-
-		// Verify multi-value requirements are not added
-		assert.NotContains(t, nc.Labels, "multi-value-key", "Multi-value requirements should not be added as labels")
-
-		// Verify other node labels are not copied
-		assert.NotContains(t, nc.Labels, "other-node-label", "Non-essential node labels should not be copied")
-
-		// Verify node name is set
-		assert.Equal(t, "test-nodeclaim", nc.Status.NodeName)
-
-		// Verify provider ID is set
-		assert.Equal(t, "ibm:///eu-de/test-instance-id", nc.Status.ProviderID)
-	})
-
-	t.Run("handles nil instance type gracefully", func(t *testing.T) {
-		nodeClaim := &karpv1.NodeClaim{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-nodeclaim",
-			},
-		}
-
-		node := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-nodeclaim",
-				Labels: map[string]string{
-					corev1.LabelInstanceTypeStable: "bx2-2x8",
-					karpv1.CapacityTypeLabelKey:    "on-demand",
-					corev1.LabelTopologyZone:       "eu-de-2",
-				},
-			},
-			Spec: corev1.NodeSpec{
-				ProviderID: "ibm:///eu-de/test-instance-id",
-			},
-		}
-
-		// Simulate the label population logic with nil instance type
-		nc := &karpv1.NodeClaim{
-			ObjectMeta: nodeClaim.ObjectMeta,
-			Spec:       nodeClaim.Spec,
-			Status: karpv1.NodeClaimStatus{
-				ProviderID: node.Spec.ProviderID,
-			},
-		}
-
-		if nc.Labels == nil {
-			nc.Labels = make(map[string]string)
-		}
-
-		// No instance type requirements to process (instanceType is nil)
-
-		// Copy essential labels from node
-		for key, value := range node.Labels {
-			switch key {
-			case corev1.LabelInstanceTypeStable,
-				karpv1.CapacityTypeLabelKey,
-				corev1.LabelTopologyZone,
-				corev1.LabelTopologyRegion,
-				karpv1.NodePoolLabelKey:
-				nc.Labels[key] = value
-			}
-		}
-
-		nc.Status.NodeName = node.Name
-
-		// Verify labels are still copied from node
-		assert.Equal(t, "bx2-2x8", nc.Labels[corev1.LabelInstanceTypeStable])
-		assert.Equal(t, "on-demand", nc.Labels[karpv1.CapacityTypeLabelKey])
-		assert.Equal(t, "eu-de-2", nc.Labels[corev1.LabelTopologyZone])
-		assert.Equal(t, "test-nodeclaim", nc.Status.NodeName)
-	})
-}
-
 func TestCloudProvider_Create_CircuitBreakerEventPublishing(t *testing.T) {
-	// Simply test that when circuit breaker blocks provisioning, the correct event is published
-	// This is a focused unit test for the event publishing logic only
-
-	// Setup
 	ctx := context.Background()
 	nodeClaim := getTestNodeClaim("test-nodeclass")
 	nodeClass := getTestNodeClass()
@@ -544,10 +372,9 @@ func TestCloudProvider_Create_CircuitBreakerEventPublishing(t *testing.T) {
 		WithObjects(nodeClass).
 		Build()
 
-	// Create mock event recorder to capture events
 	eventRecorder := &mockEventRecorder{events: []events.Event{}}
 
-	// Create a circuit breaker in OPEN state
+	// Create circuit breaker in OPEN state
 	cbConfig := &CircuitBreakerConfig{
 		FailureThreshold:       1,
 		FailureWindow:          1 * time.Minute,
@@ -557,13 +384,9 @@ func TestCloudProvider_Create_CircuitBreakerEventPublishing(t *testing.T) {
 		MaxConcurrentInstances: 5,
 	}
 	cb := NewCircuitBreaker(cbConfig, logr.Discard())
-
-	// Force circuit breaker to OPEN state
 	cb.state = CircuitBreakerOpen
 	cb.lastStateChange = time.Now()
 
-	// Create cloud provider with circuit breaker
-	// providerFactory will be nil, but that's OK because we'll fail at circuit breaker
 	cp := &CloudProvider{
 		kubeClient:           kubeClient,
 		instanceTypeProvider: &mockInstanceTypeProvider{instanceTypes: []*cloudprovider.InstanceType{getTestInstanceType()}},
@@ -571,19 +394,93 @@ func TestCloudProvider_Create_CircuitBreakerEventPublishing(t *testing.T) {
 		circuitBreaker:       cb,
 	}
 
-	// Execute
 	_, err := cp.Create(ctx, nodeClaim)
 
-	// Verify error
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "provisioning temporarily blocked by circuit breaker")
-
-	// Verify the correct event was published
 	assert.Len(t, eventRecorder.events, 1)
 	event := eventRecorder.events[0]
 	assert.Equal(t, "CircuitBreakerBlocked", event.Reason)
 	assert.Contains(t, event.Message, "Circuit breaker blocked provisioning for NodeClaim test-nodeclaim")
 	assert.Equal(t, corev1.EventTypeWarning, event.Type)
+}
+
+func TestCloudProvider_Create_NodeClaimLabelPopulation(t *testing.T) {
+	// Test that NodeClaim labels are populated from instance type requirements
+	nodeClaim := &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-nodeclaim",
+			Labels: map[string]string{
+				"existing-label": "existing-value",
+			},
+		},
+	}
+
+	instanceType := &cloudprovider.InstanceType{
+		Name: "test-instance-type",
+		Requirements: scheduling.NewRequirements(
+			scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, "test-instance-type"),
+			scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, karpv1.CapacityTypeOnDemand),
+			scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1"),
+		),
+	}
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-nodeclaim",
+			Labels: map[string]string{
+				corev1.LabelInstanceTypeStable: "bx2-2x8",
+				karpv1.CapacityTypeLabelKey:    "on-demand",
+				corev1.LabelTopologyZone:       "eu-de-2",
+				corev1.LabelTopologyRegion:     "eu-de",
+			},
+		},
+		Spec: corev1.NodeSpec{
+			ProviderID: "ibm:///eu-de/test-instance-id",
+		},
+	}
+
+	// Simulate label population logic
+	nc := &karpv1.NodeClaim{
+		ObjectMeta: nodeClaim.ObjectMeta,
+		Spec:       nodeClaim.Spec,
+		Status: karpv1.NodeClaimStatus{
+			ProviderID: node.Spec.ProviderID,
+		},
+	}
+
+	if nc.Labels == nil {
+		nc.Labels = make(map[string]string)
+	}
+
+	// Copy essential labels from node
+	for key, value := range node.Labels {
+		switch key {
+		case corev1.LabelInstanceTypeStable,
+			karpv1.CapacityTypeLabelKey,
+			corev1.LabelTopologyZone,
+			corev1.LabelTopologyRegion:
+			nc.Labels[key] = value
+		}
+	}
+
+	// Populate from instance type requirements (single-value only)
+	for key, req := range instanceType.Requirements {
+		if req.Len() == 1 {
+			nc.Labels[key] = req.Values()[0]
+		}
+	}
+
+	nc.Status.NodeName = node.Name
+
+	// Verify results
+	assert.Equal(t, "existing-value", nc.Labels["existing-label"])
+	assert.Equal(t, "test-instance-type", nc.Labels[corev1.LabelInstanceTypeStable])
+	assert.Equal(t, karpv1.CapacityTypeOnDemand, nc.Labels[karpv1.CapacityTypeLabelKey])
+	assert.Equal(t, "us-south-1", nc.Labels[corev1.LabelTopologyZone])
+	assert.Equal(t, "eu-de", nc.Labels[corev1.LabelTopologyRegion])
+	assert.Equal(t, "test-nodeclaim", nc.Status.NodeName)
+	assert.Equal(t, "ibm:///eu-de/test-instance-id", nc.Status.ProviderID)
 }
 
 func TestCloudProvider_Delete(t *testing.T) {

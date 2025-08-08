@@ -77,10 +77,12 @@ ibmcloud is images --visibility public --status available | grep ubuntu
 ```
 
 **Collect the following information:**
-- **VPC ID**: `vpc-12345678` (from VPC list)
-- **Subnet ID**: `subnet-12345678` (choose one per zone you want to use)
-- **Security Group ID**: `sg-12345678` (existing or create new)
-- **Image ID**: `r006-12345678` (Ubuntu 20.04 recommended)
+
+- **VPC ID**: Must be an ID like `r006-4225852b-4846-4a4a-88c4-9966471337c6`
+- **Subnet ID**: Format `02c7-718345b5-2de1-4a9a-b1de-fa7e307ee8c5`
+- **Security Group ID**: Must be ID `r006-36f045e2-86a1-4af8-917e-b17a41f8abe3`
+- **Image ID**: Prefer ID `r006-dd3c20fa-71d3-4dc0-913f-2f097bf3e500` (names like "ubuntu-22-04" work as well)
+- **API Server Endpoint**: Get your cluster's API endpoint (e.g., `https://10.240.0.1:6443`)
 - **Region**: `us-south` (or your preferred region)
 - **Zone**: `us-south-1` (subnet's availability zone)
 
