@@ -44,9 +44,9 @@ spec:
                   APIServerEndpoint is the Kubernetes API server endpoint for node registration.
                   If specified, this endpoint will be used instead of automatic discovery.
                   This is useful when the control plane is not accessible via standard discovery methods.
-                  Must be a valid HTTPS URL with hostname/IP and port.
-                  Examples: "https://10.243.65.4:6443", "https://k8s-api.example.com:6443"
-                pattern: ^https://[a-zA-Z0-9.-]+:[0-9]+$
+                  Must be a valid HTTP or HTTPS URL with hostname/IP and port.
+                  Examples: "https://10.243.65.4:6443", "http://k8s-api.example.com:6443"
+                pattern: ^https?://[a-zA-Z0-9.-]+:[0-9]+$
                 type: string
               bootstrapMode:
                 default: auto
@@ -221,7 +221,7 @@ spec:
                             Must be a valid IBM Cloud Load Balancer ID
                             Example: "r010-12345678-1234-5678-9abc-def012345678"
                           minLength: 1
-                          pattern: ^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
+                          pattern: ^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$
                           type: string
                         poolName:
                           description: PoolName is the name of the load balancer pool
@@ -388,11 +388,11 @@ spec:
               rule: self.bootstrapMode != 'iks-api' || has(self.iksClusterID)
             - message: zone must be within the specified region
               rule: self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1])
-                || self.zone == ”
+                || self.zone == ''
             - message: vpc must be a valid IBM Cloud VPC ID format
-              rule: self.vpc.matches('^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
+              rule: self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')
             - message: subnet must be a valid IBM Cloud subnet ID format
-              rule: self.subnet == ” || self.subnet.matches('^[0-9a-z]{4}-[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$')
+              rule: self.subnet == '' || self.subnet.matches('^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')
             - message: image must contain only lowercase letters, numbers, and hyphens
               rule: self.image.matches('^[a-z0-9-]+$')
           status:
