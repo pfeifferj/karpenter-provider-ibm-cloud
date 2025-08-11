@@ -27,9 +27,9 @@ import (
 
 var (
 	// IBM Cloud resource ID pattern - supports variable-length region numbers (r006, r010, r042, etc.)
-	ibmResourceIDPattern = regexp.MustCompile(`^r[0-9]+-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
+	ibmResourceIDPattern = regexp.MustCompile(`^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$`)
 	// IBM Cloud subnet ID pattern - subnets use 4-digit prefix instead of r###-
-	ibmSubnetIDPattern = regexp.MustCompile(`^[0-9a-f]{4}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
+	ibmSubnetIDPattern = regexp.MustCompile(`^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$`)
 	// API server endpoint pattern
 	apiServerEndpointPattern = regexp.MustCompile(`^https?://[a-zA-Z0-9.-]+:\d+$`)
 )
