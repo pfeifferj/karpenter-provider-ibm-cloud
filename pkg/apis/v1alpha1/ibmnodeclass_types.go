@@ -88,7 +88,7 @@ type LoadBalancerTarget struct {
 	// Example: "r010-12345678-1234-5678-9abc-def012345678"
 	// +required
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Pattern="^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+	// +kubebuilder:validation:Pattern="^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$"
 	LoadBalancerID string `json:"loadBalancerID"`
 
 	// PoolName is the name of the load balancer pool to add targets to
@@ -239,8 +239,8 @@ type InstanceTypeRequirements struct {
 // +kubebuilder:validation:XValidation:rule="!(has(self.instanceProfile) && has(self.instanceRequirements))", message="instanceProfile and instanceRequirements are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="self.bootstrapMode != 'iks-api' || has(self.iksClusterID)", message="iksClusterID is required when bootstrapMode is 'iks-api'"
 // +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == ”", message="zone must be within the specified region"
-// +kubebuilder:validation:XValidation:rule="self.vpc.matches('^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')", message="vpc must be a valid IBM Cloud VPC ID format"
-// +kubebuilder:validation:XValidation:rule="self.subnet == ” || self.subnet.matches('^[0-9a-z]{4}-[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$')", message="subnet must be a valid IBM Cloud subnet ID format"
+// +kubebuilder:validation:XValidation:rule="self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="vpc must be a valid IBM Cloud VPC ID format"
+// +kubebuilder:validation:XValidation:rule="self.subnet == ” || self.subnet.matches('^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="subnet must be a valid IBM Cloud subnet ID format"
 // +kubebuilder:validation:XValidation:rule="self.image.matches('^[a-z0-9-]+$')", message="image must contain only lowercase letters, numbers, and hyphens"
 type IBMNodeClassSpec struct {
 	// Region is the IBM Cloud region where nodes will be created.
@@ -310,7 +310,7 @@ type IBMNodeClassSpec struct {
 	// SecurityGroups is a list of security group IDs to attach to nodes
 	// At least one security group must be specified for VPC instance creation
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:Items:Pattern="^r[0-9]{3}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+	// +kubebuilder:validation:Items:Pattern="^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$"
 	SecurityGroups []string `json:"securityGroups"`
 
 	// UserData contains user data script to run on instance initialization
@@ -323,7 +323,7 @@ type IBMNodeClassSpec struct {
 	// To find SSH key IDs: ibmcloud is keys --output json | jq '.[] | {name, id}'
 	// +optional
 	// +kubebuilder:validation:Items:MinLength=1
-	// +kubebuilder:validation:Items:Pattern="^r[0-9]{3}-[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$"
+	// +kubebuilder:validation:Items:Pattern="^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$"
 	SSHKeys []string `json:"sshKeys,omitempty"`
 
 	// ResourceGroup is the ID of the resource group for the instance
@@ -351,10 +351,10 @@ type IBMNodeClassSpec struct {
 	// APIServerEndpoint is the Kubernetes API server endpoint for node registration.
 	// If specified, this endpoint will be used instead of automatic discovery.
 	// This is useful when the control plane is not accessible via standard discovery methods.
-	// Must be a valid HTTPS URL with hostname/IP and port.
-	// Examples: "https://10.243.65.4:6443", "https://k8s-api.example.com:6443"
+	// Must be a valid HTTP or HTTPS URL with hostname/IP and port.
+	// Examples: "https://10.243.65.4:6443", "http://k8s-api.example.com:6443"
 	// +optional
-	// +kubebuilder:validation:Pattern="^https://[a-zA-Z0-9.-]+:[0-9]+$"
+	// +kubebuilder:validation:Pattern="^https?://[a-zA-Z0-9.-]+:[0-9]+$"
 	APIServerEndpoint string `json:"apiServerEndpoint,omitempty"`
 
 	// IKSClusterID is the IKS cluster ID for API-based bootstrapping.
