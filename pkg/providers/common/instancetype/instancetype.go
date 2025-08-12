@@ -196,13 +196,16 @@ func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requi
 			return nil, fmt.Errorf("no zones found for region %s", region)
 		}
 
-		zone := zones[0] // Use first available zone for pricing
+		// Use any available zone for pricing since IBM Cloud pricing is uniform across zones in a region
+		// This avoids confusion in logs where zone might not match the NodeClass zone
+		zone := zones[0] // Pricing is region-level, zone selection doesn't affect price
 
 		price, err := p.pricingProvider.GetPrice(ctx, it.Name, zone)
 		if err != nil {
 			// Log warning but continue with 0 price to avoid breaking functionality
-			log.FromContext(ctx).Info("Could not get pricing for instance type, using fallback price",
-				"instance_type", it.Name, "zone", zone, "error", err, "fallback_price", 0.0)
+			// Note: This is just for pricing info, doesn't affect provisioning zone
+			log.FromContext(ctx).V(1).Info("Could not get pricing for instance type, using fallback price",
+				"instance_type", it.Name, "pricing_zone", zone, "error", err, "fallback_price", 0.0)
 			price = 0.0
 		}
 
@@ -304,12 +307,13 @@ func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovid
 				price = 0.0
 			} else {
 				region := p.client.GetRegion()
-				zone := region + "-1" // Use first zone for pricing lookup
+				// IBM Cloud pricing is uniform across zones in a region, so any zone works for pricing
+				zone := region + "-1" // Pricing is region-level, zone selection doesn't affect price
 				priceVal, err := p.pricingProvider.GetPrice(context.Background(), it.Name, zone)
 				if err != nil {
 					// Log warning but continue with 0 price - use background context since we don't have the original
-					log.Log.WithName("instancetype").Info("Could not get pricing for instance type ranking, using fallback price",
-						"instance_type", it.Name, "zone", zone, "error", err, "fallback_price", 0.0)
+					log.Log.WithName("instancetype").V(1).Info("Could not get pricing for instance type ranking, using fallback price",
+						"instance_type", it.Name, "pricing_zone", zone, "error", err, "fallback_price", 0.0)
 					price = 0.0
 				} else {
 					price = priceVal
