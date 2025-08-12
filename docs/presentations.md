@@ -14,7 +14,10 @@ This page contains links to presentations, talks, and demos about the Karpenter 
 
 ## Demo Videos
 
-*Demo videos and tutorials will be added here as they become available.*
+### Interactive Demo: Karpenter IBM Cloud Provider in Action
+[![asciicast](https://asciinema.org/a/Y6tSuDXvRXz7jEZogi52dDMRV.svg)](https://asciinema.org/a/Y6tSuDXvRXz7jEZogi52dDMRV)
+
+This interactive demo showcases the Karpenter IBM Cloud Provider performing automatic node provisioning and scaling based on pod demand.
 
 ## Community Talks
 
