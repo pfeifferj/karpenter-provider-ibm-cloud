@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -90,7 +91,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	// Store original for patching
-	patch := client.MergeFrom(nc.DeepCopy())
+	stored := nc.DeepCopy()
 
 	// Validate the nodeclass configuration
 	if err := c.validateNodeClass(ctx, nc); err != nil {
@@ -108,7 +109,10 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			},
 		}
 
-		if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
+		if err := c.kubeClient.Status().Patch(ctx, nc, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
+			if errors.IsConflict(err) {
+				return reconcile.Result{Requeue: true}, nil
+			}
 			return reconcile.Result{}, err
 		}
 		return reconcile.Result{}, nil
@@ -129,7 +133,10 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		},
 	}
 
-	if err := c.kubeClient.Status().Patch(ctx, nc, patch); err != nil {
+	if err := c.patchNodeClassStatus(ctx, nc, stored); err != nil {
+		if errors.IsConflict(err) {
+			return reconcile.Result{Requeue: true}, nil
+		}
 		return reconcile.Result{}, err
 	}
 
@@ -522,6 +529,11 @@ func (c *Controller) validatePlacementStrategy(strategy *v1alpha1.PlacementStrat
 	}
 
 	return nil
+}
+
+// patchNodeClassStatus patches the nodeclass status using optimistic locking
+func (c *Controller) patchNodeClassStatus(ctx context.Context, nc *v1alpha1.IBMNodeClass, stored *v1alpha1.IBMNodeClass) error {
+	return c.kubeClient.Status().Patch(ctx, nc, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))
 }
 
 // Register registers the controller with the manager
