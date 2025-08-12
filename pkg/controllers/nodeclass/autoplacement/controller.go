@@ -112,7 +112,10 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.log.Error(err, "failed to select instance types", "nodeclass", req.Name)
 			InstanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
-			if updateErr := c.client.Status().Update(ctx, nodeClass); updateErr != nil {
+			if updateErr := c.patchNodeClassStatus(ctx, nodeClass); updateErr != nil {
+				if errors.IsConflict(updateErr) {
+					return reconcile.Result{Requeue: true}, nil
+				}
 				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
 			return reconcile.Result{}, err
@@ -123,7 +126,10 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.log.Error(err, "instance type selection failed", "nodeclass", req.Name)
 			InstanceTypeSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
-			if updateErr := c.client.Status().Update(ctx, nodeClass); updateErr != nil {
+			if updateErr := c.patchNodeClassStatus(ctx, nodeClass); updateErr != nil {
+				if errors.IsConflict(updateErr) {
+					return reconcile.Result{Requeue: true}, nil
+				}
 				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
 			return reconcile.Result{}, err
@@ -138,7 +144,10 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 		c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionTrue, "InstanceTypeSelectionSucceeded", "Instance type selection completed successfully")
 
-		if err := c.client.Status().Update(ctx, nodeClass); err != nil {
+		if err := c.patchNodeClassStatus(ctx, nodeClass); err != nil {
+			if errors.IsConflict(err) {
+				return reconcile.Result{Requeue: true}, nil
+			}
 			return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
 		}
 
@@ -153,6 +162,12 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	return reconcile.Result{}, nil
+}
+
+// patchNodeClassStatus patches the nodeclass status using optimistic locking
+func (c *Controller) patchNodeClassStatus(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass) error {
+	stored := nodeClass.DeepCopy()
+	return c.client.Status().Patch(ctx, nodeClass, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))
 }
 
 // updateCondition updates a condition in the nodeclass status
