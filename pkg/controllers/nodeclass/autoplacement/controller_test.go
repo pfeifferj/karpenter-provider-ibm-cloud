@@ -42,7 +42,7 @@ import (
 type mockInstanceTypeProvider struct{}
 
 func (m *mockInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requirements *v1alpha1.InstanceTypeRequirements) ([]*cloudprovider.InstanceType, error) {
-	return []*cloudprovider.InstanceType{
+	instanceTypes := []*cloudprovider.InstanceType{
 		{
 			Name: "test-instance-type",
 			Capacity: corev1.ResourceList{
@@ -54,7 +54,8 @@ func (m *mockInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requ
 				scheduling.NewRequirement(corev1.LabelArchStable, corev1.NodeSelectorOpIn, "amd64"),
 			),
 		},
-	}, nil
+	}
+	return instanceTypes, nil
 }
 
 func (m *mockInstanceTypeProvider) Create(ctx context.Context, instanceType *cloudprovider.InstanceType) error {
