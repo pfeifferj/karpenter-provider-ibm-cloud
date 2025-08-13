@@ -238,9 +238,9 @@ type InstanceTypeRequirements struct {
 // +kubebuilder:validation:XValidation:rule="has(self.instanceProfile) || has(self.instanceRequirements)", message="either instanceProfile or instanceRequirements must be specified"
 // +kubebuilder:validation:XValidation:rule="!(has(self.instanceProfile) && has(self.instanceRequirements))", message="instanceProfile and instanceRequirements are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="self.bootstrapMode != 'iks-api' || has(self.iksClusterID)", message="iksClusterID is required when bootstrapMode is 'iks-api'"
-// +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == ”", message="zone must be within the specified region"
+// +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == \"\"", message="zone must be within the specified region"
 // +kubebuilder:validation:XValidation:rule="self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="vpc must be a valid IBM Cloud VPC ID format"
-// +kubebuilder:validation:XValidation:rule="self.subnet == ” || self.subnet.matches('^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="subnet must be a valid IBM Cloud subnet ID format"
+// +kubebuilder:validation:XValidation:rule="self.subnet == \"\" || self.subnet.matches('^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="subnet must be a valid IBM Cloud subnet ID format"
 // +kubebuilder:validation:XValidation:rule="self.image.matches('^[a-z0-9-]+$')", message="image must contain only lowercase letters, numbers, and hyphens"
 type IBMNodeClassSpec struct {
 	// Region is the IBM Cloud region where nodes will be created.
