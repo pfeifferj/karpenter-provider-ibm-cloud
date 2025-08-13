@@ -274,7 +274,7 @@ func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alp
 		Spec: v1alpha1.IBMNodeClassSpec{
 			Region:            s.testRegion,
 			Zone:              s.testZone,
-			InstanceProfile:   "bx2-2x8", // Small instance for testing
+			InstanceProfile:   "bx2a-2x8", // Small instance for testing
 			Image:             s.testImage,
 			VPC:               s.testVPC,
 			Subnet:            s.testSubnet,
@@ -316,7 +316,7 @@ func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName 
 							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
 								Key:      "node.kubernetes.io/instance-type",
 								Operator: corev1.NodeSelectorOpIn,
-								Values:   []string{"bx2-2x8"},
+								Values:   []string{"bx2a-2x8"},
 							},
 						},
 					},
