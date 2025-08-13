@@ -91,15 +91,17 @@ spec:
   # Optional: Specific subnet (must be ID if specified)
   subnet: "02c7-718345b5-2de1-4a9a-b1de-fa7e307ee8c5"   # Format: ####-########-####-####-####-############
 
-  # Optional: Instance requirements (alternative to specific instance profile)
+  # Optional: Instance requirements for filtering available instance types
+  # If neither instanceRequirements nor instanceProfile are specified,
+  # instance types will be selected based on NodePool requirements
   instanceRequirements:
     architecture: amd64                 # CPU architecture: amd64, arm64, s390x
     minimumCPU: 2                       # Minimum vCPUs required
     minimumMemory: 4                    # Minimum memory in GiB
     maximumHourlyPrice: "1.00"          # Maximum hourly price in USD
 
-  # Optional: Specific instance profile (alternative to instanceRequirements)
-  instanceProfile: bx2-4x16             # Specific instance type
+  # Optional: Specific instance profile (mutually exclusive with instanceRequirements)
+  # instanceProfile: bx2-4x16           # Uncomment to use a specific instance type
 
   # Optional: Placement strategy for zone/subnet selection
   placementStrategy:
@@ -387,9 +389,34 @@ spec:
 
 ## Dynamic Instance Selection
 
-Unlike IKS mode, VPC integration provides full flexibility in instance type selection:
+Unlike IKS mode, VPC integration provides full flexibility in instance type selection. There are three ways to control instance selection:
+
+### 1. NodePool Requirements (Recommended)
+When neither `instanceProfile` nor `instanceRequirements` are specified in the NodeClass, instance types are selected based on NodePool requirements. This provides maximum flexibility:
+
+### 2. NodeClass Instance Requirements
+You can set filtering criteria in the NodeClass to limit available instance types globally for all NodePools using that NodeClass.
+
+### 3. NodeClass Specific Instance Profile
+You can lock the NodeClass to a single instance type, though this limits flexibility.
+
+**Example: NodePool-driven selection (most flexible approach):**
 
 ```yaml
+# NodeClass with NO instance specifications - lets NodePool control everything
+apiVersion: karpenter.ibm.sh/v1alpha1
+kind: IBMNodeClass
+metadata:
+  name: flexible-nodeclass
+spec:
+  region: us-south
+  vpc: "r006-your-vpc-id"
+  image: "r006-your-image-id"
+  securityGroups: ["r006-your-sg-id"]
+  apiServerEndpoint: "https://10.240.0.1:6443"
+  bootstrapMode: cloud-init
+  # Note: No instanceProfile or instanceRequirements specified
+---
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
@@ -398,7 +425,7 @@ spec:
   template:
     spec:
       nodeClassRef:
-        name: vpc-nodeclass
+        name: flexible-nodeclass
       requirements:
       # Karpenter will choose the best instance type based on pod requirements
       - key: node.kubernetes.io/instance-type
