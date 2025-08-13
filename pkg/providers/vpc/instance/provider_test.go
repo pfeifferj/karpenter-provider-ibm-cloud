@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -284,7 +285,7 @@ type testVPCInstanceProvider struct {
 }
 
 // Create implements the Create method for testing
-func (p *testVPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim) (*corev1.Node, error) {
+func (p *testVPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error) {
 	// Get the node class
 	var nodeClass v1alpha1.IBMNodeClass
 	nodeClassRef := nodeClaim.Spec.NodeClassRef
@@ -749,7 +750,7 @@ func TestVPCInstanceProvider_CreateReal(t *testing.T) {
 
 			// Test
 			ctx := context.Background()
-			result, err := provider.Create(ctx, tt.nodeClaim)
+			result, err := provider.Create(ctx, tt.nodeClaim, []*cloudprovider.InstanceType{{Name: "bx2-2x8"}})
 
 			// Validate results
 			if tt.expectError {
@@ -956,7 +957,7 @@ func TestVPCInstanceProvider_Create(t *testing.T) {
 			}
 
 			// Test Create method
-			result, err := provider.Create(ctx, tt.nodeClaim)
+			result, err := provider.Create(ctx, tt.nodeClaim, []*cloudprovider.InstanceType{{Name: "bx2-2x8"}})
 
 			// Validate results
 			if tt.expectError {
@@ -1539,7 +1540,7 @@ func TestVPCInstanceProvider_ValidationErrors(t *testing.T) {
 
 			// Test create
 			ctx := context.Background()
-			result, err := provider.Create(ctx, tt.nodeClaim)
+			result, err := provider.Create(ctx, tt.nodeClaim, []*cloudprovider.InstanceType{{Name: "bx2-2x8"}})
 
 			if tt.expectedError != "" {
 				assert.Error(t, err)
@@ -1765,7 +1766,7 @@ func TestVPCInstanceProvider_ErrorHandling(t *testing.T) {
 		ctx := context.Background()
 		nodeClaim := getTestNodeClaim()
 
-		result, err := provider.Create(ctx, nodeClaim)
+		result, err := provider.Create(ctx, nodeClaim, []*cloudprovider.InstanceType{{Name: "bx2-2x8"}})
 		assert.Error(t, err)
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "kubernetes client not set")
@@ -1784,7 +1785,7 @@ func TestVPCInstanceProvider_ErrorHandling(t *testing.T) {
 		ctx := context.Background()
 		nodeClaim := getTestNodeClaim()
 
-		result, err := provider.Create(ctx, nodeClaim)
+		result, err := provider.Create(ctx, nodeClaim, []*cloudprovider.InstanceType{{Name: "bx2-2x8"}})
 		assert.Error(t, err)
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "not found")
@@ -1972,7 +1973,7 @@ func TestVPCInstanceProvider_SecurityGroups(t *testing.T) {
 
 		// Create the instance
 		ctx := context.Background()
-		node, err := provider.Create(ctx, nodeClaim)
+		node, err := provider.Create(ctx, nodeClaim, []*cloudprovider.InstanceType{{Name: "bx2-2x8"}})
 
 		// Verify results
 		assert.NoError(t, err)
@@ -2074,7 +2075,7 @@ func TestVPCInstanceProvider_SecurityGroups(t *testing.T) {
 
 		// Create the instance
 		ctx := context.Background()
-		node, err := provider.Create(ctx, nodeClaim)
+		node, err := provider.Create(ctx, nodeClaim, []*cloudprovider.InstanceType{{Name: "bx2-2x8"}})
 
 		// Verify results
 		assert.NoError(t, err)
@@ -2153,7 +2154,7 @@ func TestVPCInstanceProvider_SecurityGroups(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		node, err := provider.Create(ctx, nodeClaim)
+		node, err := provider.Create(ctx, nodeClaim, []*cloudprovider.InstanceType{{Name: "bx2-2x8"}})
 
 		assert.NoError(t, err)
 		assert.NotNil(t, node)

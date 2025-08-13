@@ -124,7 +124,7 @@ func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient c
 }
 
 // Create provisions a new VPC instance
-func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
+func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error) {
 	logger := log.FromContext(ctx)
 
 	if p.kubeClient == nil {
@@ -142,11 +142,19 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		return nil, err
 	}
 
-	// Get pre-selected instance type from Karpenter's provisioning logic based on NodePool requirements
-	instanceProfile := nodeClaim.Labels["node.kubernetes.io/instance-type"]
-	if instanceProfile == "" {
-		return nil, fmt.Errorf("no instance type selected for nodeclaim %s", nodeClaim.Name)
+	// Select an instance type from the compatible types provided by Karpenter
+	if len(instanceTypes) == 0 {
+		return nil, fmt.Errorf("no compatible instance types provided for nodeclaim %s", nodeClaim.Name)
 	}
+
+	// Use the first compatible instance type (Karpenter has already ranked them by preference)
+	selectedInstanceType := instanceTypes[0]
+	instanceProfile := selectedInstanceType.Name
+
+	logger.Info("Selected instance type",
+		"instanceType", instanceProfile,
+		"availableTypes", len(instanceTypes),
+		"nodeClaim", nodeClaim.Name)
 
 	// Determine zone and subnet - support both explicit and dynamic selection
 	zone := nodeClass.Spec.Zone
