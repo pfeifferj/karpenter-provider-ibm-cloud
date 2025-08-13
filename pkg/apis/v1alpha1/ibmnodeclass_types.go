@@ -231,11 +231,10 @@ type InstanceTypeRequirements struct {
 // Example: "0717-197e06f4-b500-426c-bc0f-900b215f996c"
 //
 // Configuration Rules:
-// - Either instanceProfile OR instanceRequirements must be specified (mutually exclusive)
+// - instanceProfile and instanceRequirements are mutually exclusive (both are optional)
 // - When bootstrapMode is "iks-api", iksClusterID must be provided
 // - When zone is specified, it must belong to the specified region
 //
-// +kubebuilder:validation:XValidation:rule="has(self.instanceProfile) || has(self.instanceRequirements)", message="either instanceProfile or instanceRequirements must be specified"
 // +kubebuilder:validation:XValidation:rule="!(has(self.instanceProfile) && has(self.instanceRequirements))", message="instanceProfile and instanceRequirements are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="self.bootstrapMode != 'iks-api' || has(self.iksClusterID)", message="iksClusterID is required when bootstrapMode is 'iks-api'"
 // +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == \"\"", message="zone must be within the specified region"
@@ -260,8 +259,7 @@ type IBMNodeClassSpec struct {
 	Zone string `json:"zone,omitempty"`
 
 	// InstanceProfile is the name of the instance profile to use for nodes.
-	// If not specified, instance types will be automatically selected based on requirements.
-	// Either InstanceProfile or InstanceRequirements must be specified.
+	// If not specified, instance types will be automatically selected based on NodePool requirements.
 	// Must follow IBM Cloud instance profile naming convention: family-cpuxmemory.
 	// Examples: "bx2-4x16" (4 vCPUs, 16GB RAM), "mx2-8x64" (8 vCPUs, 64GB RAM), "gx2-16x128x2v100" (GPU instance)
 	// +optional
@@ -271,7 +269,7 @@ type IBMNodeClassSpec struct {
 
 	// InstanceRequirements defines requirements for automatic instance type selection
 	// Only used when InstanceProfile is not specified
-	// Either InstanceProfile or InstanceRequirements must be specified
+	// If neither InstanceProfile nor InstanceRequirements are specified, NodePool requirements will be used
 	// +optional
 	InstanceRequirements *InstanceTypeRequirements `json:"instanceRequirements,omitempty"`
 
