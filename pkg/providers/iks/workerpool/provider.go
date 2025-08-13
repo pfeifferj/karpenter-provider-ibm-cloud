@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -52,7 +53,8 @@ func NewIKSWorkerPoolProvider(client *ibm.Client, kubeClient client.Client) (com
 }
 
 // Create provisions a new worker by resizing an IKS worker pool
-func (p *IKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error) {
+// Note: instanceTypes parameter is ignored for IKS (compatibility with VPC interface)
+func (p *IKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error) {
 	logger := log.FromContext(ctx)
 
 	if p.kubeClient == nil {

@@ -86,7 +86,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 			},
 		}
 
-		result, err := provider.Create(ctx, nodeClaim)
+		result, err := provider.Create(ctx, nodeClaim, nil)
 		assert.Error(t, err)
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "kubernetes client not set")
@@ -110,7 +110,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 			},
 		}
 
-		result, err := provider.Create(ctx, nodeClaim)
+		result, err := provider.Create(ctx, nodeClaim, nil)
 		assert.Error(t, err)
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "getting NodeClass nonexistent-nodeclass")
@@ -144,7 +144,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 		// Clear environment variable to ensure it's not used
 		require.NoError(t, os.Unsetenv("IKS_CLUSTER_ID"))
 
-		result, err := provider.Create(ctx, nodeClaim)
+		result, err := provider.Create(ctx, nodeClaim, nil)
 		assert.Error(t, err)
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "IKS cluster ID not found")
@@ -182,7 +182,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 			},
 		}
 
-		result, err := provider.Create(ctx, nodeClaim)
+		result, err := provider.Create(ctx, nodeClaim, nil)
 
 		// Should error due to nil client
 		assert.Error(t, err)
@@ -438,7 +438,7 @@ func TestClusterIDResolution_Unit(t *testing.T) {
 				},
 			}
 
-			_, err := provider.Create(context.Background(), nodeClaim)
+			_, err := provider.Create(context.Background(), nodeClaim, nil)
 
 			if tt.expectError {
 				assert.Error(t, err)
