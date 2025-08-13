@@ -142,10 +142,10 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		return nil, err
 	}
 
-	// Extract instance profile from NodeClass
-	instanceProfile := nodeClass.Spec.InstanceProfile
+	// Get pre-selected instance type from Karpenter's provisioning logic based on NodePool requirements
+	instanceProfile := nodeClaim.Labels["node.kubernetes.io/instance-type"]
 	if instanceProfile == "" {
-		return nil, fmt.Errorf("instance profile not specified in NodeClass")
+		return nil, fmt.Errorf("no instance type selected for nodeclaim %s", nodeClaim.Name)
 	}
 
 	// Determine zone and subnet - support both explicit and dynamic selection
