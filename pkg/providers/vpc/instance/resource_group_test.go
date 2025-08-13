@@ -65,6 +65,9 @@ func TestResourceGroupConfiguration(t *testing.T) {
 			nodeClaim := &karpv1.NodeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-nodeclaim",
+					Labels: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-4x16",
+					},
 				},
 			}
 
