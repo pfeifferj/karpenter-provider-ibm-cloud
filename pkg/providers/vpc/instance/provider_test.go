@@ -301,10 +301,10 @@ func (p *testVPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.
 		return nil, fmt.Errorf("getting VPC client: %w", err)
 	}
 
-	// Extract instance profile from NodeClass (matching real implementation)
-	instanceProfile := nodeClass.Spec.InstanceProfile
+	// Get pre-selected instance type from nodeClaim (matching real implementation)
+	instanceProfile := nodeClaim.Labels["node.kubernetes.io/instance-type"]
 	if instanceProfile == "" {
-		return nil, fmt.Errorf("instance profile not specified in NodeClass")
+		return nil, fmt.Errorf("no instance type selected for nodeclaim %s", nodeClaim.Name)
 	}
 
 	if nodeClass.Spec.Zone == "" {
@@ -517,6 +517,9 @@ func getTestNodeClaim() *karpv1.NodeClaim {
 	return &karpv1.NodeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-nodeclaim",
+			Labels: map[string]string{
+				"node.kubernetes.io/instance-type": "bx2-4x16",
+			},
 		},
 		Spec: karpv1.NodeClaimSpec{
 			NodeClassRef: &karpv1.NodeClassReference{
@@ -838,18 +841,18 @@ func TestVPCInstanceProvider_Create(t *testing.T) {
 			errorContains: "mock VPC SDK client not initialized",
 		},
 		{
-			name: "missing instance profile",
-			nodeClass: func() *v1alpha1.IBMNodeClass {
-				nc := getTestNodeClass()
-				nc.Spec.InstanceProfile = "" // Remove instance profile
+			name:      "missing instance type in nodeClaim labels",
+			nodeClass: getTestNodeClass(),
+			nodeClaim: func() *karpv1.NodeClaim {
+				nc := getTestNodeClaim()
+				nc.Labels = nil // Remove instance-type label
 				return nc
 			}(),
-			nodeClaim: getTestNodeClaim(),
 			setupMocks: func(ibmClient *MockIBMClient, vpcSDKClient *MockVPCSDKClient) {
 				// No mocks needed for basic validation errors
 			},
 			expectError:   true,
-			errorContains: "instance profile not specified",
+			errorContains: "no instance type selected",
 		},
 		{
 			name: "missing zone",
@@ -1456,7 +1459,7 @@ func TestVPCInstanceProvider_ValidationErrors(t *testing.T) {
 		expectedError string
 	}{
 		{
-			name: "missing instance profile from both nodeclass and labels",
+			name: "missing instance type in nodeClaim labels",
 			nodeClass: &v1alpha1.IBMNodeClass{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-nodeclass"},
 				Spec: v1alpha1.IBMNodeClassSpec{
@@ -1477,10 +1480,10 @@ func TestVPCInstanceProvider_ValidationErrors(t *testing.T) {
 					NodeClassRef: &karpv1.NodeClassReference{Name: "test-nodeclass"},
 				},
 			},
-			expectedError: "instance profile not specified",
+			expectedError: "no instance type selected",
 		},
 		{
-			name: "fail when nodeclass instance profile missing",
+			name: "success when nodeclass instance profile missing but nodeClaim has instance type",
 			nodeClass: &v1alpha1.IBMNodeClass{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-nodeclass"},
 				Spec: v1alpha1.IBMNodeClassSpec{
@@ -1489,21 +1492,21 @@ func TestVPCInstanceProvider_ValidationErrors(t *testing.T) {
 					Subnet: "test-subnet",
 					Image:  "test-image-id",
 					VPC:    "test-vpc-id",
-					// Missing InstanceProfile - should fail
+					// Missing InstanceProfile - but nodeClaim has instance type, so should succeed
 				},
 			},
 			nodeClaim: &karpv1.NodeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-nodeclaim",
 					Labels: map[string]string{
-						"node.kubernetes.io/instance-type": "bx2-4x16", // Should not use this
+						"node.kubernetes.io/instance-type": "bx2-4x16", // This should be used
 					},
 				},
 				Spec: karpv1.NodeClaimSpec{
 					NodeClassRef: &karpv1.NodeClassReference{Name: "test-nodeclass"},
 				},
 			},
-			expectedError: "instance profile not specified",
+			expectedError: "", // Should succeed now
 		},
 	}
 
@@ -1624,7 +1627,12 @@ func TestVPCInstanceProvider_SecurityGroupHandling(t *testing.T) {
 
 			// Test that we can create test nodeclaim
 			nodeClaim := &karpv1.NodeClaim{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-nodeclaim"},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclaim",
+					Labels: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-4x16",
+					},
+				},
 				Spec: karpv1.NodeClaimSpec{
 					NodeClassRef: &karpv1.NodeClassReference{Name: tt.nodeClass.Name},
 				},
@@ -1888,6 +1896,9 @@ func TestVPCInstanceProvider_SecurityGroups(t *testing.T) {
 		nodeClaim := &karpv1.NodeClaim{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-node",
+				Labels: map[string]string{
+					"node.kubernetes.io/instance-type": "bx2-4x16",
+				},
 			},
 			Spec: karpv1.NodeClaimSpec{
 				NodeClassRef: &karpv1.NodeClassReference{
@@ -1993,6 +2004,9 @@ func TestVPCInstanceProvider_SecurityGroups(t *testing.T) {
 		nodeClaim := &karpv1.NodeClaim{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-node",
+				Labels: map[string]string{
+					"node.kubernetes.io/instance-type": "bx2-4x16",
+				},
 			},
 			Spec: karpv1.NodeClaimSpec{
 				NodeClassRef: &karpv1.NodeClassReference{
@@ -2091,6 +2105,9 @@ func TestVPCInstanceProvider_SecurityGroups(t *testing.T) {
 		nodeClaim := &karpv1.NodeClaim{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-node",
+				Labels: map[string]string{
+					"node.kubernetes.io/instance-type": "bx2-4x16",
+				},
 			},
 			Spec: karpv1.NodeClaimSpec{
 				NodeClassRef: &karpv1.NodeClassReference{
