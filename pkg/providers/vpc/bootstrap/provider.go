@@ -117,10 +117,23 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 		logger.Error(err, "Failed to get NodeClaim, proceeding without labels/taints")
 	}
 
-	// Detect architecture from instance profile
-	architecture, err := p.detectArchitectureFromInstanceProfile(nodeClass.Spec.InstanceProfile)
-	if err != nil {
-		return "", fmt.Errorf("detecting architecture from instance profile: %w", err)
+	// Detect architecture from the selected instance type
+	var architecture string
+	if nodeClaimObj != nil {
+		instanceType := nodeClaimObj.Labels["node.kubernetes.io/instance-type"]
+		if instanceType != "" {
+			architecture, err = p.detectArchitectureFromInstanceProfile(instanceType)
+			if err != nil {
+				return "", fmt.Errorf("detecting architecture from instance type %s: %w", instanceType, err)
+			}
+		}
+	}
+	// Fallback to NodeClass instanceProfile if set (backward compatibility)
+	if architecture == "" && nodeClass.Spec.InstanceProfile != "" {
+		architecture, err = p.detectArchitectureFromInstanceProfile(nodeClass.Spec.InstanceProfile)
+		if err != nil {
+			return "", fmt.Errorf("detecting architecture from NodeClass instance profile: %w", err)
+		}
 	}
 
 	// Build bootstrap options for direct kubelet

@@ -216,6 +216,60 @@ func TestE2EFullWorkflow(t *testing.T) {
 	t.Logf("E2E test completed successfully: %s", testName)
 }
 
+// TestE2ENodePoolInstanceTypeSelection tests the customer's configuration:
+// - NodeClass WITHOUT instanceProfile field (should be optional)
+// - NodePool with multiple instance type requirements
+// This regression test ensures the VPC provider uses instance types from
+// NodePool requirements rather than requiring instanceProfile in NodeClass
+func TestE2ENodePoolInstanceTypeSelection(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	ctx := context.Background()
+	_ = ctx
+
+	testName := fmt.Sprintf("e2e-nodepool-types-%d", time.Now().Unix())
+
+	t.Logf("Starting NodePool instance type selection E2E test: %s", testName)
+
+	// Step 1: Create NodeClass WITHOUT instanceProfile (like customer's config)
+	nodeClass := suite.createTestNodeClassWithoutInstanceProfile(t, testName)
+	t.Logf("Created NodeClass without instanceProfile: %s", nodeClass.Name)
+
+	// Step 2: Wait for NodeClass to be ready
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+
+	// Step 3: Create NodePool with multiple instance type requirements (like customer's config)
+	nodePool := suite.createTestNodePoolWithMultipleInstanceTypes(t, testName, nodeClass.Name)
+	t.Logf("Created NodePool with multiple instance types: %s", nodePool.Name)
+
+	// Step 4: Create NodeClaim to trigger provisioning
+	nodeClaim := suite.createTestNodeClaim(t, testName, nodeClass.Name)
+	t.Logf("Created NodeClaim: %s", nodeClaim.Name)
+
+	// Step 5: Wait for instance to be created (this was failing before the fix)
+	suite.waitForInstanceCreation(t, nodeClaim.Name)
+	t.Logf("Instance created for NodeClaim: %s", nodeClaim.Name)
+
+	// Step 6: Verify the created instance uses one of the allowed types
+	suite.verifyInstanceUsesAllowedType(t, nodeClaim.Name, []string{"bx2-4x16", "mx2-2x16", "mx2d-2x16", "mx3d-2x20"})
+	t.Logf("Verified instance uses allowed instance type")
+
+	// Step 7: Verify instance exists in IBM Cloud
+	suite.verifyInstanceInIBMCloud(t, nodeClaim.Name)
+	t.Logf("Verified instance exists in IBM Cloud")
+
+	// Step 8: Clean up
+	suite.deleteNodeClaim(t, nodeClaim.Name)
+	t.Logf("NodeClaim deleted: %s", nodeClaim.Name)
+
+	suite.waitForInstanceDeletion(t, nodeClaim.Name)
+	t.Logf("Instance deleted for NodeClaim: %s", nodeClaim.Name)
+
+	suite.cleanupTestResources(t, testName)
+
+	t.Logf("NodePool instance type selection E2E test completed successfully: %s", testName)
+}
+
 func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alpha1.IBMNodeClass {
 	nodeClass := &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{
@@ -969,4 +1023,119 @@ func (s *E2ETestSuite) attemptBootstrapLogDump(t *testing.T, floatingIP, instanc
 		t.Logf("Bootstrap log dump completed successfully for instance %s", instanceID)
 		return
 	}
+}
+
+// createTestNodeClassWithoutInstanceProfile creates a NodeClass without the instanceProfile field
+// This matches the customer's configuration where instanceProfile should be optional
+func (s *E2ETestSuite) createTestNodeClassWithoutInstanceProfile(t *testing.T, testName string) *v1alpha1.IBMNodeClass {
+	nodeClass := &v1alpha1.IBMNodeClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-nodeclass", testName),
+		},
+		Spec: v1alpha1.IBMNodeClassSpec{
+			Region: s.testRegion,
+			Zone:   s.testZone,
+			// Intentionally omit InstanceProfile - this should be optional
+			Image:             s.testImage,
+			VPC:               s.testVPC,
+			Subnet:            s.testSubnet,
+			SecurityGroups:    []string{os.Getenv("TEST_SECURITY_GROUP_ID")},
+			APIServerEndpoint: os.Getenv("KUBERNETES_API_SERVER_ENDPOINT"),
+			BootstrapMode:     &[]string{"cloud-init"}[0],
+			ResourceGroup:     os.Getenv("IBM_RESOURCE_GROUP_ID"),
+			SSHKeys:           []string{os.Getenv("IBM_SSH_KEY_ID")},
+			Tags: map[string]string{
+				"test":       "e2e",
+				"test-name":  testName,
+				"created-by": "karpenter-e2e",
+				"purpose":    "nodepool-instancetype-test",
+			},
+		},
+	}
+
+	err := s.kubeClient.Create(context.Background(), nodeClass)
+	require.NoError(t, err)
+
+	return nodeClass
+}
+
+// createTestNodePoolWithMultipleInstanceTypes creates a NodePool with multiple instance type requirements
+// This matches the customer's configuration that was causing the circuit breaker to open
+func (s *E2ETestSuite) createTestNodePoolWithMultipleInstanceTypes(t *testing.T, testName string, nodeClassName string) *karpv1.NodePool {
+	nodePool := &karpv1.NodePool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-nodepool", testName),
+		},
+		Spec: karpv1.NodePoolSpec{
+			Template: karpv1.NodeClaimTemplate{
+				ObjectMeta: karpv1.ObjectMeta{
+					Labels: map[string]string{
+						"provisioner":  "karpenter-vpc",
+						"cluster-type": "self-managed",
+						"test":         "e2e",
+						"test-name":    testName,
+					},
+				},
+				Spec: karpv1.NodeClaimTemplateSpec{
+					NodeClassRef: &karpv1.NodeClassReference{
+						Name: nodeClassName,
+					},
+					Requirements: []karpv1.NodeSelectorRequirementWithMinValues{
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      corev1.LabelInstanceTypeStable,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"bx2-4x16", "mx2-2x16", "mx2d-2x16", "mx3d-2x20"}, // Customer's exact config
+							},
+						},
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      corev1.LabelArchStable,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"amd64"},
+							},
+						},
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      karpv1.CapacityTypeLabelKey,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"on-demand"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := s.kubeClient.Create(context.Background(), nodePool)
+	require.NoError(t, err)
+
+	return nodePool
+}
+
+// verifyInstanceUsesAllowedType verifies the created instance uses one of the allowed instance types
+func (s *E2ETestSuite) verifyInstanceUsesAllowedType(t *testing.T, nodeClaimName string, allowedTypes []string) {
+	ctx := context.Background()
+
+	// Get the NodeClaim to find the instance type that was selected
+	var nodeClaim karpv1.NodeClaim
+	err := s.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaimName}, &nodeClaim)
+	require.NoError(t, err)
+
+	// Check the instance type label set by Karpenter
+	instanceType, ok := nodeClaim.Labels[corev1.LabelInstanceTypeStable]
+	require.True(t, ok, "NodeClaim should have instance-type label")
+
+	// Verify it's one of the allowed types
+	found := false
+	for _, allowedType := range allowedTypes {
+		if instanceType == allowedType {
+			found = true
+			break
+		}
+	}
+
+	assert.True(t, found, "Instance type %s should be one of the allowed types: %v", instanceType, allowedTypes)
+	t.Logf("Instance uses allowed type: %s", instanceType)
 }
