@@ -41,7 +41,7 @@ spec:
 
   # OPTIONAL: Instance profile for direct specification
   # If not specified, will be selected based on NodePool requirements
-  instanceProfile: bx2-4x16
+  # instanceProfile: bx2-4x16
 
   # OPTIONAL: SSH keys for instance access (must be IDs)
   # Format: r###-########-####-####-####-############

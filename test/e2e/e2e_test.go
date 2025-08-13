@@ -1025,8 +1025,8 @@ func (s *E2ETestSuite) attemptBootstrapLogDump(t *testing.T, floatingIP, instanc
 	}
 }
 
-// createTestNodeClassWithoutInstanceProfile creates a NodeClass without the instanceProfile field
-// This matches the customer's configuration where instanceProfile should be optional
+// createTestNodeClassWithoutInstanceProfile creates a NodeClass with instanceRequirements instead of instanceProfile
+// This tests that NodePool can control instance type selection when NodeClass uses instanceRequirements
 func (s *E2ETestSuite) createTestNodeClassWithoutInstanceProfile(t *testing.T, testName string) *v1alpha1.IBMNodeClass {
 	nodeClass := &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1035,7 +1035,7 @@ func (s *E2ETestSuite) createTestNodeClassWithoutInstanceProfile(t *testing.T, t
 		Spec: v1alpha1.IBMNodeClassSpec{
 			Region: s.testRegion,
 			Zone:   s.testZone,
-			// Intentionally omit InstanceProfile - this should be optional
+			// No instanceProfile or instanceRequirements - let NodePool control instance selection
 			Image:             s.testImage,
 			VPC:               s.testVPC,
 			Subnet:            s.testSubnet,
