@@ -313,7 +313,7 @@ func TestIKSWorkerPoolProvider_CreateMethodSignature(t *testing.T) {
 	provider := &IKSWorkerPoolProvider{}
 
 	// Verify that Create method can be called (will error due to nil client but that's expected)
-	_, err := provider.Create(context.Background(), &karpv1.NodeClaim{})
+	_, err := provider.Create(context.Background(), &karpv1.NodeClaim{}, nil)
 	assert.Error(t, err) // Expected due to nil client
 	assert.Contains(t, err.Error(), "kubernetes client not set")
 }
