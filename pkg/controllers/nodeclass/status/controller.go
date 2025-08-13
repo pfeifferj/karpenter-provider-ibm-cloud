@@ -350,19 +350,11 @@ func (c *Controller) validateRegion(ctx context.Context, region string) error {
 	return fmt.Errorf("region %s not found in VPC API", region)
 }
 
-// validateBusinessLogic checks business rules and constraints
+// validateBusinessLogic checks business rules and constraints that require external API calls
+// Static validation (like mutual exclusivity) is handled by CRD validation
 func (c *Controller) validateBusinessLogic(ctx context.Context, nc *v1alpha1.IBMNodeClass) error {
-	// Validate instanceProfile and instanceRequirements mutual exclusivity
-	hasInstanceProfile := strings.TrimSpace(nc.Spec.InstanceProfile) != ""
-	hasInstanceRequirements := nc.Spec.InstanceRequirements != nil
-
-	if !hasInstanceProfile && !hasInstanceRequirements {
-		return fmt.Errorf("either instanceProfile or instanceRequirements must be specified")
-	}
-
-	if hasInstanceProfile && hasInstanceRequirements {
-		return fmt.Errorf("instanceProfile and instanceRequirements are mutually exclusive")
-	}
+	// Note: instanceProfile/instanceRequirements validation is handled by CRD validation
+	// Both fields are optional - when neither is specified, NodePool requirements control instance selection
 
 	// Validate zone-subnet compatibility if both are specified
 	if nc.Spec.Zone != "" && nc.Spec.Subnet != "" {
