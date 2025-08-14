@@ -109,7 +109,7 @@ jobs:
         # Wait for no pending e2e pods
         for i in {1..30}; do
           pending_pods=$(kubectl get pods -l test=e2e --all-namespaces --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l)
-          if [[ $pending_pods -eq 0 ]]; then
+          if [ "$pending_pods" -eq 0 ]; then
             echo "✅ No pending e2e pods found"
             break
           fi
@@ -120,7 +120,7 @@ jobs:
         # Wait for no disrupted nodes
         for i in {1..30}; do
           disrupted_nodes=$(kubectl get nodes --no-headers -o custom-columns="NAME:.metadata.name,TAINTS:.spec.taints[*].key" | grep -c "karpenter.sh/disrupted" || echo "0")
-          if [[ $disrupted_nodes -eq 0 ]]; then
+          if [ "$disrupted_nodes" -eq 0 ]; then
             echo "✅ No disrupted nodes found"
             break
           fi
@@ -158,13 +158,10 @@ jobs:
         echo "🚀 Starting sequential E2E tests..."
 
         # List of tests to run sequentially
-        tests=(
-          "TestE2EFullWorkflow"
-          "TestE2EInstanceTypeSelection"
-        )
+        tests="TestE2EFullWorkflow TestE2EInstanceTypeSelection"
 
         # Run each test individually with cleanup between
-        for test in "${tests[@]}"; do
+        for test in $tests; do
           echo "🧪 Running test: $test"
 
           # Run the specific test with extended timeout
@@ -204,7 +201,7 @@ jobs:
         done
 
         # Check if any test failed
-        if [[ "$test_failed" == "true" ]]; then
+        if [ "$test_failed" = "true" ]; then
           echo "❌ One or more tests failed"
           exit 1
         fi
@@ -212,7 +209,7 @@ jobs:
         echo "✅ All sequential E2E tests completed successfully"
 
         # Run benchmarks if requested
-        if [[ "$RUN_E2E_BENCHMARKS" == "true" ]]; then
+        if [ "$RUN_E2E_BENCHMARKS" = "true" ]; then
           echo "📊 Running performance benchmarks..."
           go test -v -timeout 30m ./test/e2e/... -run=^$ -bench=.
         fi
