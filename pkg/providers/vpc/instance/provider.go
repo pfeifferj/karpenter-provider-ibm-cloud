@@ -295,11 +295,11 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		instancePrototype.Keys = sshKeys
 	}
 
-	// Generate bootstrap user data using the bootstrap provider
-	userData, err := p.generateBootstrapUserData(ctx, nodeClass, types.NamespacedName{
+	// Generate bootstrap user data using the bootstrap provider with selected instance type
+	userData, err := p.generateBootstrapUserDataWithType(ctx, nodeClass, types.NamespacedName{
 		Name:      nodeClaim.Name,
 		Namespace: nodeClaim.Namespace,
-	})
+	}, instanceProfile)
 	if err != nil {
 		return nil, fmt.Errorf("generating bootstrap user data: %w", err)
 	}
@@ -666,8 +666,18 @@ func (p *VPCInstanceProvider) generateBootstrapUserData(ctx context.Context, nod
 	return p.generateBootstrapUserDataWithInstanceID(ctx, nodeClass, nodeClaim, "")
 }
 
+// generateBootstrapUserDataWithType generates bootstrap user data with the selected instance type
+func (p *VPCInstanceProvider) generateBootstrapUserDataWithType(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, selectedInstanceType string) (string, error) {
+	return p.generateBootstrapUserDataWithInstanceIDAndType(ctx, nodeClass, nodeClaim, "", selectedInstanceType)
+}
+
 // generateBootstrapUserDataWithInstanceID generates bootstrap user data with a specific instance ID
 func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceID(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID string) (string, error) {
+	return p.generateBootstrapUserDataWithInstanceIDAndType(ctx, nodeClass, nodeClaim, instanceID, "")
+}
+
+// generateBootstrapUserDataWithInstanceIDAndType generates bootstrap user data with instance ID and type
+func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceIDAndType(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID, selectedInstanceType string) (string, error) {
 	logger := log.FromContext(ctx)
 
 	// Use manual userData if provided
@@ -693,9 +703,11 @@ func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceID(ctx contex
 		}
 	}
 
-	// Generate dynamic bootstrap script with instance ID
-	logger.Info("Generating dynamic bootstrap script with automatic cluster discovery", "instanceID", instanceID)
-	userData, err := p.bootstrapProvider.GetUserDataWithInstanceID(ctx, nodeClass, nodeClaim, instanceID)
+	// Generate dynamic bootstrap script with instance ID and selected type
+	logger.Info("Generating dynamic bootstrap script with automatic cluster discovery",
+		"instanceID", instanceID,
+		"selectedInstanceType", selectedInstanceType)
+	userData, err := p.bootstrapProvider.GetUserDataWithInstanceIDAndType(ctx, nodeClass, nodeClaim, instanceID, selectedInstanceType)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate bootstrap user data: %w", err)
 	}
