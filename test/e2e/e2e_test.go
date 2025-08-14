@@ -388,6 +388,10 @@ func (s *E2ETestSuite) createTestWorkload(t *testing.T, testName string) *appsv1
 					},
 				},
 				Spec: corev1.PodSpec{
+					// Force pods to only be scheduled on nodes from this test's NodePool
+					NodeSelector: map[string]string{
+						"karpenter.sh/nodepool": fmt.Sprintf("%s-nodepool", testName),
+					},
 					Containers: []corev1.Container{
 						{
 							Name:  "test-container",
@@ -467,6 +471,10 @@ func (s *E2ETestSuite) createTestWorkloadWithInstanceTypeRequirements(t *testing
 					},
 				},
 				Spec: corev1.PodSpec{
+					// Force pods to only be scheduled on nodes from this test's NodePool
+					NodeSelector: map[string]string{
+						"karpenter.sh/nodepool": fmt.Sprintf("%s-nodepool", testName),
+					},
 					Containers: []corev1.Container{
 						{
 							Name:  "test-container",
