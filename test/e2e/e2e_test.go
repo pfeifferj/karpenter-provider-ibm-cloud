@@ -52,7 +52,7 @@ import (
 )
 
 const (
-	testTimeout  = 10 * time.Minute
+	testTimeout  = 15 * time.Minute // Increased timeout for node provisioning
 	pollInterval = 10 * time.Second
 )
 
@@ -248,6 +248,10 @@ func TestE2ENodePoolInstanceTypeSelection(t *testing.T) {
 	// Step 5: Wait for pods to be scheduled and nodes to be provisioned
 	suite.waitForPodsToBeScheduled(t, deployment.Name, deployment.Namespace)
 	t.Logf("Pods scheduled successfully")
+
+	// Step 5a: Verify pods are scheduled on nodes with correct NodePool label
+	suite.verifyPodsScheduledOnCorrectNodes(t, deployment.Name, deployment.Namespace, fmt.Sprintf("%s-nodepool", testName))
+	t.Logf("Verified pods are scheduled on nodes from correct NodePool")
 
 	// Step 6: Verify the created instances use allowed types
 	suite.verifyInstancesUseAllowedTypes(t, []string{"bx2-4x16", "mx2-2x16", "mx2d-2x16", "mx3d-2x20"})
@@ -630,10 +634,110 @@ func (s *E2ETestSuite) waitForPodsToBeScheduled(t *testing.T, deploymentName, na
 		}
 
 		t.Logf("Deployment %s: %d/%d replicas ready", deploymentName, deployment.Status.ReadyReplicas, *deployment.Spec.Replicas)
+
+		// Add detailed diagnostics for debugging (but less frequently to avoid log spam)
+		if time.Now().Unix()%30 == 0 { // Log diagnostics every ~5 minutes
+			s.logDeploymentDiagnostics(t, deploymentName, namespace)
+		}
+
 		return false, nil
 	})
 
 	require.NoError(t, err, "Pods should be scheduled and running within timeout")
+}
+
+// logDeploymentDiagnostics logs detailed information to help debug scheduling issues
+func (s *E2ETestSuite) logDeploymentDiagnostics(t *testing.T, deploymentName, namespace string) {
+	ctx := context.Background()
+
+	// Log pod status
+	var podList corev1.PodList
+	err := s.kubeClient.List(ctx, &podList, client.InNamespace(namespace), client.MatchingLabels{"app": deploymentName})
+	if err != nil {
+		t.Logf("Failed to list pods for diagnostics: %v", err)
+		return
+	}
+
+	for _, pod := range podList.Items {
+		t.Logf("Pod %s status: Phase=%s, Reason=%s", pod.Name, pod.Status.Phase, pod.Status.Reason)
+		for _, condition := range pod.Status.Conditions {
+			if condition.Status != corev1.ConditionTrue {
+				t.Logf("Pod %s condition %s: %s - %s", pod.Name, condition.Type, condition.Status, condition.Message)
+			}
+		}
+	}
+
+	// Log pending events for the deployment and pods
+	var eventList corev1.EventList
+	err = s.kubeClient.List(ctx, &eventList, client.InNamespace(namespace))
+	if err != nil {
+		t.Logf("Failed to list events for diagnostics: %v", err)
+		return
+	}
+
+	for _, event := range eventList.Items {
+		if event.Type == "Warning" && (event.InvolvedObject.Name == deploymentName || 
+			strings.HasPrefix(event.InvolvedObject.Name, deploymentName)) {
+			t.Logf("Warning event: %s - %s", event.Reason, event.Message)
+		}
+	}
+
+	// Log NodeClaims status
+	var nodeClaimList karpv1.NodeClaimList
+	err = s.kubeClient.List(ctx, &nodeClaimList)
+	if err != nil {
+		t.Logf("Failed to list NodeClaims for diagnostics: %v", err)
+		return
+	}
+
+	t.Logf("NodeClaims count: %d", len(nodeClaimList.Items))
+	for _, nodeClaim := range nodeClaimList.Items {
+		t.Logf("NodeClaim %s: Ready=%v, ProviderID=%s", 
+			nodeClaim.Name, 
+			s.isNodeClaimReady(nodeClaim), 
+			nodeClaim.Status.ProviderID)
+	}
+}
+
+// isNodeClaimReady checks if a NodeClaim is ready
+func (s *E2ETestSuite) isNodeClaimReady(nodeClaim karpv1.NodeClaim) bool {
+	for _, condition := range nodeClaim.Status.Conditions {
+		if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyPodsScheduledOnCorrectNodes verifies that pods are scheduled on nodes from the expected NodePool
+func (s *E2ETestSuite) verifyPodsScheduledOnCorrectNodes(t *testing.T, deploymentName, namespace, expectedNodePool string) {
+	ctx := context.Background()
+
+	// Get all pods from the deployment
+	var podList corev1.PodList
+	err := s.kubeClient.List(ctx, &podList, client.InNamespace(namespace), client.MatchingLabels{"app": deploymentName})
+	require.NoError(t, err, "Should be able to list pods")
+
+	require.Greater(t, len(podList.Items), 0, "Should have at least one pod")
+
+	// Check each pod is scheduled on a node with the correct NodePool label
+	for _, pod := range podList.Items {
+		require.NotEmpty(t, pod.Spec.NodeName, "Pod %s should be scheduled on a node", pod.Name)
+
+		// Get the node
+		var node corev1.Node
+		err := s.kubeClient.Get(ctx, types.NamespacedName{Name: pod.Spec.NodeName}, &node)
+		require.NoError(t, err, "Should be able to get node %s", pod.Spec.NodeName)
+
+		// Verify node has the expected NodePool label
+		nodePoolLabel, exists := node.Labels["karpenter.sh/nodepool"]
+		require.True(t, exists, "Node %s should have karpenter.sh/nodepool label", node.Name)
+		require.Equal(t, expectedNodePool, nodePoolLabel, 
+			"Pod %s is scheduled on node %s with NodePool %s, expected %s", 
+			pod.Name, node.Name, nodePoolLabel, expectedNodePool)
+
+		t.Logf("✓ Pod %s correctly scheduled on node %s (NodePool: %s)", pod.Name, node.Name, nodePoolLabel)
+	}
 }
 
 // verifyKarpenterNodesExist verifies that Karpenter has created new nodes
