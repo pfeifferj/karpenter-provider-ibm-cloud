@@ -63,6 +63,11 @@ func (p *VPCBootstrapProvider) GetUserData(ctx context.Context, nodeClass *v1alp
 
 // GetUserDataWithInstanceID generates VPC-specific user data with a known instance ID
 func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID string) (string, error) {
+	return p.GetUserDataWithInstanceIDAndType(ctx, nodeClass, nodeClaim, instanceID, "")
+}
+
+// GetUserDataWithInstanceIDAndType generates VPC-specific user data with a known instance ID and type
+func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID, selectedInstanceType string) (string, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Generating VPC cloud-init user data for direct kubelet bootstrap")
 
@@ -117,23 +122,46 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 		logger.Error(err, "Failed to get NodeClaim, proceeding without labels/taints")
 	}
 
-	// Detect architecture from the selected instance type
+	// Detect architecture from the selected instance type with improved fallback chain
 	var architecture string
-	if nodeClaimObj != nil {
+
+	// First: Use the selectedInstanceType parameter if provided (most reliable)
+	if selectedInstanceType != "" {
+		architecture, err = p.detectArchitectureFromInstanceProfile(selectedInstanceType)
+		if err != nil {
+			logger.Error(err, "Failed to detect architecture from selected instance type, trying fallbacks", "instanceType", selectedInstanceType)
+		} else {
+			logger.Info("Successfully detected architecture from selected instance type", "instanceType", selectedInstanceType, "architecture", architecture)
+		}
+	}
+
+	// Second: Try NodeClaim labels if architecture detection failed
+	if architecture == "" && nodeClaimObj != nil {
 		instanceType := nodeClaimObj.Labels["node.kubernetes.io/instance-type"]
 		if instanceType != "" {
 			architecture, err = p.detectArchitectureFromInstanceProfile(instanceType)
 			if err != nil {
-				return "", fmt.Errorf("detecting architecture from instance type %s: %w", instanceType, err)
+				logger.Error(err, "Failed to detect architecture from NodeClaim labels", "instanceType", instanceType)
+			} else {
+				logger.Info("Successfully detected architecture from NodeClaim labels", "instanceType", instanceType, "architecture", architecture)
 			}
 		}
 	}
-	// Fallback to NodeClass instanceProfile if set (backward compatibility)
+
+	// Third: Fallback to NodeClass instanceProfile if set (backward compatibility)
 	if architecture == "" && nodeClass.Spec.InstanceProfile != "" {
 		architecture, err = p.detectArchitectureFromInstanceProfile(nodeClass.Spec.InstanceProfile)
 		if err != nil {
-			return "", fmt.Errorf("detecting architecture from NodeClass instance profile: %w", err)
+			logger.Error(err, "Failed to detect architecture from NodeClass instance profile", "instanceProfile", nodeClass.Spec.InstanceProfile)
+		} else {
+			logger.Info("Successfully detected architecture from NodeClass instance profile", "instanceProfile", nodeClass.Spec.InstanceProfile, "architecture", architecture)
 		}
+	}
+
+	// Error if all methods failed
+	if architecture == "" {
+		return "", fmt.Errorf("failed to detect architecture: no valid instance type found in selectedInstanceType=%q, NodeClaim labels, or NodeClass instanceProfile=%q",
+			selectedInstanceType, nodeClass.Spec.InstanceProfile)
 	}
 
 	// Build bootstrap options for direct kubelet
