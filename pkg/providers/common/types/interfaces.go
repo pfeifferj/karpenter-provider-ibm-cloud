@@ -21,13 +21,16 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 )
 
 // InstanceProvider defines the interface for managing compute instances
 // This interface is implemented by both VPC and IKS providers
 type InstanceProvider interface {
 	// Create provisions a new compute instance based on the NodeClaim
-	Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*corev1.Node, error)
+	// For VPC providers: instanceTypes contains compatible types from Karpenter
+	// For IKS providers: instanceTypes is unused (can be nil)
+	Create(ctx context.Context, nodeClaim *v1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error)
 
 	// Delete removes an existing compute instance
 	Delete(ctx context.Context, node *corev1.Node) error

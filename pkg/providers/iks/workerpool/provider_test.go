@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -83,7 +84,7 @@ type testIKSWorkerPoolProvider struct {
 }
 
 // Create implements the Create method for testing using mock IKS client
-func (p *testIKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim) (*corev1.Node, error) {
+func (p *testIKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error) {
 	// Get the NodeClass to extract configuration
 	nodeClass := &v1alpha1.IBMNodeClass{}
 	if getErr := p.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); getErr != nil {
@@ -467,7 +468,7 @@ func TestIKSWorkerPoolProvider_Create(t *testing.T) {
 			}
 
 			// Test Create method
-			result, err := provider.Create(ctx, tt.nodeClaim)
+			result, err := provider.Create(ctx, tt.nodeClaim, nil)
 
 			// Validate results
 			if tt.expectError {

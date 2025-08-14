@@ -323,7 +323,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		return nil, fmt.Errorf("getting instance provider, %w", err)
 	}
 
-	node, err := instanceProvider.Create(ctx, nodeClaim)
+	node, err := instanceProvider.Create(ctx, nodeClaim, compatible)
 	if err != nil {
 		// Log the actual error details for better troubleshooting
 		log.Error(err, "Failed to create instance",
