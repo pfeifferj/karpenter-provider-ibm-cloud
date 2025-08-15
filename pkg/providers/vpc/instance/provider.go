@@ -18,6 +18,7 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -316,15 +317,10 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		ResponseHopLimit: &[]int64{2}[0],
 	}
 
-	// Log the instance prototype for debugging
-	logger.Info("Creating instance with prototype",
-		"name", *instancePrototype.Name,
-		"image_id", *instancePrototype.Image.(*vpcv1.ImageIdentity).ID,
-		"zone", *instancePrototype.Zone.(*vpcv1.ZoneIdentity).Name,
-		"vpc_id", *instancePrototype.VPC.(*vpcv1.VPCIdentity).ID,
-		"profile", *instancePrototype.Profile.(*vpcv1.InstanceProfileIdentity).Name,
-		"has_primary_network_attachment", instancePrototype.PrimaryNetworkAttachment != nil,
-		"attachment_name", *instancePrototype.PrimaryNetworkAttachment.Name)
+	// Log detailed instance prototype for oneOf validation debugging
+	// Marshal the prototype to JSON to see exact structure being sent to IBM API
+	prototypeJSON, _ := json.MarshalIndent(instancePrototype, "", "  ")
+	logger.Info("Creating instance with prototype JSON", "json_payload", string(prototypeJSON))
 
 	// Create the instance
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
