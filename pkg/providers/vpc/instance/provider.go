@@ -265,9 +265,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		Profile: &vpcv1.InstanceProfileIdentity{
 			Name: &instanceProfile,
 		},
-		VPC: &vpcv1.VPCIdentity{
-			ID: &nodeClass.Spec.VPC,
-		},
+		// Note: VPC is omitted when using PrimaryNetworkAttachment as it's derived from the subnet
 		BootVolumeAttachment: bootVolumeAttachment,
 
 		// Add availability policy for better instance management
