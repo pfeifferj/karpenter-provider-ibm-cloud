@@ -249,7 +249,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Create instance prototype with VNI
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
-		// Required fields for oneOf validation - these must be set first
+		// Required fields for oneOf validation
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
 		},
@@ -315,6 +315,16 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		Protocol:         &[]string{"http"}[0],
 		ResponseHopLimit: &[]int64{2}[0],
 	}
+
+	// Log the instance prototype for debugging
+	logger.Info("Creating instance with prototype",
+		"name", *instancePrototype.Name,
+		"image_id", *instancePrototype.Image.(*vpcv1.ImageIdentity).ID,
+		"zone", *instancePrototype.Zone.(*vpcv1.ZoneIdentity).Name,
+		"vpc_id", *instancePrototype.VPC.(*vpcv1.VPCIdentity).ID,
+		"profile", *instancePrototype.Profile.(*vpcv1.InstanceProfileIdentity).Name,
+		"has_primary_network_attachment", instancePrototype.PrimaryNetworkAttachment != nil,
+		"attachment_name", *instancePrototype.PrimaryNetworkAttachment.Name)
 
 	// Create the instance
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
