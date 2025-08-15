@@ -1536,5 +1536,3 @@ func TestArchitectureDetectionPriorityOrder(t *testing.T) {
 		assert.NotContains(t, err.Error(), "nil pointer")
 	})
 }
-
-// Helper functions

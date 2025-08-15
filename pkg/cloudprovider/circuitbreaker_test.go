@@ -75,6 +75,38 @@ func TestNewCircuitBreaker(t *testing.T) {
 	}
 }
 
+// TestDisabledCircuitBreaker tests that a disabled circuit breaker allows all operations
+func TestDisabledCircuitBreaker(t *testing.T) {
+	logger := logr.Discard()
+	// Create a disabled circuit breaker by passing nil config
+	cb := NewCircuitBreaker(nil, logger)
+
+	ctx := context.Background()
+
+	// Test that CanProvision always allows when disabled
+	for i := 0; i < 10; i++ {
+		err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
+		assert.NoError(t, err, "Disabled circuit breaker should always allow provisioning")
+	}
+
+	// Test that RecordFailure doesn't affect state when disabled
+	for i := 0; i < 10; i++ {
+		cb.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("test error %d", i))
+	}
+
+	// Should still allow provisioning after many failures
+	err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
+	assert.NoError(t, err, "Disabled circuit breaker should allow provisioning even after failures")
+
+	// Test that RecordSuccess doesn't affect state when disabled
+	cb.RecordSuccess("test-nodeclass", "us-south")
+
+	// Get state should show it's disabled
+	status, err := cb.GetState()
+	assert.NoError(t, err)
+	assert.Equal(t, CircuitBreakerClosed, status.State, "Disabled circuit breaker should always be in CLOSED state")
+}
+
 func TestCircuitBreaker_CanProvision_RateLimit(t *testing.T) {
 	config := &CircuitBreakerConfig{
 		FailureThreshold:       3,
