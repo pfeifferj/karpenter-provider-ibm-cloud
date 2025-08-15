@@ -303,9 +303,15 @@ func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alp
 }
 
 func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName string) *karpv1.NodePool {
+	// Set 5-minute expiration for e2e test nodes to ensure cleanup
+	expireAfter := karpv1.MustParseNillableDuration("5m")
 	nodePool := &karpv1.NodePool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-nodepool", testName),
+			Labels: map[string]string{
+				"test":      "e2e",
+				"test-name": testName,
+			},
 		},
 		Spec: karpv1.NodePoolSpec{
 			Template: karpv1.NodeClaimTemplate{
@@ -324,6 +330,7 @@ func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName 
 							},
 						},
 					},
+					ExpireAfter: expireAfter,
 				},
 			},
 		},
@@ -336,9 +343,15 @@ func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName 
 }
 
 func (s *E2ETestSuite) createTestNodeClaim(t *testing.T, testName, nodeClassName string) *karpv1.NodeClaim {
+	// Set 5-minute expiration for e2e test nodes to ensure cleanup
+	expireAfter := karpv1.MustParseNillableDuration("5m")
 	nodeClaim := &karpv1.NodeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-nodeclaim", testName),
+			Labels: map[string]string{
+				"test":      "e2e",
+				"test-name": testName,
+			},
 		},
 		Spec: karpv1.NodeClaimSpec{
 			NodeClassRef: &karpv1.NodeClassReference{
@@ -355,6 +368,7 @@ func (s *E2ETestSuite) createTestNodeClaim(t *testing.T, testName, nodeClassName
 					},
 				},
 			},
+			ExpireAfter: expireAfter,
 		},
 	}
 
@@ -1434,9 +1448,15 @@ func (s *E2ETestSuite) createTestNodeClassWithoutInstanceProfile(t *testing.T, t
 // createTestNodePoolWithMultipleInstanceTypes creates a NodePool with multiple instance type requirements
 // This matches the customer's configuration that was causing the circuit breaker to open
 func (s *E2ETestSuite) createTestNodePoolWithMultipleInstanceTypes(t *testing.T, testName string, nodeClassName string) *karpv1.NodePool {
+	// Set 5-minute expiration for e2e test nodes to ensure cleanup
+	expireAfter := karpv1.MustParseNillableDuration("5m")
 	nodePool := &karpv1.NodePool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-nodepool", testName),
+			Labels: map[string]string{
+				"test":      "e2e",
+				"test-name": testName,
+			},
 		},
 		Spec: karpv1.NodePoolSpec{
 			Template: karpv1.NodeClaimTemplate{
@@ -1477,6 +1497,7 @@ func (s *E2ETestSuite) createTestNodePoolWithMultipleInstanceTypes(t *testing.T,
 							},
 						},
 					},
+					ExpireAfter: expireAfter,
 				},
 			},
 		},
