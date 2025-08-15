@@ -248,7 +248,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	}
 
 	// Create instance prototype with VNI
-	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
+	instancePrototype := &vpcv1.InstancePrototype{
 		// Required fields for oneOf validation
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
