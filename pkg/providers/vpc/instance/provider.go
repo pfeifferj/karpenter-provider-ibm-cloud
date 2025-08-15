@@ -229,12 +229,27 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		VirtualNetworkInterface: vniPrototype,
 	}
 
+	// Debug logging: VNI structure details
+	vniJSON, _ := json.MarshalIndent(vniPrototype, "", "  ")
+	logger.Info("VNI prototype structure", "vni_json", string(vniJSON))
+
+	attachmentJSON, _ := json.MarshalIndent(primaryNetworkAttachment, "", "  ")
+	logger.Info("Primary network attachment structure", "attachment_json", string(attachmentJSON))
+
 	// Resolve image identifier to image ID
 	imageResolver := image.NewResolver(vpcClient, nodeClass.Spec.Region)
 	imageID, err := imageResolver.ResolveImage(ctx, nodeClass.Spec.Image)
 	if err != nil {
 		return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
 	}
+	
+	// Debug logging for critical values
+	logger.Info("Critical instance parameters before struct creation", 
+		"imageID", imageID, 
+		"zone", zone, 
+		"subnet", subnet,
+		"nodeClaimName", nodeClaim.Name,
+		"instanceProfile", instanceProfile)
 
 	// Create boot volume attachment for the instance
 	bootVolumeAttachment := &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
@@ -248,8 +263,8 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		DeleteVolumeOnInstanceDelete: &[]bool{true}[0],
 	}
 
-	// Create instance prototype with VNI
-	instancePrototype := &vpcv1.InstancePrototypeInstanceByImage{
+	// Create instance prototype with VNI using base InstancePrototype type
+	instancePrototype := &vpcv1.InstancePrototype{
 		// Required discriminator fields for InstanceByImage oneOf choice
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
@@ -258,14 +273,19 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			Name: &zone,
 		},
 
+		// Keep VNI approach with PrimaryNetworkAttachment
 		PrimaryNetworkAttachment: primaryNetworkAttachment,
+
+		// VPC field is required per IBM VPC API documentation (even with PrimaryNetworkAttachment)
+		VPC: &vpcv1.VPCIdentity{
+			ID: &nodeClass.Spec.VPC,
+		},
 
 		// Additional instance configuration
 		Name: &nodeClaim.Name,
 		Profile: &vpcv1.InstanceProfileIdentity{
 			Name: &instanceProfile,
 		},
-		// Note: VPC is omitted when using PrimaryNetworkAttachment as it's derived from the subnet
 		BootVolumeAttachment: bootVolumeAttachment,
 
 		// Add availability policy for better instance management
@@ -321,15 +341,27 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	prototypeJSON, _ := json.MarshalIndent(instancePrototype, "", "  ")
 	logger.Info("Creating instance with prototype JSON", "json_payload", string(prototypeJSON))
 
+	// Pre-SDK call logging for deep debugging
+	logger.Info("About to call IBM VPC CreateInstance API",
+		"instance_name", nodeClaim.Name,
+		"region", nodeClass.Spec.Region,
+		"zone", zone,
+		"profile", instanceProfile)
+
 	// Create the instance
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
 		// Check if this is a partial failure that might have created resources
 		ibmErr := ibm.ParseError(err)
-		logger.Error(err, "Error creating VPC instance",
+
+		// Enhanced error logging with full error details
+		logger.Error(err, "VPC instance creation error",
 			"status_code", ibmErr.StatusCode,
 			"error_code", ibmErr.Code,
-			"retryable", ibmErr.Retryable)
+			"retryable", ibmErr.Retryable,
+			"error_message", err.Error(),
+			"error_type", fmt.Sprintf("%T", err),
+			"instance_prototype_type", fmt.Sprintf("%T", instancePrototype))
 
 		if p.isPartialFailure(ibmErr) {
 			logger.Info("Instance creation failed after partial resource creation, attempting cleanup",
