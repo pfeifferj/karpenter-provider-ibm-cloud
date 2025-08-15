@@ -73,11 +73,9 @@ func New(kubeClient client.Client,
 		defaultMode = commonTypes.IKSMode
 	}
 
-	// Initialize circuit breaker with provided config or default
+	// Initialize circuit breaker
+	// If circuitBreakerConfig is nil, the circuit breaker will be disabled
 	logger := log.FromContext(context.Background()).WithName("circuit-breaker")
-	if circuitBreakerConfig == nil {
-		circuitBreakerConfig = DefaultCircuitBreakerConfig()
-	}
 	circuitBreaker := NewCircuitBreaker(circuitBreakerConfig, logger)
 
 	return &CloudProvider{
