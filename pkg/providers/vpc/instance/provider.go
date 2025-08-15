@@ -248,7 +248,8 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	}
 
 	// Create instance prototype with VNI for proper VPC service network access
-	instancePrototype := &vpcv1.InstancePrototypeInstanceByImage{
+	// Using InstanceByNetworkAttachment variant for VNI support
+	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
 		Name: &nodeClaim.Name,
 		Zone: &vpcv1.ZoneIdentity{
 			Name: &zone,
@@ -342,13 +343,13 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	logger.Info("VPC instance created successfully", "instance_id", *instance.ID, "name", *instance.Name)
 
-	// Verify security groups were applied correctly
-	if instance.PrimaryNetworkInterface != nil && instance.PrimaryNetworkInterface.ID != nil {
-		logger.Info("Instance created with primary network interface", "interface_id", *instance.PrimaryNetworkInterface.ID)
+	// Verify network attachment was applied correctly
+	if len(instance.NetworkAttachments) > 0 && instance.NetworkAttachments[0].ID != nil {
+		logger.Info("Instance created with VNI network attachment", "attachment_id", *instance.NetworkAttachments[0].ID)
 		// Note: Security groups information may not be available in the instance creation response
 		// This would require a separate GetInstance call to verify security groups
 	} else {
-		logger.Info("Instance created but primary network interface information not available in response")
+		logger.Info("Instance created but network attachment information not available in response")
 	}
 
 	// Create Node representation
