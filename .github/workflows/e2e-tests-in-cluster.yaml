@@ -90,7 +90,49 @@ jobs:
         # Restart operator pods to pull latest upstream image tag
         kubectl rollout restart deployment/karpenter-karpenter-ibm -n karpenter
 
-    - name: Run E2E tests
+    - name: Pre-test cleanup
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+      run: |
+        echo "🧹 Cleaning up any existing e2e test resources..."
+
+        # Clean up any leftover resources from previous runs
+        kubectl delete pods -l test=e2e --all-namespaces --timeout=300s || true
+        kubectl delete deployments -l test=e2e --all-namespaces --timeout=300s || true
+        kubectl delete nodeclaims -l test=e2e --timeout=300s || true
+        kubectl delete nodepools -l test=e2e --timeout=300s || true
+        kubectl delete ibmnodeclasses -l test=e2e --timeout=300s || true
+
+        # Wait for cluster stabilization
+        echo "⏳ Waiting for cluster stabilization..."
+
+        # Wait for no pending e2e pods
+        for i in {1..30}; do
+          pending_pods=$(kubectl get pods -l test=e2e --all-namespaces --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l)
+          if [ "$pending_pods" -eq 0 ]; then
+            echo "✅ No pending e2e pods found"
+            break
+          fi
+          echo "⏳ Still have $pending_pods pending e2e pods, waiting..."
+          sleep 10
+        done
+
+        # Wait for no disrupted nodes
+        for i in {1..30}; do
+          disrupted_nodes=$(kubectl get nodes --no-headers -o custom-columns="NAME:.metadata.name,TAINTS:.spec.taints[*].key" | grep -c "karpenter.sh/disrupted" || echo "0")
+          if [ "$disrupted_nodes" -eq 0 ]; then
+            echo "✅ No disrupted nodes found"
+            break
+          fi
+          echo "⏳ Still have $disrupted_nodes disrupted nodes, waiting..."
+          sleep 10
+        done
+
+        # Brief pause for final cleanup
+        sleep 30
+        echo "✅ Pre-test cleanup completed"
+
+    - name: Run E2E tests (Sequential)
       env:
         RUN_E2E_TESTS: "true"
         IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
@@ -108,12 +150,67 @@ jobs:
         RUN_E2E_BENCHMARKS: ${{ inputs.run_benchmarks }}
         # Use the kubeconfig we set up
         KUBECONFIG: /tmp/kubeconfig
+        # Configure e2e test behavior
+        E2E_SEQUENTIAL: "true"
+        E2E_CLEANUP_TIMEOUT: "300s"
+        E2E_STABILIZATION_WAIT: "60s"
       run: |
-        # The in-cluster config will be automatically detected
-        go test -v -timeout 45m ./test/e2e/... -run TestE2E
+        echo "🚀 Starting sequential E2E tests..."
+
+        # List of tests to run sequentially
+        tests="TestE2EFullWorkflow TestE2EInstanceTypeSelection"
+
+        # Run each test individually with cleanup between
+        for test in $tests; do
+          echo "🧪 Running test: $test"
+
+          # Run the specific test with extended timeout
+          if go test -v -timeout 20m ./test/e2e -run "$test" -count=1; then
+            echo "✅ Test $test passed"
+          else
+            echo "❌ Test $test failed"
+            # Collect immediate failure diagnostics
+            kubectl get nodes --no-headers | wc -l | xargs echo "Total nodes:"
+            kubectl get nodeclaims --no-headers | wc -l | xargs echo "Total nodeclaims:"
+            kubectl get pods -l test=e2e --all-namespaces --no-headers | wc -l | xargs echo "Total e2e pods:"
+
+            # Don't exit immediately - continue with cleanup and next test
+            test_failed="true"
+          fi
+
+          # Inter-test cleanup and stabilization
+          echo "🧹 Cleaning up after test: $test"
+
+          # Delete test-specific resources
+          kubectl delete pods -l test=e2e --all-namespaces --timeout=300s || true
+          kubectl delete deployments -l test=e2e --all-namespaces --timeout=300s || true
+          kubectl delete nodeclaims -l test=e2e --timeout=300s || true
+          kubectl delete nodepools -l test=e2e --timeout=300s || true
+          kubectl delete ibmnodeclasses -l test=e2e --timeout=300s || true
+
+          # Wait for cleanup to complete
+          echo "⏳ Waiting for cleanup to complete..."
+          sleep 30
+
+          # Check cluster health before next test
+          kubectl get nodes --no-headers | grep -c Ready | xargs echo "Ready nodes:"
+          kubectl get nodeclaims --no-headers | grep -c True | xargs echo "Ready nodeclaims:" || echo "Ready nodeclaims: 0"
+
+          echo "✅ Completed test: $test"
+          echo "---"
+        done
+
+        # Check if any test failed
+        if [ "$test_failed" = "true" ]; then
+          echo "❌ One or more tests failed"
+          exit 1
+        fi
+
+        echo "✅ All sequential E2E tests completed successfully"
 
         # Run benchmarks if requested
-        if [[ "$RUN_E2E_BENCHMARKS" == "true" ]]; then
+        if [ "$RUN_E2E_BENCHMARKS" = "true" ]; then
+          echo "📊 Running performance benchmarks..."
           go test -v -timeout 30m ./test/e2e/... -run=^$ -bench=.
         fi
 
@@ -146,12 +243,38 @@ jobs:
         IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
         KUBECONFIG: /tmp/kubeconfig
       run: |
-        # Clean up Kubernetes resources
-        kubectl delete nodeclaims -l test=e2e --all --timeout=5m || true
-        kubectl delete nodepools -l test=e2e --all --timeout=5m || true
-        kubectl delete ibmnodeclasses -l test=e2e --all --timeout=5m || true
+        echo "🧹 Starting comprehensive cleanup..."
 
-        # Clean up IBM Cloud instances
+        # Clean up Kubernetes resources with extended timeouts
+        echo "Cleaning up Kubernetes resources..."
+        kubectl delete pods -l test=e2e --all-namespaces --timeout=10m || true
+        kubectl delete deployments -l test=e2e --all-namespaces --timeout=10m || true
+        kubectl delete nodeclaims -l test=e2e --timeout=10m || true
+        kubectl delete nodepools -l test=e2e --timeout=10m || true
+        kubectl delete ibmnodeclasses -l test=e2e --timeout=10m || true
+
+        # Force cleanup any stuck resources
+        echo "Force cleaning up any stuck resources..."
+        kubectl patch nodeclaims -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+        kubectl patch nodepools -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+        kubectl patch ibmnodeclasses -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+
+        # Clean up IBM Cloud instances created by e2e tests
+        echo "Cleaning up IBM Cloud instances..."
         ibmcloud is instances --output json | \
           jq -r '.[] | select(.tags | index("karpenter-e2e")) | .id' | \
           xargs -I {} ibmcloud is instance-delete {} --force || true
+
+        # Clean up orphaned VNIs (Virtual Network Interfaces)
+        echo "Cleaning up orphaned VNIs..."
+        ibmcloud is virtual-network-interfaces --output json | \
+          jq -r '.[] | select(.name | test("e2e-.*-vni")) | .id' | \
+          xargs -I {} ibmcloud is virtual-network-interface-delete {} --force || true
+
+        # Clean up orphaned volumes
+        echo "Cleaning up orphaned volumes..."
+        ibmcloud is volumes --output json | \
+          jq -r '.[] | select(.name | test("e2e-.*-boot")) | .id' | \
+          xargs -I {} ibmcloud is volume-delete {} --force || true
+
+        echo "✅ Cleanup completed"
