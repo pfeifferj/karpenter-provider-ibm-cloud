@@ -64,6 +64,7 @@ type CircuitBreaker struct {
 	mu       sync.RWMutex
 	state    CircuitBreakerState
 	failures []FailureRecord
+	enabled  bool
 
 	// State tracking
 	lastStateChange     time.Time
@@ -75,6 +76,8 @@ type CircuitBreaker struct {
 
 // NewCircuitBreaker creates a new circuit breaker with the given configuration
 func NewCircuitBreaker(config *CircuitBreakerConfig, logger logr.Logger) *CircuitBreaker {
+	// If config is nil, create a disabled circuit breaker
+	enabled := config != nil
 	if config == nil {
 		config = DefaultCircuitBreakerConfig()
 	}
@@ -84,6 +87,7 @@ func NewCircuitBreaker(config *CircuitBreakerConfig, logger logr.Logger) *Circui
 		logger:          logger,
 		state:           CircuitBreakerClosed,
 		failures:        make([]FailureRecord, 0),
+		enabled:         enabled,
 		lastStateChange: time.Now(),
 		lastMinuteReset: time.Now(),
 	}
@@ -91,6 +95,11 @@ func NewCircuitBreaker(config *CircuitBreakerConfig, logger logr.Logger) *Circui
 
 // CanProvision checks if provisioning is allowed based on circuit breaker state
 func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region string, _ float64) error {
+	// If circuit breaker is disabled, always allow provisioning
+	if !cb.enabled {
+		return nil
+	}
+
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -156,6 +165,11 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 
 // RecordSuccess records a successful provisioning operation
 func (cb *CircuitBreaker) RecordSuccess(nodeClass, region string) {
+	// If circuit breaker is disabled, do nothing
+	if !cb.enabled {
+		return
+	}
+
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -179,6 +193,11 @@ func (cb *CircuitBreaker) RecordSuccess(nodeClass, region string) {
 
 // RecordFailure records a failed provisioning operation
 func (cb *CircuitBreaker) RecordFailure(nodeClass, region string, err error) {
+	// If circuit breaker is disabled, do nothing
+	if !cb.enabled {
+		return
+	}
+
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 

@@ -262,7 +262,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
 		},
-		// Use PrimaryNetworkAttachment with VNI for proper VPC service network routing
+		// Use PrimaryNetworkAttachment with VNI - ensure no legacy network interface fields are set
 		PrimaryNetworkAttachment: primaryNetworkAttachment,
 		BootVolumeAttachment:     bootVolumeAttachment,
 
