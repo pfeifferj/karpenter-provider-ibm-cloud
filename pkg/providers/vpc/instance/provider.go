@@ -247,25 +247,26 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		DeleteVolumeOnInstanceDelete: &[]bool{true}[0],
 	}
 
-	// Create instance prototype with VNI for proper VPC service network access
-	// Using InstanceByNetworkAttachment variant for VNI support
+	// Create instance prototype with VNI
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
-		Name: &nodeClaim.Name,
+		// Required fields for oneOf validation - these must be set first
+		Image: &vpcv1.ImageIdentity{
+			ID: &imageID,
+		},
 		Zone: &vpcv1.ZoneIdentity{
 			Name: &zone,
 		},
+		PrimaryNetworkAttachment: primaryNetworkAttachment,
+
+		// Additional instance configuration
+		Name: &nodeClaim.Name,
 		Profile: &vpcv1.InstanceProfileIdentity{
 			Name: &instanceProfile,
 		},
 		VPC: &vpcv1.VPCIdentity{
 			ID: &nodeClass.Spec.VPC,
 		},
-		Image: &vpcv1.ImageIdentity{
-			ID: &imageID,
-		},
-		// Use PrimaryNetworkAttachment with VNI - ensure no legacy network interface fields are set
-		PrimaryNetworkAttachment: primaryNetworkAttachment,
-		BootVolumeAttachment:     bootVolumeAttachment,
+		BootVolumeAttachment: bootVolumeAttachment,
 
 		// Add availability policy for better instance management
 		AvailabilityPolicy: &vpcv1.InstanceAvailabilityPolicyPrototype{
