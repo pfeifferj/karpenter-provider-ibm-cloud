@@ -304,13 +304,10 @@ func (p *VPCBootstrapProvider) detectCNIPluginAndVersion(ctx context.Context) (s
 	}
 
 	// Check for Cilium
-	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "cilium", metav1.GetOptions{}); err == nil {
-		cniVersion, err := p.getLatestCNIVersion(ctx, "cilium")
-		if err != nil {
-			return "", "", fmt.Errorf("failed to get Cilium CNI version: %w", err)
-		}
-		logger.Info("Detected Cilium CNI plugin", "cniVersion", cniVersion)
-		return "cilium", cniVersion, nil
+	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "cilium", metav1.GetOptions{}); err == nil {
+		version := p.extractVersionFromImage(ds.Spec.Template.Spec.Containers[0].Image)
+		logger.Info("Detected Cilium CNI plugin", "version", version)
+		return "cilium", version, nil
 	}
 
 	// Check for Flannel
