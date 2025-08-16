@@ -115,8 +115,6 @@ require (
 )
 
 replace (
-	github.com/IBM/vpc-go-sdk => ./vpc-go-sdk
-	github.com/IBM/go-sdk-core/v5 => ./go-sdk-core
 	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis => ./pkg/apis
 	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider => ./pkg/cloudprovider
 	github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/constants => ./pkg/constants

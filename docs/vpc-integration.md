@@ -112,8 +112,10 @@ spec:
   sshKeys:
   - r010-12345678-1234-1234-1234-123456789012  # SSH key ID
 
-  # Optional: Resource group ID
-  resourceGroup: rg-12345678             # Resource group ID
+  # Optional: Resource group (supports both name and ID)
+  resourceGroup: my-resource-group       # Resource group name (automatically resolved to ID)
+  # OR:
+  # resourceGroup: rg-12345678          # Resource group ID (used directly)
 
   # Optional: Placement target (dedicated host or placement group)
   placementTarget: ph-12345678
