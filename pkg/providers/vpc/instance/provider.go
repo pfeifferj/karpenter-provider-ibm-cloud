@@ -197,7 +197,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		AllowIPSpoofing: &[]bool{false}[0],
 		// Set protocol state filtering to auto for proper instance network attachment
 		ProtocolStateFilteringMode: &[]string{"auto"}[0],
-		// Set explicit name for debugging
+		// Set explicit name
 		Name: &[]string{fmt.Sprintf("%s-vni", nodeClaim.Name)}[0],
 		// Auto-delete when instance is deleted
 		AutoDelete: &[]bool{true}[0],
@@ -229,12 +229,6 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		VirtualNetworkInterface: vniPrototype,
 	}
 
-	// Debug logging: VNI structure details
-	vniJSON, _ := json.MarshalIndent(vniPrototype, "", "  ")
-	logger.Info("VNI prototype structure", "vni_json", string(vniJSON))
-
-	attachmentJSON, _ := json.MarshalIndent(primaryNetworkAttachment, "", "  ")
-	logger.Info("Primary network attachment structure", "attachment_json", string(attachmentJSON))
 
 	// Resolve image identifier to image ID
 	imageResolver := image.NewResolver(vpcClient, nodeClass.Spec.Region)
@@ -243,13 +237,6 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
 	}
 
-	// Debug logging for critical values
-	logger.Info("Critical instance parameters before struct creation",
-		"imageID", imageID,
-		"zone", zone,
-		"subnet", subnet,
-		"nodeClaimName", nodeClaim.Name,
-		"instanceProfile", instanceProfile)
 
 	// Create boot volume attachment for the instance
 	bootVolumeAttachment := &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
@@ -263,7 +250,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		DeleteVolumeOnInstanceDelete: &[]bool{true}[0],
 	}
 
-	// Create instance prototype with VNI using the correct VNI-specific type
+	// Create instance prototype with VNI 
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
@@ -332,50 +319,11 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		ResponseHopLimit: &[]int64{2}[0],
 	}
 
-	// Log detailed instance prototype for oneOf validation debugging
-	// Marshal the prototype to JSON to see exact structure being sent to IBM API
-	prototypeJSON, _ := json.MarshalIndent(instancePrototype, "", "  ")
-	logger.Info("Creating instance with prototype JSON", "json_payload", string(prototypeJSON))
-
-	// Debug: Check if fields are actually set before marshaling
-	logger.Info("Debug field values before CreateInstance",
-		"image_is_nil", instancePrototype.Image == nil,
-		"zone_is_nil", instancePrototype.Zone == nil,
-		"primary_network_attachment_is_nil", instancePrototype.PrimaryNetworkAttachment == nil,
-		"vpc_is_nil", instancePrototype.VPC == nil,
-		"boot_volume_attachment_is_nil", instancePrototype.BootVolumeAttachment == nil)
-
-	// Debug: Print actual field values if not nil
-	if instancePrototype.Image != nil && instancePrototype.Image.(*vpcv1.ImageIdentity).ID != nil {
-		logger.Info("Image ID value", "image_id", *instancePrototype.Image.(*vpcv1.ImageIdentity).ID)
-	}
-	if instancePrototype.Zone != nil && instancePrototype.Zone.(*vpcv1.ZoneIdentity).Name != nil {
-		logger.Info("Zone name value", "zone_name", *instancePrototype.Zone.(*vpcv1.ZoneIdentity).Name)
-	}
-	if instancePrototype.VPC != nil && instancePrototype.VPC.(*vpcv1.VPCIdentity).ID != nil {
-		logger.Info("VPC ID value", "vpc_id", *instancePrototype.VPC.(*vpcv1.VPCIdentity).ID)
-	}
-
-	// Pre-SDK call logging for deep debugging
-	logger.Info("About to call IBM VPC CreateInstance API",
-		"instance_name", nodeClaim.Name,
-		"region", nodeClass.Spec.Region,
-		"zone", zone,
-		"profile", instanceProfile)
-	
-	// VERIFY: Test that our custom marshaling is working
-	if testJSON, testErr := json.Marshal(instancePrototype); testErr == nil {
-		logger.Info("MARSHAL_TEST: Direct JSON marshal of instancePrototype", "json_result", string(testJSON))
-		if strings.Contains(string(testJSON), "LOCAL_OVERRIDE_ACTIVE") {
-			logger.Info("MARSHAL_TEST: ✅ LOCAL VPC SDK OVERRIDE IS WORKING!")
-		} else {
-			logger.Info("MARSHAL_TEST: ❌ LOCAL VPC SDK OVERRIDE NOT DETECTED!")
-		}
-	} else {
-		logger.Info("MARSHAL_TEST: Direct JSON marshal failed", "error", testErr.Error())
-	}
-
 	// Create the instance
+	logger.Info("Creating VPC instance", 
+		"instance_name", nodeClaim.Name, 
+		"instance_profile", instanceProfile, 
+		"zone", zone)
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
 		// Check if this is a partial failure that might have created resources
