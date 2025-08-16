@@ -294,9 +294,14 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Add resource group if specified
 	if nodeClass.Spec.ResourceGroup != "" {
-		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
-			ID: &nodeClass.Spec.ResourceGroup,
+		resourceGroupID, err := p.resolveResourceGroupID(ctx, nodeClass.Spec.ResourceGroup)
+		if err != nil {
+			return nil, fmt.Errorf("resolving resource group %s: %w", nodeClass.Spec.ResourceGroup, err)
 		}
+		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+			ID: &resourceGroupID,
+		}
+		logger.Info("Resource group resolved", "input", nodeClass.Spec.ResourceGroup, "resolved_id", resourceGroupID)
 	}
 
 	// Add SSH keys if specified
@@ -793,4 +798,40 @@ func (p *VPCInstanceProvider) createKubernetesClient(ctx context.Context) (kuber
 	}
 
 	return clientset, nil
+}
+
+// resolveResourceGroupID resolves a resource group name or ID to a proper resource group ID
+func (p *VPCInstanceProvider) resolveResourceGroupID(ctx context.Context, resourceGroupInput string) (string, error) {
+	logger := log.FromContext(ctx)
+	
+	// If the input is already a UUID-like ID (32 hex characters), return it as-is
+	if len(resourceGroupInput) == 32 && isHexString(resourceGroupInput) {
+		logger.Info("Resource group input is already an ID", "resource_group_id", resourceGroupInput)
+		return resourceGroupInput, nil
+	}
+	
+	// Otherwise, treat it as a name and resolve to ID using IBM Platform Services
+	logger.Info("Resolving resource group name to ID", "resource_group_name", resourceGroupInput)
+	
+	// Get resource groups from IBM Platform Services
+	resourceGroupID, err := p.client.GetResourceGroupIDByName(ctx, resourceGroupInput)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve resource group name '%s' to ID: %w", resourceGroupInput, err)
+	}
+	
+	logger.Info("Successfully resolved resource group name to ID", 
+		"resource_group_name", resourceGroupInput, 
+		"resource_group_id", resourceGroupID)
+	
+	return resourceGroupID, nil
+}
+
+// isHexString checks if a string contains only hexadecimal characters
+func isHexString(s string) bool {
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
