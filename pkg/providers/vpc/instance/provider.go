@@ -242,11 +242,11 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	if err != nil {
 		return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
 	}
-	
+
 	// Debug logging for critical values
-	logger.Info("Critical instance parameters before struct creation", 
-		"imageID", imageID, 
-		"zone", zone, 
+	logger.Info("Critical instance parameters before struct creation",
+		"imageID", imageID,
+		"zone", zone,
 		"subnet", subnet,
 		"nodeClaimName", nodeClaim.Name,
 		"instanceProfile", instanceProfile)
@@ -263,32 +263,23 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		DeleteVolumeOnInstanceDelete: &[]bool{true}[0],
 	}
 
-	// Create instance prototype with VNI using base InstancePrototype type
-	instancePrototype := &vpcv1.InstancePrototype{
-		// Required discriminator fields for InstanceByImage oneOf choice
+	// Create instance prototype with VNI using the correct VNI-specific type
+	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
 		},
 		Zone: &vpcv1.ZoneIdentity{
 			Name: &zone,
 		},
-
-		// Keep VNI approach with PrimaryNetworkAttachment
 		PrimaryNetworkAttachment: primaryNetworkAttachment,
-
-		// VPC field is required per IBM VPC API documentation (even with PrimaryNetworkAttachment)
 		VPC: &vpcv1.VPCIdentity{
 			ID: &nodeClass.Spec.VPC,
 		},
-
-		// Additional instance configuration
 		Name: &nodeClaim.Name,
 		Profile: &vpcv1.InstanceProfileIdentity{
 			Name: &instanceProfile,
 		},
 		BootVolumeAttachment: bootVolumeAttachment,
-
-		// Add availability policy for better instance management
 		AvailabilityPolicy: &vpcv1.InstanceAvailabilityPolicyPrototype{
 			HostFailure: &[]string{"restart"}[0],
 		},
@@ -341,12 +332,43 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	prototypeJSON, _ := json.MarshalIndent(instancePrototype, "", "  ")
 	logger.Info("Creating instance with prototype JSON", "json_payload", string(prototypeJSON))
 
+	// Debug: Check if fields are actually set before marshaling
+	logger.Info("Debug field values before CreateInstance",
+		"image_is_nil", instancePrototype.Image == nil,
+		"zone_is_nil", instancePrototype.Zone == nil,
+		"primary_network_attachment_is_nil", instancePrototype.PrimaryNetworkAttachment == nil,
+		"vpc_is_nil", instancePrototype.VPC == nil,
+		"boot_volume_attachment_is_nil", instancePrototype.BootVolumeAttachment == nil)
+
+	// Debug: Print actual field values if not nil
+	if instancePrototype.Image != nil && instancePrototype.Image.(*vpcv1.ImageIdentity).ID != nil {
+		logger.Info("Image ID value", "image_id", *instancePrototype.Image.(*vpcv1.ImageIdentity).ID)
+	}
+	if instancePrototype.Zone != nil && instancePrototype.Zone.(*vpcv1.ZoneIdentity).Name != nil {
+		logger.Info("Zone name value", "zone_name", *instancePrototype.Zone.(*vpcv1.ZoneIdentity).Name)
+	}
+	if instancePrototype.VPC != nil && instancePrototype.VPC.(*vpcv1.VPCIdentity).ID != nil {
+		logger.Info("VPC ID value", "vpc_id", *instancePrototype.VPC.(*vpcv1.VPCIdentity).ID)
+	}
+
 	// Pre-SDK call logging for deep debugging
 	logger.Info("About to call IBM VPC CreateInstance API",
 		"instance_name", nodeClaim.Name,
 		"region", nodeClass.Spec.Region,
 		"zone", zone,
 		"profile", instanceProfile)
+	
+	// VERIFY: Test that our custom marshaling is working
+	if testJSON, testErr := json.Marshal(instancePrototype); testErr == nil {
+		logger.Info("MARSHAL_TEST: Direct JSON marshal of instancePrototype", "json_result", string(testJSON))
+		if strings.Contains(string(testJSON), "LOCAL_OVERRIDE_ACTIVE") {
+			logger.Info("MARSHAL_TEST: ✅ LOCAL VPC SDK OVERRIDE IS WORKING!")
+		} else {
+			logger.Info("MARSHAL_TEST: ❌ LOCAL VPC SDK OVERRIDE NOT DETECTED!")
+		}
+	} else {
+		logger.Info("MARSHAL_TEST: Direct JSON marshal failed", "error", testErr.Error())
+	}
 
 	// Create the instance
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
