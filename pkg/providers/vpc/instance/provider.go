@@ -18,7 +18,6 @@ package instance
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -229,14 +228,12 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		VirtualNetworkInterface: vniPrototype,
 	}
 
-
 	// Resolve image identifier to image ID
 	imageResolver := image.NewResolver(vpcClient, nodeClass.Spec.Region)
 	imageID, err := imageResolver.ResolveImage(ctx, nodeClass.Spec.Image)
 	if err != nil {
 		return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
 	}
-
 
 	// Create boot volume attachment for the instance
 	bootVolumeAttachment := &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
@@ -250,7 +247,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		DeleteVolumeOnInstanceDelete: &[]bool{true}[0],
 	}
 
-	// Create instance prototype with VNI 
+	// Create instance prototype with VNI
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
@@ -281,9 +278,9 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Add resource group if specified
 	if nodeClass.Spec.ResourceGroup != "" {
-		resourceGroupID, err := p.resolveResourceGroupID(ctx, nodeClass.Spec.ResourceGroup)
-		if err != nil {
-			return nil, fmt.Errorf("resolving resource group %s: %w", nodeClass.Spec.ResourceGroup, err)
+		resourceGroupID, rgErr := p.resolveResourceGroupID(ctx, nodeClass.Spec.ResourceGroup)
+		if rgErr != nil {
+			return nil, fmt.Errorf("resolving resource group %s: %w", nodeClass.Spec.ResourceGroup, rgErr)
 		}
 		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
 			ID: &resourceGroupID,
@@ -315,14 +312,14 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	// Enable metadata service for instance ID retrieval
 	instancePrototype.MetadataService = &vpcv1.InstanceMetadataServicePrototype{
 		Enabled:          &[]bool{true}[0],
-		Protocol:         &[]string{"http"}[0],
+		Protocol:         &[]string{"https"}[0],
 		ResponseHopLimit: &[]int64{2}[0],
 	}
 
 	// Create the instance
-	logger.Info("Creating VPC instance", 
-		"instance_name", nodeClaim.Name, 
-		"instance_profile", instanceProfile, 
+	logger.Info("Creating VPC instance",
+		"instance_name", nodeClaim.Name,
+		"instance_profile", instanceProfile,
 		"zone", zone)
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
@@ -383,7 +380,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			},
 		},
 		Spec: corev1.NodeSpec{
-			// Use the full instance ID including the zone prefix (e.g., 02c7_uuid)
+			// Use the full instance ID including the zone prefix (e.g., 02u7_uuid)
 			// This ensures consistency with how IBM Cloud APIs expect the instance ID
 			ProviderID: fmt.Sprintf("ibm:///%s/%s", nodeClass.Spec.Region, *instance.ID),
 		},
@@ -516,7 +513,7 @@ func (p *VPCInstanceProvider) UpdateTags(ctx context.Context, providerID string,
 // extractInstanceIDFromProviderID extracts the instance ID from a provider ID
 func extractInstanceIDFromProviderID(providerID string) string {
 	// Provider ID format: ibm:///region/instance-id
-	// Instance ID includes zone prefix (e.g., 02c7_uuid)
+	// Instance ID includes zone prefix (e.g., 02u7_uuid)
 	parts := strings.Split(providerID, "/")
 	if len(parts) >= 4 {
 		return parts[len(parts)-1]
@@ -751,33 +748,33 @@ func (p *VPCInstanceProvider) createKubernetesClient(ctx context.Context) (kuber
 // resolveResourceGroupID resolves a resource group name or ID to a proper resource group ID
 func (p *VPCInstanceProvider) resolveResourceGroupID(ctx context.Context, resourceGroupInput string) (string, error) {
 	logger := log.FromContext(ctx)
-	
+
 	// If the input is already a UUID-like ID (32 hex characters), return it as-is
 	if len(resourceGroupInput) == 32 && isHexString(resourceGroupInput) {
 		logger.Info("Resource group input is already an ID", "resource_group_id", resourceGroupInput)
 		return resourceGroupInput, nil
 	}
-	
+
 	// Otherwise, treat it as a name and resolve to ID using IBM Platform Services
 	logger.Info("Resolving resource group name to ID", "resource_group_name", resourceGroupInput)
-	
+
 	// Get resource groups from IBM Platform Services
 	resourceGroupID, err := p.client.GetResourceGroupIDByName(ctx, resourceGroupInput)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve resource group name '%s' to ID: %w", resourceGroupInput, err)
 	}
-	
-	logger.Info("Successfully resolved resource group name to ID", 
-		"resource_group_name", resourceGroupInput, 
+
+	logger.Info("Successfully resolved resource group name to ID",
+		"resource_group_name", resourceGroupInput,
 		"resource_group_id", resourceGroupID)
-	
+
 	return resourceGroupID, nil
 }
 
 // isHexString checks if a string contains only hexadecimal characters
 func isHexString(s string) bool {
 	for _, r := range s {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
 			return false
 		}
 	}
