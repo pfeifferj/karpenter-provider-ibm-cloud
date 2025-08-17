@@ -101,7 +101,7 @@ EOF
 PRIVATE_IP=$(hostname -I | awk '{print $1}')
 
 # Get instance ID from IBM Cloud metadata service
-# The instance ID must include the zone prefix (e.g., 02c7_uuid) for proper provider ID
+# The instance ID must include the zone prefix (e.g., 02u7_uuid) for proper provider ID
 echo "$(date): Attempting to retrieve instance ID from metadata service..."
 
 # Get instance identity token for metadata service authentication
@@ -120,7 +120,7 @@ echo "$(date): Successfully obtained instance identity token"
 
 # Get instance ID using IBM Cloud metadata service
 echo "$(date): Retrieving instance ID from IBM Cloud metadata service..."
-INSTANCE_ID=$(curl -s -f --max-time 10 -H "Authorization: Bearer $INSTANCE_IDENTITY_TOKEN" "http://api.metadata.cloud.ibm.com/metadata/v1/instance?version=2022-03-29" | grep -o "\"id\":\"02c7_[^\"]*" | head -1 | cut -d"\"" -f4)
+INSTANCE_ID=$(curl -s -f --max-time 10 -H "Authorization: Bearer $INSTANCE_IDENTITY_TOKEN" "http://api.metadata.cloud.ibm.com/metadata/v1/instance?version=2022-03-29" | grep -o "\"id\":\"[0-9a-z]\{4\}_[^\"]*" | head -1 | cut -d"\"" -f4)
 
 # Validate instance ID
 if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "unknown" ]]; then
