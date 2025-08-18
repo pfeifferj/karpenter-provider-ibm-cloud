@@ -27,7 +27,7 @@ The scheduler attempts to:
 
 ## How does Karpenter handle multi-zone deployments?
 
-Karpenter automatically discovers available zones in your IBM Cloud region and creates instance offerings across all zones. 
+Karpenter automatically discovers available zones in your IBM Cloud region and creates instance offerings across all zones.
 
 ## What happens if pricing information is unavailable?
 
