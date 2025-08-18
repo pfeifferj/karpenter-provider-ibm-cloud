@@ -312,7 +312,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	// Enable metadata service for instance ID retrieval
 	instancePrototype.MetadataService = &vpcv1.InstanceMetadataServicePrototype{
 		Enabled:          &[]bool{true}[0],
-		Protocol:         &[]string{"https"}[0],
+		Protocol:         &[]string{"http"}[0],
 		ResponseHopLimit: &[]int64{2}[0],
 	}
 
