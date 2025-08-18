@@ -104,14 +104,39 @@ PRIVATE_IP=$(hostname -I | awk '{print $1}')
 # The instance ID must include the zone prefix (e.g., 02u7_uuid) for proper provider ID
 echo "$(date): Attempting to retrieve instance ID from metadata service..."
 
+# Ensure metadata service is routable
+echo "$(date): Checking metadata service routing..."
+if ! ip route get 169.254.169.254 >/dev/null 2>&1; then
+    echo "$(date): No route to metadata service, adding route via default gateway..."
+    # Get default gateway
+    DEFAULT_GW=$(ip route show default | awk '/default/ { print $3 }' | head -1)
+    if [[ -n "$DEFAULT_GW" ]]; then
+        echo "$(date): Adding route to metadata service via gateway: $DEFAULT_GW"
+        ip route add 169.254.169.254 via "$DEFAULT_GW" || echo "$(date): ⚠️ Failed to add metadata route, continuing anyway..."
+    else
+        echo "$(date): ⚠️ Could not determine default gateway for metadata route"
+    fi
+else
+    echo "$(date): ✅ Metadata service is already routable"
+fi
+
+# Test basic connectivity to metadata service
+echo "$(date): Testing metadata service connectivity..."
+if ! curl -s --connect-timeout 5 -m 10 http://169.254.169.254/ >/dev/null 2>&1; then
+    echo "$(date): ⚠️ Metadata service not responding, but continuing bootstrap..."
+else
+    echo "$(date): ✅ Metadata service is accessible"
+fi
+
 # Get instance identity token for metadata service authentication
 echo "$(date): Getting instance identity token..."
-INSTANCE_IDENTITY_TOKEN=$(curl -s -f --max-time 10 -X PUT "http://api.metadata.cloud.ibm.com/instance_identity/v1/token?version=2022-03-29" -H "Metadata-Flavor: ibm" | grep -o "\"access_token\":\"[^\"]*" | cut -d"\"" -f4)
+# Use IP address instead of DNS hostname to avoid DNS resolution issues
+INSTANCE_IDENTITY_TOKEN=$(curl -s -f --max-time 10 -X PUT "http://169.254.169.254/instance_identity/v1/token?version=2022-03-29" -H "Metadata-Flavor: ibm" | grep -o "\"access_token\":\"[^\"]*" | cut -d"\"" -f4)
 
 if [[ -z "$INSTANCE_IDENTITY_TOKEN" ]]; then
     echo "$(date): ❌ ERROR: Could not get instance identity token" | tee -a "$LOG_FILE"
     echo "$(date): Testing metadata service connectivity..." | tee -a "$LOG_FILE"
-    curl -v -m 5 "http://api.metadata.cloud.ibm.com" 2>&1 | tee -a "$LOG_FILE" || true
+    curl -v -m 5 "http://169.254.169.254" 2>&1 | tee -a "$LOG_FILE" || true
     report_status "failed" "instance-identity-token-failed"
     exit 1
 fi
@@ -120,7 +145,8 @@ echo "$(date): Successfully obtained instance identity token"
 
 # Get instance ID using IBM Cloud metadata service
 echo "$(date): Retrieving instance ID from IBM Cloud metadata service..."
-INSTANCE_ID=$(curl -s -f --max-time 10 -H "Authorization: Bearer $INSTANCE_IDENTITY_TOKEN" "http://api.metadata.cloud.ibm.com/metadata/v1/instance?version=2022-03-29" | grep -o "\"id\":\"[0-9a-z]\{4\}_[^\"]*" | head -1 | cut -d"\"" -f4)
+# Use IP address instead of DNS hostname to avoid DNS resolution issues
+INSTANCE_ID=$(curl -s -f --max-time 10 -H "Authorization: Bearer $INSTANCE_IDENTITY_TOKEN" "http://169.254.169.254/metadata/v1/instance?version=2022-03-29" | grep -o "\"id\":\"[0-9a-z]\{4\}_[^\"]*" | head -1 | cut -d"\"" -f4)
 
 # Validate instance ID
 if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "unknown" ]]; then
@@ -128,7 +154,7 @@ if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "unknown" ]]; then
     echo "$(date): This is required for proper provider ID configuration" | tee -a "$LOG_FILE"
     echo "$(date): Token available: $([[ -n \"$INSTANCE_IDENTITY_TOKEN\" ]] && echo \"yes\" || echo \"no\")" | tee -a "$LOG_FILE"
     echo "$(date): Testing metadata endpoint with token..." | tee -a "$LOG_FILE"
-    curl -v -H "Authorization: Bearer $INSTANCE_IDENTITY_TOKEN" "http://api.metadata.cloud.ibm.com/metadata/v1/instance?version=2022-03-29" 2>&1 | tee -a "$LOG_FILE" || true
+    curl -v -H "Authorization: Bearer $INSTANCE_IDENTITY_TOKEN" "http://169.254.169.254/metadata/v1/instance?version=2022-03-29" 2>&1 | tee -a "$LOG_FILE" || true
     report_status "failed" "instance-id-metadata-failed"
     exit 1
 fi
@@ -408,10 +434,32 @@ echo "$(date): ✅ Kubelet configuration created"
 PROVIDER_ID="ibm:///${REGION}/${INSTANCE_ID}"
 echo "$(date): Instance ID: $INSTANCE_ID, Provider ID: $PROVIDER_ID"
 
-# Configure kubelet service
+# Create bootstrap kubeconfig with correct API server endpoint
+mkdir -p /etc/kubernetes
+cat > /etc/kubernetes/bootstrap-kubeconfig << EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority: /etc/kubernetes/pki/ca.crt
+    server: {{ .ClusterEndpoint }}
+  name: bootstrap-cluster
+contexts:
+- context:
+    cluster: bootstrap-cluster
+    user: bootstrap-user
+  name: bootstrap
+current-context: bootstrap
+users:
+- name: bootstrap-user
+  user:
+    token: {{ .BootstrapToken }}
+EOF
+
+# Configure kubelet service with bootstrap kubeconfig
 cat > /etc/systemd/system/kubelet.service.d/10-karpenter.conf << EOF
 [Service]
-Environment="KUBELET_EXTRA_ARGS=--hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP} --provider-id=${PROVIDER_ID}{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
+Environment="KUBELET_EXTRA_ARGS=--hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP} --provider-id=${PROVIDER_ID} --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubeconfig{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
 EOF
 
 # Create kubelet service override
@@ -475,12 +523,11 @@ case "$CNI_PLUGIN" in
     mkdir -p /var/log/calico/cni
     ;;
   "cilium")
-    echo "$(date): Downloading Cilium CNI binaries version $CNI_VERSION..."
-    curl -L -o /tmp/cilium.tar.gz "https://github.com/cilium/cilium/releases/download/${CNI_VERSION}/cilium-linux-amd64.tar.gz"
-    tar -xzf /tmp/cilium.tar.gz -C /opt/cni/bin/ cilium-cni
-    chmod +x /opt/cni/bin/cilium-cni
-    rm -f /tmp/cilium.tar.gz
+    echo "$(date): Setting up Cilium CNI configuration..."
+    # Cilium CNI plugin is installed via DaemonSet, not as standalone binary
+    # Create a minimal CNI configuration that Cilium will replace when it starts
     mkdir -p /var/log/cilium
+    echo "$(date): ✅ Cilium CNI setup prepared (plugin will be installed by DaemonSet)"
     ;;
   "flannel")
     echo "$(date): Downloading Flannel CNI binaries version $CNI_VERSION..."
@@ -543,20 +590,41 @@ EOF
     sed -i "s/__KUBECONFIG_FILEPATH__/\/var\/lib\/kubelet\/bootstrap-kubeconfig/g" /etc/cni/net.d/10-calico.conflist
     ;;
   "cilium")
-    echo "$(date): Installing Cilium CNI configuration..."
-    cat > /etc/cni/net.d/05-cilium.conflist << 'EOF'
+    echo "$(date): Creating temporary CNI configuration for Cilium bootstrap..."
+    # Create a temporary bridge CNI configuration that Cilium will replace
+    # This allows kubelet to start and provide service info to Cilium DaemonSet
+    # Using 192.168.200.0/24 to avoid conflicts with existing 10.x networks
+    cat > /etc/cni/net.d/00-cilium-bootstrap.conflist << 'EOF'
 {
-  "name": "cilium",
   "cniVersion": "0.3.1",
+  "name": "cilium-bootstrap",
   "plugins": [
     {
-      "type": "cilium-cni",
-      "enable-debug": false,
-      "log-file": "/var/log/cilium/cilium-cni.log"
+      "type": "bridge",
+      "bridge": "cni-bootstrap",
+      "isDefaultGateway": true,
+      "ipMasq": true,
+      "hairpinMode": true,
+      "ipam": {
+        "type": "host-local",
+        "subnet": "192.168.200.0/24",
+        "routes": [
+          {
+            "dst": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    {
+      "type": "portmap",
+      "capabilities": {
+        "portMappings": true
+      }
     }
   ]
 }
 EOF
+    echo "$(date): ✅ Temporary CNI configuration created - Cilium DaemonSet will replace it"
     ;;
   "flannel")
     echo "$(date): Installing Flannel CNI configuration..."
@@ -616,7 +684,13 @@ journalctl -u kubelet --no-pager -n 20 || true
 
 # Wait for CNI to be fully operational
 echo "$(date): Waiting for $CNI_PLUGIN CNI to initialize..."
-CNI_WAIT_TIMEOUT=300  # 5 minutes
+# Set timeout based on CNI plugin type
+if [[ "$CNI_PLUGIN" == "cilium" ]]; then
+    CNI_WAIT_TIMEOUT=30  # 30 seconds for Cilium (basic check only)
+    echo "$(date): Cilium CNI uses DaemonSet installation - minimal wait for infrastructure"
+else
+    CNI_WAIT_TIMEOUT=300  # 5 minutes for other CNI plugins
+fi
 CNI_WAIT_INTERVAL=5
 elapsed=0
 
@@ -640,16 +714,20 @@ check_cni_ready() {
         fi
         ;;
       "cilium")
-        # Check 1: CNI binaries exist and are executable
-        [ -x /opt/cni/bin/cilium-cni ] || return 1
+        # For Cilium, CNI plugin is installed by DaemonSet after node joins cluster
+        # Just verify basic CNI infrastructure is ready
 
-        # Check 2: CNI configuration exists
-        [ -f /etc/cni/net.d/05-cilium.conflist ] || return 1
+        # Check 1: Standard CNI plugins are available
+        [ -x /opt/cni/bin/bridge ] || return 1
+        [ -x /opt/cni/bin/loopback ] || return 1
 
-        # Check 3: Cilium agent is running (if crictl available)
-        if command -v crictl >/dev/null 2>&1; then
-            crictl ps 2>/dev/null | grep -q cilium || return 1
-        fi
+        # Check 2: CNI directories exist
+        [ -d /opt/cni/bin ] || return 1
+        [ -d /etc/cni/net.d ] || return 1
+        [ -d /var/log/cilium ] || return 1
+
+        # Don't wait for Cilium CNI plugin - it's installed post-join by DaemonSet
+        echo "$(date): Cilium CNI readiness: Basic infrastructure ready, DaemonSet will install plugin"
         ;;
       "flannel")
         # Check 1: CNI binaries exist and are executable
