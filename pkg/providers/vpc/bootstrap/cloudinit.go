@@ -716,16 +716,16 @@ check_cni_ready() {
       "cilium")
         # For Cilium, CNI plugin is installed by DaemonSet after node joins cluster
         # Just verify basic CNI infrastructure is ready
-        
+
         # Check 1: Standard CNI plugins are available
         [ -x /opt/cni/bin/bridge ] || return 1
         [ -x /opt/cni/bin/loopback ] || return 1
-        
+
         # Check 2: CNI directories exist
         [ -d /opt/cni/bin ] || return 1
         [ -d /etc/cni/net.d ] || return 1
         [ -d /var/log/cilium ] || return 1
-        
+
         # Don't wait for Cilium CNI plugin - it's installed post-join by DaemonSet
         echo "$(date): Cilium CNI readiness: Basic infrastructure ready, DaemonSet will install plugin"
         ;;
