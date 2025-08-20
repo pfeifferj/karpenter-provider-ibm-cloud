@@ -87,6 +87,9 @@ type Options struct {
 	// Architecture is the node architecture (amd64, arm64, etc)
 	Architecture string
 
+	// KubernetesVersion is the detected cluster Kubernetes version
+	KubernetesVersion string
+
 	// DNSClusterIP is the cluster DNS service IP
 	DNSClusterIP string
 
