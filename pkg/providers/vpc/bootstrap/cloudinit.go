@@ -356,8 +356,12 @@ report_status "configuring" "container-runtime-ready"
 
 # Install Kubernetes components
 echo "$(date): Installing Kubernetes components..."
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+K8S_VERSION="{{ .KubernetesVersion }}"
+K8S_MAJOR_MINOR=$(echo $K8S_VERSION | sed 's/v\([0-9]*\.[0-9]*\).*/v\1/')
+echo "$(date): Installing Kubernetes $K8S_VERSION (using repo $K8S_MAJOR_MINOR)"
+
+curl -fsSL https://pkgs.k8s.io/core:/stable:/$K8S_MAJOR_MINOR/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/$K8S_MAJOR_MINOR/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
 apt-get update
 apt-get install -y kubelet kubectl
 apt-mark hold kubelet kubectl
@@ -423,6 +427,9 @@ registerWithTaints:
   value: {{ .Value }}
   effect: {{ .Effect }}
 {{ end }}
+- key: node.cilium.io/agent-not-ready
+  value: "true"
+  effect: NoExecute
 nodeLabels:
 {{ range $key, $value := .Labels }}
   {{ $key }}: "{{ $value }}"
@@ -459,7 +466,7 @@ EOF
 # Configure kubelet service with bootstrap kubeconfig
 cat > /etc/systemd/system/kubelet.service.d/10-karpenter.conf << EOF
 [Service]
-Environment="KUBELET_EXTRA_ARGS=--hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP} --provider-id=${PROVIDER_ID} --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubeconfig{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
+Environment="KUBELET_EXTRA_ARGS=--hostname-override=${HOSTNAME} --node-ip=${PRIVATE_IP} --provider-id=${PROVIDER_ID} --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubeconfig --sync-frequency=30s{{ if .KubeletExtraArgs }} {{ .KubeletExtraArgs }}{{ end }}"
 EOF
 
 # Create kubelet service override
@@ -498,6 +505,17 @@ for i in {1..30}; do
     break
   fi
   sleep 2
+done
+
+# Wait for API server to be available before starting kubelet
+echo "$(date): Testing API server connectivity before starting kubelet..."
+for i in {1..60}; do
+  if curl -k --connect-timeout 5 -m 5 {{ .ClusterEndpoint }}/healthz >/dev/null 2>&1; then
+    echo "$(date): ✅ API server is ready"
+    break
+  fi
+  echo "$(date): Waiting for API server... (attempt $i/60)"
+  sleep 5
 done
 
 # Install CNI binaries and configuration
@@ -594,6 +612,7 @@ EOF
     # Create a temporary bridge CNI configuration that Cilium will replace
     # This allows kubelet to start and provide service info to Cilium DaemonSet
     # Using 192.168.200.0/24 to avoid conflicts with existing 10.x networks
+    # IMPORTANT: isDefaultGateway is set to false to avoid route conflicts
     cat > /etc/cni/net.d/00-cilium-bootstrap.conflist << 'EOF'
 {
   "cniVersion": "0.3.1",
@@ -602,17 +621,12 @@ EOF
     {
       "type": "bridge",
       "bridge": "cni-bootstrap",
-      "isDefaultGateway": true,
+      "isDefaultGateway": false,
       "ipMasq": true,
       "hairpinMode": true,
       "ipam": {
         "type": "host-local",
-        "subnet": "192.168.200.0/24",
-        "routes": [
-          {
-            "dst": "0.0.0.0/0"
-          }
-        ]
+        "subnet": "192.168.200.0/24"
       }
     },
     {
