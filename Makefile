@@ -127,3 +127,10 @@ verify-license: ## Verify all Go files have license headers
 .PHONY: pre-commit
 pre-commit: ## Run pre-commit checks (license headers + linting)
 	hack/pre-commit.sh
+
+.PHONY: lint-commits install-git-hooks
+lint-commits: ## Lint commit messages since main
+	gitlint --commits origin/main..HEAD
+
+install-git-hooks: ## Install gitlint git hooks
+	gitlint install-hook
