@@ -18,7 +18,6 @@ package instance
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -197,7 +196,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		AllowIPSpoofing: &[]bool{false}[0],
 		// Set protocol state filtering to auto for proper instance network attachment
 		ProtocolStateFilteringMode: &[]string{"auto"}[0],
-		// Set explicit name for debugging
+		// Set explicit name
 		Name: &[]string{fmt.Sprintf("%s-vni", nodeClaim.Name)}[0],
 		// Auto-delete when instance is deleted
 		AutoDelete: &[]bool{true}[0],
@@ -249,26 +248,22 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	}
 
 	// Create instance prototype with VNI
-	instancePrototype := &vpcv1.InstancePrototypeInstanceByImage{
-		// Required discriminator fields for InstanceByImage oneOf choice
+	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
 		Image: &vpcv1.ImageIdentity{
 			ID: &imageID,
 		},
 		Zone: &vpcv1.ZoneIdentity{
 			Name: &zone,
 		},
-
 		PrimaryNetworkAttachment: primaryNetworkAttachment,
-
-		// Additional instance configuration
+		VPC: &vpcv1.VPCIdentity{
+			ID: &nodeClass.Spec.VPC,
+		},
 		Name: &nodeClaim.Name,
 		Profile: &vpcv1.InstanceProfileIdentity{
 			Name: &instanceProfile,
 		},
-		// Note: VPC is omitted when using PrimaryNetworkAttachment as it's derived from the subnet
 		BootVolumeAttachment: bootVolumeAttachment,
-
-		// Add availability policy for better instance management
 		AvailabilityPolicy: &vpcv1.InstanceAvailabilityPolicyPrototype{
 			HostFailure: &[]string{"restart"}[0],
 		},
@@ -283,9 +278,14 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Add resource group if specified
 	if nodeClass.Spec.ResourceGroup != "" {
-		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
-			ID: &nodeClass.Spec.ResourceGroup,
+		resourceGroupID, rgErr := p.resolveResourceGroupID(ctx, nodeClass.Spec.ResourceGroup)
+		if rgErr != nil {
+			return nil, fmt.Errorf("resolving resource group %s: %w", nodeClass.Spec.ResourceGroup, rgErr)
 		}
+		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+			ID: &resourceGroupID,
+		}
+		logger.Info("Resource group resolved", "input", nodeClass.Spec.ResourceGroup, "resolved_id", resourceGroupID)
 	}
 
 	// Add SSH keys if specified
@@ -316,20 +316,24 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		ResponseHopLimit: &[]int64{2}[0],
 	}
 
-	// Log detailed instance prototype for oneOf validation debugging
-	// Marshal the prototype to JSON to see exact structure being sent to IBM API
-	prototypeJSON, _ := json.MarshalIndent(instancePrototype, "", "  ")
-	logger.Info("Creating instance with prototype JSON", "json_payload", string(prototypeJSON))
-
 	// Create the instance
+	logger.Info("Creating VPC instance",
+		"instance_name", nodeClaim.Name,
+		"instance_profile", instanceProfile,
+		"zone", zone)
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
 		// Check if this is a partial failure that might have created resources
 		ibmErr := ibm.ParseError(err)
-		logger.Error(err, "Error creating VPC instance",
+
+		// Enhanced error logging with full error details
+		logger.Error(err, "VPC instance creation error",
 			"status_code", ibmErr.StatusCode,
 			"error_code", ibmErr.Code,
-			"retryable", ibmErr.Retryable)
+			"retryable", ibmErr.Retryable,
+			"error_message", err.Error(),
+			"error_type", fmt.Sprintf("%T", err),
+			"instance_prototype_type", fmt.Sprintf("%T", instancePrototype))
 
 		if p.isPartialFailure(ibmErr) {
 			logger.Info("Instance creation failed after partial resource creation, attempting cleanup",
@@ -376,7 +380,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			},
 		},
 		Spec: corev1.NodeSpec{
-			// Use the full instance ID including the zone prefix (e.g., 02c7_uuid)
+			// Use the full instance ID including the zone prefix (e.g., 02u7_uuid)
 			// This ensures consistency with how IBM Cloud APIs expect the instance ID
 			ProviderID: fmt.Sprintf("ibm:///%s/%s", nodeClass.Spec.Region, *instance.ID),
 		},
@@ -509,7 +513,7 @@ func (p *VPCInstanceProvider) UpdateTags(ctx context.Context, providerID string,
 // extractInstanceIDFromProviderID extracts the instance ID from a provider ID
 func extractInstanceIDFromProviderID(providerID string) string {
 	// Provider ID format: ibm:///region/instance-id
-	// Instance ID includes zone prefix (e.g., 02c7_uuid)
+	// Instance ID includes zone prefix (e.g., 02u7_uuid)
 	parts := strings.Split(providerID, "/")
 	if len(parts) >= 4 {
 		return parts[len(parts)-1]
@@ -739,4 +743,40 @@ func (p *VPCInstanceProvider) createKubernetesClient(ctx context.Context) (kuber
 	}
 
 	return clientset, nil
+}
+
+// resolveResourceGroupID resolves a resource group name or ID to a proper resource group ID
+func (p *VPCInstanceProvider) resolveResourceGroupID(ctx context.Context, resourceGroupInput string) (string, error) {
+	logger := log.FromContext(ctx)
+
+	// If the input is already a UUID-like ID (32 hex characters), return it as-is
+	if len(resourceGroupInput) == 32 && isHexString(resourceGroupInput) {
+		logger.Info("Resource group input is already an ID", "resource_group_id", resourceGroupInput)
+		return resourceGroupInput, nil
+	}
+
+	// Otherwise, treat it as a name and resolve to ID using IBM Platform Services
+	logger.Info("Resolving resource group name to ID", "resource_group_name", resourceGroupInput)
+
+	// Get resource groups from IBM Platform Services
+	resourceGroupID, err := p.client.GetResourceGroupIDByName(ctx, resourceGroupInput)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve resource group name '%s' to ID: %w", resourceGroupInput, err)
+	}
+
+	logger.Info("Successfully resolved resource group name to ID",
+		"resource_group_name", resourceGroupInput,
+		"resource_group_id", resourceGroupID)
+
+	return resourceGroupID, nil
+}
+
+// isHexString checks if a string contains only hexadecimal characters
+func isHexString(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
 }

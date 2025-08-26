@@ -36,6 +36,9 @@ The Karpenter IBM Cloud Provider enables automatic node provisioning and scaling
 - :speaking_head: **[Presentations](presentations.md)**
   Conference talks and demos about the project
 
+- :question: **[FAQ](faq.md)**
+  Frequently asked questions about Karpenter IBM Cloud Provider
+
 </div>
 
 ## Key Features

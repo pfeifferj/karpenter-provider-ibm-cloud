@@ -34,6 +34,10 @@ package controllers
 //+kubebuilder:rbac:groups=storage.k8s.io,resources=volumeattachments,verbs=get;list;watch
 //+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch
 //+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=configmaps;secrets,verbs=get;list;watch;create;update;patch;delete,namespace=karpenter
+//+kubebuilder:rbac:groups="",resources=services;endpoints,verbs=get;list;watch,namespace=kube-system
+//+kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create,namespace=kube-system
+//+kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete,namespace=kube-node-lease
 
 import (
 	"context"
