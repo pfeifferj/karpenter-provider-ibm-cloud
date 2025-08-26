@@ -427,9 +427,11 @@ registerWithTaints:
   value: {{ .Value }}
   effect: {{ .Effect }}
 {{ end }}
+{{ if eq .CNIPlugin "cilium" }}
 - key: node.cilium.io/agent-not-ready
   value: "true"
   effect: NoExecute
+{{ end }}
 nodeLabels:
 {{ range $key, $value := .Labels }}
   {{ $key }}: "{{ $value }}"
@@ -902,9 +904,11 @@ func (p *VPCBootstrapProvider) generateCloudInitScript(ctx context.Context, opti
 	data := struct {
 		types.Options
 		KubeletExtraArgs string
+		CNIPlugin        string
 	}{
 		Options:          options,
 		KubeletExtraArgs: p.buildKubeletExtraArgs(options.KubeletConfig),
+		CNIPlugin:        options.CNIPlugin,
 	}
 
 	// Execute template
