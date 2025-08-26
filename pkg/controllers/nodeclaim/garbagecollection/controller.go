@@ -509,7 +509,7 @@ func (c *Controller) normalizeProviderID(providerID string) string {
 	region := parts[len(parts)-2]
 	instanceID := parts[len(parts)-1]
 
-	// Remove zone prefix if present (e.g., "02c7_" from "02c7_abc123")
+	// Remove zone prefix if present (e.g., "02u7_" from "02u7_abc123")
 	// This handles cases where cloud API returns zone-prefixed IDs but node registration doesn't
 	if strings.Contains(instanceID, "_") {
 		instanceIDParts := strings.Split(instanceID, "_")

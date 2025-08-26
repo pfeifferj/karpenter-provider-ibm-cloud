@@ -20,6 +20,9 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/platform-services-go-sdk/resourcemanagerv2"
 )
 
 // Client represents an IBM Cloud API client
@@ -105,6 +108,43 @@ func (c *Client) GetIAMClient() *IAMClient {
 // GetRegion returns the configured region
 func (c *Client) GetRegion() string {
 	return c.region
+}
+
+// GetResourceGroupIDByName resolves a resource group name to its ID
+func (c *Client) GetResourceGroupIDByName(ctx context.Context, resourceGroupName string) (string, error) {
+	// Get access token for authentication
+	token, err := c.iamClient.GetToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("getting IAM token: %w", err)
+	}
+
+	// Create Resource Manager client
+	resourceManagerClient, err := resourcemanagerv2.NewResourceManagerV2(&resourcemanagerv2.ResourceManagerV2Options{
+		Authenticator: &core.BearerTokenAuthenticator{
+			BearerToken: token,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating resource manager client: %w", err)
+	}
+
+	// List resource groups and find the one with matching name
+	listOptions := &resourcemanagerv2.ListResourceGroupsOptions{}
+	result, _, err := resourceManagerClient.ListResourceGroupsWithContext(ctx, listOptions)
+	if err != nil {
+		return "", fmt.Errorf("listing resource groups: %w", err)
+	}
+
+	// Find resource group by name
+	for _, rg := range result.Resources {
+		if rg.Name != nil && *rg.Name == resourceGroupName {
+			if rg.ID != nil {
+				return *rg.ID, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("resource group '%s' not found", resourceGroupName)
 }
 
 // VPCInstanceExists checks if a VPC instance exists by its ID
