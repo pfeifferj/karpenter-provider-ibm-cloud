@@ -71,9 +71,15 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 	logger := log.FromContext(ctx)
 	logger.Info("Generating VPC cloud-init user data for direct kubelet bootstrap")
 
+	// Detect cluster Kubernetes version to ensure compatibility
+	clusterVersion, err := p.detectClusterKubernetesVersion(ctx)
+	if err != nil {
+		return "", fmt.Errorf("detecting cluster Kubernetes version: %w", err)
+	}
+	logger.Info("Detected cluster Kubernetes version", "version", clusterVersion)
+
 	// Get API server endpoint - use NodeClass override if specified
 	var clusterEndpoint string
-	var err error
 
 	if nodeClass.Spec.APIServerEndpoint != "" {
 		clusterEndpoint = nodeClass.Spec.APIServerEndpoint
@@ -166,20 +172,21 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 
 	// Build bootstrap options for direct kubelet
 	options := commonTypes.Options{
-		ClusterEndpoint:  clusterEndpoint,
-		BootstrapToken:   bootstrapToken,
-		CustomUserData:   nodeClass.Spec.UserData,
-		ContainerRuntime: containerRuntime,
-		CNIPlugin:        cniPlugin,
-		CNIVersion:       cniVersion,
-		Architecture:     architecture,
-		Region:           nodeClass.Spec.Region,
-		Zone:             nodeClass.Spec.Zone,
-		CABundle:         caCert,
-		DNSClusterIP:     clusterDNS,
-		NodeName:         nodeClaim.Name, // Use NodeClaim name as the node name
-		InstanceID:       instanceID,     // Pass the instance ID if provided
-		ProviderID:       "",             // Will be set from NodeClaim if available
+		ClusterEndpoint:   clusterEndpoint,
+		BootstrapToken:    bootstrapToken,
+		CustomUserData:    nodeClass.Spec.UserData,
+		ContainerRuntime:  containerRuntime,
+		CNIPlugin:         cniPlugin,
+		CNIVersion:        cniVersion,
+		Architecture:      architecture,
+		Region:            nodeClass.Spec.Region,
+		Zone:              nodeClass.Spec.Zone,
+		CABundle:          caCert,
+		DNSClusterIP:      clusterDNS,
+		NodeName:          nodeClaim.Name, // Use NodeClaim name as the node name
+		InstanceID:        instanceID,     // Pass the instance ID if provided
+		ProviderID:        "",             // Will be set from NodeClaim if available
+		KubernetesVersion: clusterVersion,
 	}
 
 	// Add labels and taints if NodeClaim was found
@@ -287,6 +294,17 @@ func (p *VPCBootstrapProvider) detectContainerRuntime(ctx context.Context) strin
 	}
 
 	return "containerd" // Default
+}
+
+// detectClusterKubernetesVersion detects the Kubernetes version of the cluster
+func (p *VPCBootstrapProvider) detectClusterKubernetesVersion(ctx context.Context) (string, error) {
+	discoveryClient := p.k8sClient.Discovery()
+	serverVersion, err := discoveryClient.ServerVersion()
+	if err != nil {
+		return "", fmt.Errorf("getting server version: %w", err)
+	}
+
+	return serverVersion.GitVersion, nil
 }
 
 // detectCNIPluginAndVersion detects the CNI plugin and version being used in the cluster
