@@ -904,11 +904,9 @@ func (p *VPCBootstrapProvider) generateCloudInitScript(ctx context.Context, opti
 	data := struct {
 		types.Options
 		KubeletExtraArgs string
-		CNIPlugin        string
 	}{
 		Options:          options,
 		KubeletExtraArgs: p.buildKubeletExtraArgs(options.KubeletConfig),
-		CNIPlugin:        options.CNIPlugin,
 	}
 
 	// Execute template
