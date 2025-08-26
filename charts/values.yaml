@@ -33,10 +33,6 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name: ""
 
-# CNI Configuration
-cni:
-  plugin: "auto-detect"  # or "cilium", "calico", "flannel"
-
 podAnnotations: {}
 
 podSecurityContext: {}
