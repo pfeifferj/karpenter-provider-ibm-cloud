@@ -1536,3 +1536,186 @@ func TestArchitectureDetectionPriorityOrder(t *testing.T) {
 		assert.NotContains(t, err.Error(), "nil pointer")
 	})
 }
+
+// TestCiliumTaintConditionalBehavior focuses specifically on testing that the Cilium taint
+// is only added when the CNI plugin is actually Cilium, which was the main bug we fixed.
+func TestCiliumTaintConditionalBehavior(t *testing.T) {
+	tests := []struct {
+		name              string
+		cniPlugin         string
+		expectCiliumTaint bool
+	}{
+		{
+			name:              "Calico CNI - should NOT have Cilium taint",
+			cniPlugin:         "calico",
+			expectCiliumTaint: false,
+		},
+		{
+			name:              "Cilium CNI - should have Cilium taint",
+			cniPlugin:         "cilium",
+			expectCiliumTaint: true,
+		},
+		{
+			name:              "Flannel CNI - should NOT have Cilium taint",
+			cniPlugin:         "flannel",
+			expectCiliumTaint: false,
+		},
+		{
+			name:              "Empty CNI plugin - should NOT have Cilium taint",
+			cniPlugin:         "",
+			expectCiliumTaint: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create minimal test options
+			options := commonTypes.Options{
+				ClusterEndpoint:   "https://test-cluster:6443",
+				BootstrapToken:    "test-token",
+				NodeName:          "test-node",
+				CNIPlugin:         tt.cniPlugin,
+				CNIVersion:        "v1.0.0",
+				Architecture:      "amd64",
+				DNSClusterIP:      "172.21.0.10",
+				CABundle:          "test-ca",
+				KubernetesVersion: "v1.29.0",
+			}
+
+			// Create VPC bootstrap provider
+			provider := NewVPCBootstrapProvider(nil, nil, nil)
+
+			// Generate cloud-init script
+			script, err := provider.generateCloudInitScript(ctx, options)
+
+			// Validate that script generation succeeds
+			assert.NoError(t, err)
+			assert.NotEmpty(t, script)
+
+			// Main test: Verify Cilium taint behavior matches expectation
+			if tt.expectCiliumTaint {
+				assert.Contains(t, script, "node.cilium.io/agent-not-ready",
+					"Cilium taint should be present for Cilium CNI")
+			} else {
+				assert.NotContains(t, script, "node.cilium.io/agent-not-ready",
+					"Cilium taint should NOT be present for non-Cilium CNI: %s", tt.cniPlugin)
+			}
+		})
+	}
+}
+
+// TestCloudInitScriptWithCustomTaints verifies that custom taints are added correctly
+// alongside CNI-specific taints
+func TestCloudInitScriptWithCustomTaints(t *testing.T) {
+	tests := []struct {
+		name           string
+		cniPlugin      string
+		customTaints   []corev1.Taint
+		validateScript func(*testing.T, string)
+	}{
+		{
+			name:      "Calico with custom taints - no Cilium taint",
+			cniPlugin: "calico",
+			customTaints: []corev1.Taint{
+				{
+					Key:    "example.com/special",
+					Value:  "true",
+					Effect: corev1.TaintEffectNoSchedule,
+				},
+				{
+					Key:    "dedicated",
+					Value:  "gpu",
+					Effect: corev1.TaintEffectNoExecute,
+				},
+			},
+			validateScript: func(t *testing.T, script string) {
+				// Verify custom taints are present
+				assert.Contains(t, script, "example.com/special")
+				assert.Contains(t, script, "dedicated")
+				assert.Contains(t, script, "gpu")
+				assert.Contains(t, script, "NoSchedule")
+				assert.Contains(t, script, "NoExecute")
+
+				// Verify Cilium taint is NOT present
+				assert.NotContains(t, script, "node.cilium.io/agent-not-ready")
+			},
+		},
+		{
+			name:      "Cilium with custom taints - includes Cilium taint",
+			cniPlugin: "cilium",
+			customTaints: []corev1.Taint{
+				{
+					Key:    "workload",
+					Value:  "batch",
+					Effect: corev1.TaintEffectPreferNoSchedule,
+				},
+			},
+			validateScript: func(t *testing.T, script string) {
+				// Verify custom taint is present
+				assert.Contains(t, script, "workload")
+				assert.Contains(t, script, "batch")
+				assert.Contains(t, script, "PreferNoSchedule")
+
+				// Verify Cilium taint IS also present
+				assert.Contains(t, script, "node.cilium.io/agent-not-ready")
+			},
+		},
+		{
+			name:      "No CNI plugin with custom taints",
+			cniPlugin: "",
+			customTaints: []corev1.Taint{
+				{
+					Key:    "test",
+					Value:  "value",
+					Effect: corev1.TaintEffectNoSchedule,
+				},
+			},
+			validateScript: func(t *testing.T, script string) {
+				// Verify custom taint is present
+				assert.Contains(t, script, "test")
+				assert.Contains(t, script, "value")
+				assert.Contains(t, script, "NoSchedule")
+
+				// Verify Cilium taint is NOT present
+				assert.NotContains(t, script, "node.cilium.io/agent-not-ready")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create test options with custom taints
+			options := commonTypes.Options{
+				ClusterEndpoint:   "https://test-cluster:6443",
+				BootstrapToken:    "test-token",
+				NodeName:          "test-node",
+				CNIPlugin:         tt.cniPlugin,
+				CNIVersion:        "v1.0.0",
+				Architecture:      "amd64",
+				DNSClusterIP:      "172.21.0.10",
+				CABundle:          "test-ca",
+				KubernetesVersion: "v1.29.0",
+				Taints:            tt.customTaints,
+			}
+
+			// Create VPC bootstrap provider
+			provider := NewVPCBootstrapProvider(nil, nil, nil)
+
+			// Generate cloud-init script
+			script, err := provider.generateCloudInitScript(ctx, options)
+
+			// Validate generation succeeds
+			assert.NoError(t, err)
+			assert.NotEmpty(t, script)
+
+			// Run custom validation
+			if tt.validateScript != nil {
+				tt.validateScript(t, script)
+			}
+		})
+	}
+}

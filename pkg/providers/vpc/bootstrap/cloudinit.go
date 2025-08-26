@@ -427,9 +427,11 @@ registerWithTaints:
   value: {{ .Value }}
   effect: {{ .Effect }}
 {{ end }}
+{{ if eq .CNIPlugin "cilium" }}
 - key: node.cilium.io/agent-not-ready
   value: "true"
   effect: NoExecute
+{{ end }}
 nodeLabels:
 {{ range $key, $value := .Labels }}
   {{ $key }}: "{{ $value }}"
