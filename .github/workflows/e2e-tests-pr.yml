@@ -1,0 +1,410 @@
+name: E2E Tests for PRs
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  packages: write
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  E2E_APPROVAL_COMMENT: "/ok-to-e2e"
+  GO_VERSION: "1.21"
+  KO_VERSION: "0.15.4"
+  KUBECTL_VERSION: "1.28.0"
+
+jobs:
+  gate:
+    name: Gate (manual or approver comment)
+    runs-on: ubuntu-latest
+    outputs:
+      approved:  ${{ steps.decide.outputs.approved }}
+      pr_number: ${{ steps.decide.outputs.pr_number }}
+      head_sha:  ${{ steps.decide.outputs.head_sha }}
+      ref:       ${{ steps.decide.outputs.ref }}
+      image_tag: ${{ steps.decide.outputs.image_tag }}
+      image_ref: ${{ steps.decide.outputs.image_ref }}
+    steps:
+      - id: decide
+        uses: actions/github-script@v7
+        with:
+          script: |
+            async function checkUserPermission(username) {
+              try {
+                const { data: collaborator } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: username
+                });
+
+                const hasWriteAccess = ['admin', 'write', 'maintain'].includes(collaborator.permission);
+                return {
+                  hasAccess: hasWriteAccess,
+                  permission: collaborator.permission
+                };
+              } catch (error) {
+                console.log(`Could not check permissions for ${username}: ${error.message}`);
+                return {
+                  hasAccess: false,
+                  permission: 'unknown'
+                };
+              }
+            }
+
+            let approved = false;
+            let prNumber = '';
+            let headSHA = context.sha;
+            let ref = (context.ref || '').replace('refs/heads/', '');
+
+            if (context.eventName === 'pull_request') {
+              prNumber = String(context.payload.pull_request.number);
+              headSHA = context.payload.pull_request.head.sha;
+              ref = context.payload.pull_request.head.ref;
+
+              const author = context.payload.pull_request.user.login;
+              const permCheck = await checkUserPermission(author);
+
+              if (permCheck.hasAccess) {
+                approved = true;
+                console.log(`Auto-approved E2E for ${author} (${permCheck.permission} access)`);
+              } else {
+                console.log(`E2E requires manual approval for ${author} (${permCheck.permission} access)`);
+              }
+
+            } else if (context.eventName === 'issue_comment') {
+              const comment = context.payload.comment.body || '';
+              const commenter = context.payload.comment.user.login || '';
+
+              if (context.payload.issue.pull_request && comment.includes('/ok-to-e2e')) {
+                const permCheck = await checkUserPermission(commenter);
+
+                if (permCheck.hasAccess) {
+                  approved = true;
+                  console.log(`Manual E2E approval by ${commenter} (${permCheck.permission} access)`);
+
+                  const { data: pr } = await github.rest.pulls.get({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: context.payload.issue.number
+                  });
+                  headSHA = pr.head.sha;
+                  ref = pr.head.ref;
+                  prNumber = String(context.payload.issue.number);
+                } else {
+                  console.log(`E2E approval denied for ${commenter} (${permCheck.permission} access)`);
+                }
+              }
+            } else if (context.eventName === 'workflow_dispatch') {
+              approved = true;
+            }
+
+            const tag = (prNumber ? `pr-${prNumber}-` : '') + headSHA.substring(0, 12);
+            const imageRef = `ghcr.io/${context.repo.owner}/${context.repo.repo}:${tag}`;
+
+            console.log('Event:', context.eventName);
+            console.log('Approved:', approved);
+            console.log('PR:', prNumber);
+            console.log('Image:', imageRef);
+
+            core.setOutput('approved', approved ? 'true' : 'false');
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('head_sha', headSHA);
+            core.setOutput('ref', ref);
+            core.setOutput('image_tag', tag);
+            core.setOutput('image_ref', imageRef);
+
+  build:
+    name: Build PR image with ko
+    needs: [gate]
+    if: ${{ needs.gate.outputs.approved == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: ko-build/setup-ko@v0.6
+        with:
+          version: v${{ env.KO_VERSION }}
+
+      - name: Build & push image
+        env:
+          KO_DOCKER_REPO: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | ko login ghcr.io --username ${{ github.actor }} --password-stdin
+          ko build ./cmd/controller --platform=linux/amd64 --bare --tags="${{ needs.gate.outputs.image_tag }}"
+
+      - name: Cleanup old PR images
+        if: ${{ needs.gate.outputs.pr_number != '' }}
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const packageName = context.repo.repo;
+            const prNumber = '${{ needs.gate.outputs.pr_number }}';
+
+            try {
+              const { data: versions } = await github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg({
+                package_type: 'container',
+                package_name: packageName,
+                org: context.repo.owner,
+                per_page: 100
+              });
+
+              const prVersions = versions
+                .filter(version =>
+                  version.metadata?.container?.tags?.some(tag => tag.startsWith(`pr-${prNumber}-`))
+                )
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+              const toDelete = prVersions.slice(3);
+
+              console.log(`Found ${prVersions.length} images for PR #${prNumber}`);
+              console.log(`Keeping latest 3, deleting ${toDelete.length} old images`);
+
+              for (const version of toDelete) {
+                try {
+                  await github.rest.packages.deletePackageVersionForOrg({
+                    package_type: 'container',
+                    package_name: packageName,
+                    org: context.repo.owner,
+                    package_version_id: version.id
+                  });
+                  console.log(`Deleted image version ${version.id}`);
+                } catch (error) {
+                  console.log(`Failed to delete version ${version.id}: ${error.message}`);
+                }
+              }
+            } catch (error) {
+              console.log(`Failed to cleanup images: ${error.message}`);
+            }
+
+  e2e:
+    name: Run E2E against PR image
+    needs: [gate, build]
+    if: ${{ needs.gate.outputs.approved == 'true' }}
+    runs-on: [self-hosted, ibm-e2e]
+    timeout-minutes: 60
+    container:
+      image: golang:1.24.4
+      options: --user 0
+    env:
+      KUBECONFIG: /tmp/kubeconfig
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.ref }}
+
+      - name: Install dependencies
+        run: |
+          apt-get update && apt-get install -y curl jq
+          curl -LO "https://dl.k8s.io/release/v${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          chmod +x kubectl && mv kubectl /usr/local/bin/
+          curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+          ibmcloud plugin install vpc-infrastructure
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
+        run: |
+          printf '%s' "$KUBECONFIG_CONTENT" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          kubectl version --client
+
+      - name: Verify cluster access
+        run: |
+          kubectl cluster-info
+          kubectl auth can-i create nodeclaims --all-namespaces
+          kubectl auth can-i create nodepools --all-namespaces
+          kubectl auth can-i create ibmnodeclasses --all-namespaces
+
+      - name: Configure IBM Cloud CLI
+        env:
+          IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+        run: |
+          ibmcloud login --apikey "${{ secrets.IBMCLOUD_API_KEY }}" -r "${{ secrets.IBMCLOUD_REGION }}"
+
+      - name: Deploy PR version
+        run: |
+          kubectl apply -f charts/crds/
+
+          echo "🔍 Checking deployment structure..."
+          kubectl get deployment karpenter-karpenter-ibm -n karpenter -o yaml | grep -A 10 "containers:"
+
+          CONTAINER_NAME=$(kubectl get deployment karpenter-karpenter-ibm -n karpenter -o jsonpath='{.spec.template.spec.containers[0].name}')
+          echo "📋 Found container name: $CONTAINER_NAME"
+
+          kubectl set image deployment/karpenter-karpenter-ibm \
+            $CONTAINER_NAME=${{ needs.gate.outputs.image_ref }} \
+            -n karpenter
+
+          kubectl rollout status deployment/karpenter-karpenter-ibm -n karpenter --timeout=300s
+
+          CURRENT_IMAGE=$(kubectl get deployment karpenter-karpenter-ibm -n karpenter -o jsonpath='{.spec.template.spec.containers[0].image}')
+          echo "✅ Deployment updated to: $CURRENT_IMAGE"
+
+      - name: Pre-test cleanup
+        run: |
+          echo "🧹 Cleaning up any existing e2e test resources..."
+          kubectl delete pods -l test=e2e --all-namespaces --timeout=300s || true
+          kubectl delete deployments -l test=e2e --all-namespaces --timeout=300s || true
+          kubectl delete nodeclaims -l test=e2e --timeout=300s || true
+          kubectl delete nodepools -l test=e2e --timeout=300s || true
+          kubectl delete ibmnodeclasses -l test=e2e --timeout=300s || true
+
+          echo "⏳ Waiting for cluster stabilization..."
+          for i in {1..30}; do
+            pending_pods=$(kubectl get pods -l test=e2e --all-namespaces --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l)
+            if [ "$pending_pods" -eq 0 ]; then
+              echo "✅ No pending e2e pods found"
+              break
+            fi
+            echo "⏳ Still have $pending_pods pending e2e pods, waiting..."
+            sleep 10
+          done
+
+          for i in {1..30}; do
+            disrupted_nodes=$(kubectl get nodes --no-headers -o custom-columns="NAME:.metadata.name,TAINTS:.spec.taints[*].key" | grep -c "karpenter.sh/disrupted" || echo "0")
+            if [ "$disrupted_nodes" -eq 0 ]; then
+              echo "✅ No disrupted nodes found"
+              break
+            fi
+            echo "⏳ Still have $disrupted_nodes disrupted nodes, waiting..."
+            sleep 10
+          done
+
+          sleep 30
+          echo "✅ Pre-test cleanup completed"
+
+      - name: Run E2E tests
+        env:
+          RUN_E2E_TESTS: "true"
+          IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+          VPC_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+          IBMCLOUD_REGION: ${{ secrets.IBMCLOUD_REGION }}
+          TEST_VPC_ID: ${{ secrets.E2E_TEST_VPC_ID }}
+          TEST_SUBNET_ID: ${{ secrets.E2E_TEST_SUBNET_ID }}
+          TEST_IMAGE_ID: ${{ secrets.E2E_TEST_IMAGE_ID }}
+          TEST_ZONE: ${{ secrets.E2E_TEST_ZONE }}
+          TEST_SECURITY_GROUP_ID: ${{ secrets.E2E_TEST_SECURITY_GROUP_ID }}
+          VPC_URL: ${{ secrets.VPC_URL }}
+          KUBERNETES_API_SERVER_ENDPOINT: ${{ secrets.KUBERNETES_API_SERVER_ENDPOINT }}
+          IBM_RESOURCE_GROUP_ID: ${{ secrets.IBM_RESOURCE_GROUP_ID }}
+          IBM_SSH_KEY_ID: ${{ secrets.IBM_SSH_KEY_ID }}
+          E2E_SEQUENTIAL: "true"
+          E2E_CLEANUP_TIMEOUT: "300s"
+          E2E_STABILIZATION_WAIT: "60s"
+        run: |
+          echo "🚀 Starting sequential E2E tests..."
+          tests="TestE2EFullWorkflow TestE2EInstanceTypeSelection"
+
+          for test in $tests; do
+            echo "🧪 Running test: $test"
+
+            if go test -v -timeout 20m ./test/e2e -run "$test" -count=1; then
+              echo "✅ Test $test passed"
+            else
+              echo "❌ Test $test failed"
+              kubectl get nodes --no-headers | wc -l | xargs echo "Total nodes:"
+              kubectl get nodeclaims --no-headers | wc -l | xargs echo "Total nodeclaims:"
+              kubectl get pods -l test=e2e --all-namespaces --no-headers | wc -l | xargs echo "Total e2e pods:"
+              test_failed="true"
+            fi
+
+            echo "🧹 Cleaning up after test: $test"
+            kubectl delete pods -l test=e2e --all-namespaces --timeout=300s || true
+            kubectl delete deployments -l test=e2e --all-namespaces --timeout=300s || true
+            kubectl delete nodeclaims -l test=e2e --timeout=300s || true
+            kubectl delete nodepools -l test=e2e --timeout=300s || true
+            kubectl delete ibmnodeclasses -l test=e2e --timeout=300s || true
+
+            echo "⏳ Waiting for cleanup to complete..."
+            sleep 30
+
+            kubectl get nodes --no-headers | grep -c Ready | xargs echo "Ready nodes:"
+            kubectl get nodeclaims --no-headers | grep -c True | xargs echo "Ready nodeclaims:" || echo "Ready nodeclaims: 0"
+
+            echo "✅ Completed test: $test"
+            echo "---"
+          done
+
+          if [ "$test_failed" = "true" ]; then
+            echo "❌ One or more tests failed"
+            exit 1
+          fi
+
+          echo "✅ All sequential E2E tests completed successfully"
+
+      - name: Collect test artifacts
+        if: always()
+        run: |
+          mkdir -p test-artifacts
+          kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=1000 > test-artifacts/karpenter-logs.txt || true
+          kubectl get events -A --sort-by='.lastTimestamp' > test-artifacts/events.txt || true
+          kubectl get nodes -o wide > test-artifacts/nodes.txt || true
+          kubectl get nodeclaims -o yaml > test-artifacts/nodeclaims.yaml || true
+          kubectl get nodepools -o yaml > test-artifacts/nodepools.yaml || true
+          kubectl get ibmnodeclasses -o yaml > test-artifacts/ibmnodeclasses.yaml || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-artifacts-${{ github.run_id }}
+          path: test-artifacts/
+          retention-days: 7
+
+      - name: Cleanup test resources
+        if: always()
+        env:
+          IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+        run: |
+          echo "🧹 Starting comprehensive cleanup..."
+          kubectl delete pods -l test=e2e --all-namespaces --timeout=10m || true
+          kubectl delete deployments -l test=e2e --all-namespaces --timeout=10m || true
+          kubectl delete nodeclaims -l test=e2e --timeout=10m || true
+          kubectl delete nodepools -l test=e2e --timeout=10m || true
+          kubectl delete ibmnodeclasses -l test=e2e --timeout=10m || true
+
+          kubectl patch nodeclaims -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+          kubectl patch nodepools -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+          kubectl patch ibmnodeclasses -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+
+          ibmcloud is instances --output json | \
+            jq -r '.[] | select(.tags | index("karpenter-e2e")) | .id' | \
+            xargs -I {} ibmcloud is instance-delete {} --force || true
+
+          ibmcloud is virtual-network-interfaces --output json | \
+            jq -r '.[] | select(.name | test("e2e-.*-vni")) | .id' | \
+            xargs -I {} ibmcloud is virtual-network-interface-delete {} --force || true
+
+          ibmcloud is volumes --output json | \
+            jq -r '.[] | select(.name | test("e2e-.*-boot")) | .id' | \
+            xargs -I {} ibmcloud is volume-delete {} --force || true
+
+          echo "✅ Cleanup completed"
+
+      - name: Restore original deployment
+        if: always()
+        run: |
+          echo "🔄 Restoring original karpenter deployment..."
+          kubectl rollout restart deployment/karpenter-karpenter-ibm -n karpenter
+          kubectl rollout status deployment/karpenter-karpenter-ibm -n karpenter --timeout=300s
