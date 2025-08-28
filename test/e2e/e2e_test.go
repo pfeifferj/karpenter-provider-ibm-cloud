@@ -1509,6 +1509,277 @@ func (s *E2ETestSuite) createTestNodePoolWithMultipleInstanceTypes(t *testing.T,
 	return nodePool
 }
 
+// TestE2EDriftStability tests that nodes remain stable after provisioning
+// and don't get incorrectly identified as "drifted"
+func TestE2EDriftStability(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+
+	testName := fmt.Sprintf("drift-stability-%d", time.Now().Unix())
+
+	t.Logf("Starting drift stability test: %s", testName)
+
+	// Step 1: Create NodeClass without instanceProfile to test drift detection
+	nodeClass := suite.createTestNodeClassWithoutInstanceProfile(t, testName)
+	t.Logf("Created NodeClass: %s", nodeClass.Name)
+
+	// Step 2: Wait for NodeClass to be ready
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+
+	// Step 3: Create NodePool with specific instance type requirements
+	nodePool := suite.createDriftStabilityNodePool(t, testName, nodeClass.Name)
+	t.Logf("Created NodePool with instance requirements: %s", nodePool.Name)
+
+	// Step 4: Deploy test workload to trigger Karpenter provisioning
+	deployment := suite.createTestWorkloadWithInstanceTypeRequirements(t, testName)
+	t.Logf("Created test workload: %s", deployment.Name)
+
+	// Step 5: Wait for pods to be scheduled and nodes to be provisioned
+	suite.waitForPodsToBeScheduled(t, deployment.Name, deployment.Namespace)
+	t.Logf("Pods scheduled successfully")
+
+	// Step 6: Verify NodePool requirements are present as node labels
+	suite.verifyNodePoolRequirementsOnNodes(t, nodePool)
+	t.Logf("Verified NodePool requirements are present as node labels")
+
+	// Step 7: Monitor nodes for stability over 12 minutes (reasonable for E2E test)
+	stabilityDuration := 12 * time.Minute
+	t.Logf("Monitoring node stability for %v...", stabilityDuration)
+
+	initialNodes := suite.captureNodeSnapshot(t, nodePool.Name)
+	require.Greater(t, len(initialNodes), 0, "Should have provisioned at least one node")
+
+	suite.monitorNodeStability(t, nodePool.Name, initialNodes, stabilityDuration)
+	t.Logf("Node stability monitoring completed successfully")
+
+	// Step 8: Final verification that requirements are still satisfied
+	suite.verifyNodePoolRequirementsOnNodes(t, nodePool)
+	t.Logf("Final verification: NodePool requirements still satisfied")
+
+	// Step 9: Cleanup
+	suite.cleanupTestWorkload(t, deployment.Name, deployment.Namespace)
+	suite.cleanupTestResources(t, testName)
+
+	t.Logf("Drift stability test completed successfully: %s", testName)
+}
+
+// createDriftStabilityNodePool creates a NodePool with specific requirements for drift testing
+func (s *E2ETestSuite) createDriftStabilityNodePool(t *testing.T, testName, nodeClassName string) *karpv1.NodePool {
+	expireAfter := karpv1.MustParseNillableDuration("20m") // Longer expiration for stability test
+	nodePool := &karpv1.NodePool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-nodepool", testName),
+			Labels: map[string]string{
+				"test":      "e2e",
+				"test-name": testName,
+			},
+		},
+		Spec: karpv1.NodePoolSpec{
+			Template: karpv1.NodeClaimTemplate{
+				ObjectMeta: karpv1.ObjectMeta{
+					Labels: map[string]string{
+						"test":         "drift-stability",
+						"test-name":    testName,
+						"provisioner":  "karpenter-vpc",
+						"cluster-type": "self-managed",
+					},
+				},
+				Spec: karpv1.NodeClaimTemplateSpec{
+					NodeClassRef: &karpv1.NodeClassReference{
+						Group: "karpenter.ibm.sh",
+						Kind:  "IBMNodeClass",
+						Name:  nodeClassName,
+					},
+					Requirements: []karpv1.NodeSelectorRequirementWithMinValues{
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      corev1.LabelInstanceTypeStable,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"bx2-4x16", "mx2-2x16"},
+							},
+						},
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      corev1.LabelArchStable,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"amd64"},
+							},
+						},
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      karpv1.CapacityTypeLabelKey,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"on-demand"},
+							},
+						},
+					},
+					ExpireAfter: expireAfter,
+				},
+			},
+		},
+	}
+
+	err := s.kubeClient.Create(context.Background(), nodePool)
+	require.NoError(t, err)
+
+	return nodePool
+}
+
+// captureNodeSnapshot captures the current state of nodes for the given NodePool
+func (s *E2ETestSuite) captureNodeSnapshot(t *testing.T, nodePoolName string) []NodeSnapshot {
+	ctx := context.Background()
+	var nodeList corev1.NodeList
+	err := s.kubeClient.List(ctx, &nodeList)
+	require.NoError(t, err)
+
+	var snapshots []NodeSnapshot
+	for _, node := range nodeList.Items {
+		if nodePool, exists := node.Labels["karpenter.sh/nodepool"]; exists && nodePool == nodePoolName {
+			snapshot := NodeSnapshot{
+				Name:         node.Name,
+				ProviderID:   node.Spec.ProviderID,
+				InstanceType: node.Labels[corev1.LabelInstanceTypeStable],
+				CreationTime: node.CreationTimestamp.Time,
+				Labels:       make(map[string]string),
+			}
+
+			// Copy relevant labels
+			for key, value := range node.Labels {
+				if strings.HasPrefix(key, "node.kubernetes.io/") ||
+					strings.HasPrefix(key, "karpenter.sh/") ||
+					key == corev1.LabelArchStable ||
+					key == corev1.LabelInstanceTypeStable {
+					snapshot.Labels[key] = value
+				}
+			}
+
+			snapshots = append(snapshots, snapshot)
+			t.Logf("Captured node snapshot: %s (instance: %s, type: %s)",
+				snapshot.Name, snapshot.ProviderID, snapshot.InstanceType)
+		}
+	}
+
+	return snapshots
+}
+
+// monitorNodeStability monitors nodes for unexpected replacements during the specified duration
+func (s *E2ETestSuite) monitorNodeStability(t *testing.T, nodePoolName string, initialNodes []NodeSnapshot, duration time.Duration) {
+	ctx := context.Background()
+	endTime := time.Now().Add(duration)
+	checkInterval := 30 * time.Second
+
+	for time.Now().Before(endTime) {
+		var nodeList corev1.NodeList
+		err := s.kubeClient.List(ctx, &nodeList)
+		require.NoError(t, err, "Should be able to list nodes during stability monitoring")
+
+		currentNodes := make(map[string]corev1.Node)
+		for _, node := range nodeList.Items {
+			if nodePool, exists := node.Labels["karpenter.sh/nodepool"]; exists && nodePool == nodePoolName {
+				currentNodes[node.Name] = node
+			}
+		}
+
+		// Check that initial nodes still exist
+		for _, initialNode := range initialNodes {
+			currentNode, exists := currentNodes[initialNode.Name]
+			if !exists {
+				t.Errorf("Node %s from initial snapshot no longer exists - unexpected node replacement detected", initialNode.Name)
+				continue
+			}
+
+			// Verify node hasn't been replaced (ProviderID should remain the same)
+			if currentNode.Spec.ProviderID != initialNode.ProviderID {
+				t.Errorf("Node %s has different ProviderID: initial=%s, current=%s - node was replaced",
+					initialNode.Name, initialNode.ProviderID, currentNode.Spec.ProviderID)
+			}
+
+			// Check for drift conditions that might indicate incorrect drift detection
+			for _, condition := range currentNode.Status.Conditions {
+				if condition.Type == "Drifted" && condition.Status == corev1.ConditionTrue {
+					t.Errorf("Node %s incorrectly marked as drifted: %s", initialNode.Name, condition.Message)
+				}
+			}
+		}
+
+		// Check for any new unexpected nodes (should be stable count)
+		if len(currentNodes) > len(initialNodes) {
+			t.Logf("Warning: More nodes than expected - initial: %d, current: %d",
+				len(initialNodes), len(currentNodes))
+		}
+
+		remaining := time.Until(endTime)
+		t.Logf("Stability check passed - %v remaining", remaining.Round(time.Second))
+
+		if remaining > checkInterval {
+			time.Sleep(checkInterval)
+		} else {
+			time.Sleep(remaining)
+		}
+	}
+
+	t.Logf("Node stability monitoring completed successfully - no unexpected replacements detected")
+}
+
+// verifyNodePoolRequirementsOnNodes verifies that all NodePool requirements are present as node labels
+func (s *E2ETestSuite) verifyNodePoolRequirementsOnNodes(t *testing.T, nodePool *karpv1.NodePool) {
+	ctx := context.Background()
+	var nodeList corev1.NodeList
+	err := s.kubeClient.List(ctx, &nodeList)
+	require.NoError(t, err)
+
+	var nodePoolNodes []corev1.Node
+	for _, node := range nodeList.Items {
+		if labelValue, exists := node.Labels["karpenter.sh/nodepool"]; exists && labelValue == nodePool.Name {
+			nodePoolNodes = append(nodePoolNodes, node)
+		}
+	}
+
+	require.Greater(t, len(nodePoolNodes), 0, "Should have at least one node from the NodePool")
+
+	// Verify each requirement from the NodePool is satisfied on all nodes
+	for _, requirement := range nodePool.Spec.Template.Spec.Requirements {
+		for _, node := range nodePoolNodes {
+			nodeValue, exists := node.Labels[requirement.Key]
+			require.True(t, exists, "Node %s should have label %s", node.Name, requirement.Key)
+
+			// Check that the node's value satisfies the requirement
+			switch requirement.Operator {
+			case corev1.NodeSelectorOpIn:
+				found := false
+				for _, allowedValue := range requirement.Values {
+					if nodeValue == allowedValue {
+						found = true
+						break
+					}
+				}
+				require.True(t, found,
+					"Node %s has %s=%s which is not in allowed values %v",
+					node.Name, requirement.Key, nodeValue, requirement.Values)
+
+			case corev1.NodeSelectorOpNotIn:
+				for _, forbiddenValue := range requirement.Values {
+					require.NotEqual(t, nodeValue, forbiddenValue,
+						"Node %s has %s=%s which is in forbidden values %v",
+						node.Name, requirement.Key, nodeValue, requirement.Values)
+				}
+			}
+
+			t.Logf("✓ Node %s satisfies requirement %s=%s (operator: %s)",
+				node.Name, requirement.Key, nodeValue, requirement.Operator)
+		}
+	}
+}
+
+// NodeSnapshot represents a snapshot of a node's state for stability monitoring
+type NodeSnapshot struct {
+	Name         string
+	ProviderID   string
+	InstanceType string
+	CreationTime time.Time
+	Labels       map[string]string
+}
+
 // verifyInstanceUsesAllowedType verifies the created instance uses one of the allowed instance types
 // nolint:unused
 func (s *E2ETestSuite) verifyInstanceUsesAllowedType(t *testing.T, nodeClaimName string, allowedTypes []string) {
