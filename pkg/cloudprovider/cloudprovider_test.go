@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
 // Mock Event Recorder
@@ -403,6 +405,116 @@ func TestCloudProvider_Create_CircuitBreakerEventPublishing(t *testing.T) {
 	assert.Equal(t, "CircuitBreakerBlocked", event.Reason)
 	assert.Contains(t, event.Message, "Circuit breaker blocked provisioning for NodeClaim test-nodeclaim")
 	assert.Equal(t, corev1.EventTypeWarning, event.Type)
+}
+
+// mockSubnetProvider for testing
+type mockSubnetProvider struct{}
+
+func (m *mockSubnetProvider) ListSubnets(ctx context.Context, vpcID string) ([]subnet.SubnetInfo, error) {
+	return []subnet.SubnetInfo{}, nil
+}
+
+func (m *mockSubnetProvider) GetSubnet(ctx context.Context, subnetID string) (*subnet.SubnetInfo, error) {
+	return &subnet.SubnetInfo{ID: subnetID, Zone: "us-south-1"}, nil
+}
+
+func (m *mockSubnetProvider) SelectSubnets(ctx context.Context, vpcID string, strategy *v1alpha1.PlacementStrategy) ([]subnet.SubnetInfo, error) {
+	return []subnet.SubnetInfo{}, nil
+}
+
+func (m *mockSubnetProvider) SetKubernetesClient(kubeClient kubernetes.Interface) {}
+
+// TestCloudProvider_Create_EnhancedCircuitBreakerLogging tests enhanced logging during circuit breaker blocking
+func TestCloudProvider_Create_EnhancedCircuitBreakerLogging(t *testing.T) {
+	ctx := context.Background()
+	nodeClaim := getTestNodeClaim("test-nodeclass")
+	nodeClass := getTestNodeClass()
+
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = v1alpha1.SchemeBuilder.AddToScheme(scheme)
+
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nodeClass).
+		Build()
+
+	eventRecorder := &mockEventRecorder{events: []events.Event{}}
+
+	// Create circuit breaker with low threshold to trigger quickly
+	cbConfig := &CircuitBreakerConfig{
+		FailureThreshold:       1, // Trigger after just 1 failure
+		FailureWindow:          5 * time.Minute,
+		RecoveryTimeout:        15 * time.Minute,
+		HalfOpenMaxRequests:    1,
+		RateLimitPerMinute:     10,
+		MaxConcurrentInstances: 5,
+	}
+
+	// Create a mock instance type provider that returns compatible types
+	mockInstanceTypes := &mockInstanceTypeProvider{
+		instanceTypes: []*cloudprovider.InstanceType{
+			{
+				Name: "test-instance-type",
+				Requirements: scheduling.NewRequirements(
+					scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, "test-instance-type"),
+				),
+				Capacity: corev1.ResourceList{
+					corev1.ResourceCPU:     resource.MustParse("4"),
+					corev1.ResourceMemory:  resource.MustParse("16Gi"),
+					corev1.ResourceStorage: resource.MustParse("20Gi"),
+				},
+				Overhead: &cloudprovider.InstanceTypeOverhead{
+					KubeReserved: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("100m"),
+						corev1.ResourceMemory: resource.MustParse("1Gi"),
+					},
+				},
+				Offerings: cloudprovider.Offerings{
+					{
+						Requirements: scheduling.NewRequirements(
+							scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, karpv1.CapacityTypeOnDemand),
+							scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1"),
+						),
+						Price:     0.1,
+						Available: true,
+					},
+				},
+			},
+		},
+	}
+
+	cloudProvider := New(kubeClient, eventRecorder, nil, mockInstanceTypes, &mockSubnetProvider{}, cbConfig)
+
+	// Directly manipulate the circuit breaker to simulate previous failures
+	cloudProvider.circuitBreaker.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("subnet subnet-123 not found"))
+
+	// Verify the circuit breaker is actually open
+	status, _ := cloudProvider.circuitBreaker.GetState()
+	assert.Equal(t, CircuitBreakerOpen, status.State, "Circuit breaker should be open after failure")
+
+	// Now try to create - the circuit breaker should be open and block with enhanced message
+	_, err := cloudProvider.Create(ctx, nodeClaim)
+
+	// Should get circuit breaker error with enhanced message
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker")
+
+	// The enhanced message should contain failure context
+	cbErr, ok := err.(*CircuitBreakerError)
+	if ok {
+		assert.Contains(t, cbErr.Message, "Recent failures:")
+		assert.Contains(t, cbErr.Message, "Subnet not found")
+	}
+
+	// Should have published a circuit breaker blocked event
+	assert.Len(t, eventRecorder.events, 1)
+	if len(eventRecorder.events) > 0 {
+		assert.Equal(t, "CircuitBreakerBlocked", eventRecorder.events[0].Reason)
+		// Enhanced logging should include failure context in the event message
+		eventMessage := eventRecorder.events[0].Message
+		assert.Contains(t, eventMessage, "Recent failures:")
+	}
 }
 
 func TestCloudProvider_Create_NodeClaimLabelPopulation(t *testing.T) {

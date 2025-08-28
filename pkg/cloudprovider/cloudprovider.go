@@ -306,9 +306,20 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 
 	// Circuit breaker check - validate against failure rate and concurrency safeguards
 	if cbErr := c.circuitBreaker.CanProvision(ctx, nodeClass.Name, nodeClass.Spec.Region, 0); cbErr != nil {
-		log.Error(cbErr, "Circuit breaker blocked provisioning",
-			"nodeClass", nodeClass.Name,
-			"region", nodeClass.Spec.Region)
+		// Get circuit breaker status for enhanced logging
+		if cbStatus, statusErr := c.circuitBreaker.GetState(); statusErr == nil {
+			log.Error(cbErr, "Circuit breaker blocked provisioning",
+				"nodeClass", nodeClass.Name,
+				"region", nodeClass.Spec.Region,
+				"circuitBreakerState", cbStatus.State,
+				"recentFailures", cbStatus.RecentFailures,
+				"failureThreshold", cbStatus.FailureThreshold,
+				"timeToRecovery", cbStatus.TimeToRecovery)
+		} else {
+			log.Error(cbErr, "Circuit breaker blocked provisioning",
+				"nodeClass", nodeClass.Name,
+				"region", nodeClass.Spec.Region)
+		}
 		c.recorder.Publish(ibmevents.NodeClaimCircuitBreakerBlocked(nodeClaim, cbErr.Error()))
 		return nil, fmt.Errorf("provisioning temporarily blocked by circuit breaker: %w", cbErr)
 	}
