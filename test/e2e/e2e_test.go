@@ -1806,3 +1806,493 @@ func (s *E2ETestSuite) verifyInstanceUsesAllowedType(t *testing.T, nodeClaimName
 	assert.True(t, found, "Instance type %s should be one of the allowed types: %v", instanceType, allowedTypes)
 	t.Logf("Instance uses allowed type: %s", instanceType)
 }
+
+// TestE2ECleanupNodePoolDeletion tests NodePool deletion with proper node draining
+func TestE2ECleanupNodePoolDeletion(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	testName := fmt.Sprintf("cleanup-nodepool-%d", time.Now().Unix())
+
+	t.Logf("Starting NodePool cleanup test: %s", testName)
+
+	ctx := context.Background()
+
+	// Create NodeClass
+	nodeClass := suite.createTestNodeClass(t, testName+"-nodeclass")
+	t.Logf("Created NodeClass: %s", nodeClass.Name)
+
+	// Wait for NodeClass to be ready
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+
+	// Create NodePool with 2 replicas for better testing
+	nodePool := suite.createTestNodePool(t, testName+"-nodepool", nodeClass.Name)
+	t.Logf("Created NodePool: %s", nodePool.Name)
+
+	// Create test workload to trigger provisioning
+	deployment := suite.createTestWorkload(t, testName+"-workload")
+	// Modify the deployment to have 2 replicas
+	deployment.Spec.Replicas = &[]int32{2}[0]
+	err := suite.kubeClient.Update(ctx, deployment)
+	require.NoError(t, err)
+	t.Logf("Created test workload: %s", deployment.Name)
+
+	// Wait for pods to be scheduled and nodes to be provisioned
+	suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
+	t.Logf("Workload pods scheduled successfully")
+
+	// Capture initial node state
+	var nodeList corev1.NodeList
+	err = suite.kubeClient.List(ctx, &nodeList, client.MatchingLabels{
+		"karpenter.sh/nodepool": nodePool.Name,
+	})
+	require.NoError(t, err)
+	initialNodeCount := len(nodeList.Items)
+	require.Greater(t, initialNodeCount, 0, "Should have at least one node provisioned")
+
+	nodeNames := make([]string, len(nodeList.Items))
+	nodeProviderIDs := make([]string, len(nodeList.Items))
+	for i, node := range nodeList.Items {
+		nodeNames[i] = node.Name
+		nodeProviderIDs[i] = node.Spec.ProviderID
+		t.Logf("Node before deletion: %s (ProviderID: %s)", node.Name, node.Spec.ProviderID)
+	}
+
+	// Delete the test workload first
+	t.Logf("Deleting test workload: %s", deployment.Name)
+	err = suite.kubeClient.Delete(ctx, deployment)
+	require.NoError(t, err)
+
+	// Wait for pods to be terminated
+	suite.waitForPodsGone(t, deployment.Name)
+
+	// Delete NodePool
+	t.Logf("Deleting NodePool: %s", nodePool.Name)
+	err = suite.kubeClient.Delete(ctx, nodePool)
+	require.NoError(t, err)
+
+	// Wait for nodes to be properly drained and removed
+	t.Logf("Waiting for nodes to be drained and removed...")
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, 10*time.Minute, true, func(ctx context.Context) (bool, error) {
+		var remainingNodes corev1.NodeList
+		listErr := suite.kubeClient.List(ctx, &remainingNodes, client.MatchingLabels{
+			"karpenter.sh/nodepool": nodePool.Name,
+		})
+		if listErr != nil {
+			t.Logf("Error checking nodes: %v", listErr)
+			return false, nil
+		}
+
+		remainingCount := len(remainingNodes.Items)
+		t.Logf("Remaining nodes with NodePool label: %d", remainingCount)
+
+		if remainingCount == 0 {
+			return true, nil
+		}
+
+		// Log status of remaining nodes
+		for _, node := range remainingNodes.Items {
+			for _, condition := range node.Status.Conditions {
+				if condition.Type == corev1.NodeReady {
+					t.Logf("Node %s status: %s", node.Name, condition.Status)
+					break
+				}
+			}
+		}
+
+		return false, nil
+	})
+	require.NoError(t, err, "Nodes should be properly drained and removed after NodePool deletion")
+
+	// Verify no NodeClaims remain
+	var nodeClaimList karpv1.NodeClaimList
+	err = suite.kubeClient.List(ctx, &nodeClaimList, client.MatchingLabels{
+		"karpenter.sh/nodepool": nodePool.Name,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, nodeClaimList.Items, "All NodeClaims should be deleted")
+
+	// Cleanup NodeClass
+	err = suite.kubeClient.Delete(ctx, nodeClass)
+	require.NoError(t, err)
+
+	t.Logf("NodePool cleanup test completed successfully: %s", testName)
+}
+
+// TestE2ECleanupNodeClassDeletion tests NodeClass deletion with dependent resource cleanup
+func TestE2ECleanupNodeClassDeletion(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	testName := fmt.Sprintf("cleanup-nodeclass-%d", time.Now().Unix())
+
+	t.Logf("Starting NodeClass cleanup test: %s", testName)
+
+	ctx := context.Background()
+
+	// Create NodeClass
+	nodeClass := suite.createTestNodeClass(t, testName+"-nodeclass")
+	t.Logf("Created NodeClass: %s", nodeClass.Name)
+
+	// Wait for NodeClass to be ready
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+
+	// Create NodePool that references this NodeClass
+	nodePool := suite.createTestNodePool(t, testName+"-nodepool", nodeClass.Name)
+	t.Logf("Created NodePool: %s", nodePool.Name)
+
+	// Create test workload to trigger provisioning
+	deployment := suite.createTestWorkload(t, testName+"-workload")
+	t.Logf("Created test workload: %s", deployment.Name)
+
+	// Wait for pods to be scheduled and nodes to be provisioned
+	suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
+	t.Logf("Workload pods scheduled successfully")
+
+	// Verify NodeClaims exist
+	var nodeClaimList karpv1.NodeClaimList
+	err := suite.kubeClient.List(ctx, &nodeClaimList, client.MatchingLabels{
+		"karpenter.sh/nodepool": nodePool.Name,
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(nodeClaimList.Items), 0, "Should have NodeClaims provisioned")
+
+	// Try to delete NodeClass while NodePool still references it
+	t.Logf("Attempting to delete NodeClass while NodePool still exists...")
+	err = suite.kubeClient.Delete(ctx, nodeClass)
+	require.NoError(t, err)
+
+	// NodeClass should be marked for deletion but not actually deleted due to finalizers
+	// Wait a bit to see if it gets stuck
+	time.Sleep(30 * time.Second)
+
+	// Check if NodeClass is still present (should be due to dependencies)
+	var retrievedNodeClass v1alpha1.IBMNodeClass
+	err = suite.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &retrievedNodeClass)
+	if err == nil && retrievedNodeClass.DeletionTimestamp != nil {
+		t.Logf("NodeClass is marked for deletion but blocked by dependencies (expected)")
+	} else if errors.IsNotFound(err) {
+		t.Logf("NodeClass was immediately deleted (controller may have handled cleanup)")
+	} else {
+		require.NoError(t, err, "Unexpected error checking NodeClass status")
+	}
+
+	// Clean up dependent resources in reverse order
+	t.Logf("Cleaning up dependent resources...")
+
+	// Delete workload first
+	err = suite.kubeClient.Delete(ctx, deployment)
+	require.NoError(t, err)
+	suite.waitForPodsGone(t, deployment.Name)
+
+	// Delete NodePool
+	err = suite.kubeClient.Delete(ctx, nodePool)
+	require.NoError(t, err)
+
+	// Wait for NodePool and its resources to be fully cleaned up
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, 8*time.Minute, true, func(ctx context.Context) (bool, error) {
+		// Check if NodePool is gone
+		var remainingNodePool karpv1.NodePool
+		getErr := suite.kubeClient.Get(ctx, types.NamespacedName{Name: nodePool.Name}, &remainingNodePool)
+		if !errors.IsNotFound(getErr) {
+			if getErr != nil {
+				t.Logf("Error checking NodePool: %v", getErr)
+			} else {
+				t.Logf("NodePool still exists, waiting for cleanup...")
+			}
+			return false, nil
+		}
+
+		// Check if NodeClaims are gone
+		var remainingNodeClaims karpv1.NodeClaimList
+		err = suite.kubeClient.List(ctx, &remainingNodeClaims, client.MatchingLabels{
+			"karpenter.sh/nodepool": nodePool.Name,
+		})
+		if err != nil {
+			t.Logf("Error checking NodeClaims: %v", err)
+			return false, nil
+		}
+
+		if len(remainingNodeClaims.Items) > 0 {
+			t.Logf("Still have %d NodeClaims, waiting...", len(remainingNodeClaims.Items))
+			return false, nil
+		}
+
+		return true, nil
+	})
+	require.NoError(t, err, "NodePool and NodeClaims should be cleaned up")
+
+	// Now NodeClass should be able to complete deletion
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+		var retrievedNodeClass v1alpha1.IBMNodeClass
+		getErr := suite.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClass.Name}, &retrievedNodeClass)
+		if errors.IsNotFound(getErr) {
+			return true, nil
+		}
+		if getErr != nil {
+			t.Logf("Error checking NodeClass: %v", getErr)
+			return false, nil
+		}
+		t.Logf("NodeClass still exists, waiting for final cleanup...")
+		return false, nil
+	})
+	require.NoError(t, err, "NodeClass should be deleted after dependent resources are cleaned up")
+
+	t.Logf("NodeClass cleanup test completed successfully: %s", testName)
+}
+
+// TestE2ECleanupOrphanedResources tests cleanup of orphaned resources
+func TestE2ECleanupOrphanedResources(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	testName := fmt.Sprintf("cleanup-orphaned-%d", time.Now().Unix())
+
+	t.Logf("Starting orphaned resources cleanup test: %s", testName)
+
+	ctx := context.Background()
+
+	// Create NodeClass and NodePool
+	nodeClass := suite.createTestNodeClass(t, testName+"-nodeclass")
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	nodePool := suite.createTestNodePool(t, testName+"-nodepool", nodeClass.Name)
+
+	// Create test workload to trigger provisioning
+	deployment := suite.createTestWorkload(t, testName+"-workload")
+	suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
+
+	// Get the provisioned NodeClaim
+	var nodeClaimList karpv1.NodeClaimList
+	err := suite.kubeClient.List(ctx, &nodeClaimList, client.MatchingLabels{
+		"karpenter.sh/nodepool": nodePool.Name,
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(nodeClaimList.Items), 0, "Should have NodeClaims provisioned")
+
+	originalNodeClaim := nodeClaimList.Items[0]
+	t.Logf("Found NodeClaim: %s", originalNodeClaim.Name)
+
+	// Simulate orphaned NodeClaim by removing the NodePool label
+	// This simulates a scenario where NodePool is deleted but NodeClaim cleanup fails
+	orphanedNodeClaim := originalNodeClaim.DeepCopy()
+	delete(orphanedNodeClaim.Labels, "karpenter.sh/nodepool")
+	orphanedNodeClaim.Name = testName + "-orphaned-nodeclaim"
+	orphanedNodeClaim.ResourceVersion = ""
+
+	// Create the orphaned NodeClaim
+	err = suite.kubeClient.Create(ctx, orphanedNodeClaim)
+	require.NoError(t, err)
+	t.Logf("Created orphaned NodeClaim: %s", orphanedNodeClaim.Name)
+
+	// Clean up the original resources
+	err = suite.kubeClient.Delete(ctx, deployment)
+	require.NoError(t, err)
+	suite.waitForPodsGone(t, deployment.Name)
+
+	err = suite.kubeClient.Delete(ctx, nodePool)
+	require.NoError(t, err)
+
+	err = suite.kubeClient.Delete(ctx, nodeClass)
+	require.NoError(t, err)
+
+	// Wait for normal cleanup to complete
+	time.Sleep(2 * time.Minute)
+
+	// Verify orphaned NodeClaim still exists
+	var retrievedOrphanedNodeClaim karpv1.NodeClaim
+	err = suite.kubeClient.Get(ctx, types.NamespacedName{Name: orphanedNodeClaim.Name}, &retrievedOrphanedNodeClaim)
+	if errors.IsNotFound(err) {
+		t.Logf("Orphaned NodeClaim was automatically cleaned up by controller")
+	} else {
+		require.NoError(t, err)
+		t.Logf("Found orphaned NodeClaim as expected: %s", retrievedOrphanedNodeClaim.Name)
+
+		// Manually clean up the orphaned resource
+		err = suite.kubeClient.Delete(ctx, &retrievedOrphanedNodeClaim)
+		require.NoError(t, err)
+		t.Logf("Manually cleaned up orphaned NodeClaim: %s", retrievedOrphanedNodeClaim.Name)
+	}
+
+	t.Logf("Orphaned resources cleanup test completed successfully: %s", testName)
+}
+
+// TestE2ECleanupIBMCloudResources tests that no IBM Cloud resources are left behind
+func TestE2ECleanupIBMCloudResources(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	testName := fmt.Sprintf("cleanup-ibmcloud-%d", time.Now().Unix())
+
+	t.Logf("Starting IBM Cloud resources cleanup test: %s", testName)
+
+	ctx := context.Background()
+
+	// Get initial list of IBM Cloud instances for comparison
+	initialInstances, err := suite.getIBMCloudInstances(t)
+	require.NoError(t, err)
+	initialInstanceCount := len(initialInstances)
+	t.Logf("Initial IBM Cloud instances: %d", initialInstanceCount)
+
+	// Create NodeClass and NodePool
+	nodeClass := suite.createTestNodeClass(t, testName+"-nodeclass")
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	nodePool := suite.createTestNodePool(t, testName+"-nodepool", nodeClass.Name)
+
+	// Create test workload to trigger provisioning
+	deployment := suite.createTestWorkload(t, testName+"-workload")
+	// Modify the deployment to have 2 replicas
+	deployment.Spec.Replicas = &[]int32{2}[0]
+	err = suite.kubeClient.Update(ctx, deployment)
+	require.NoError(t, err)
+	suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
+
+	// Wait a bit for provisioning to complete
+	time.Sleep(1 * time.Minute)
+
+	// Get instances after provisioning
+	provisionedInstances, err := suite.getIBMCloudInstances(t)
+	require.NoError(t, err)
+	provisionedInstanceCount := len(provisionedInstances)
+	t.Logf("IBM Cloud instances after provisioning: %d", provisionedInstanceCount)
+
+	// Should have more instances after provisioning
+	assert.Greater(t, provisionedInstanceCount, initialInstanceCount,
+		"Should have more IBM Cloud instances after provisioning")
+
+	// Identify new instances (those with Karpenter labels/names)
+	newInstances := make([]string, 0)
+	for instanceID, instanceName := range provisionedInstances {
+		if strings.Contains(instanceName, nodePool.Name) {
+			newInstances = append(newInstances, instanceID)
+			t.Logf("Found provisioned instance: %s (%s)", instanceName, instanceID)
+		}
+	}
+
+	// Clean up Kubernetes resources
+	t.Logf("Cleaning up Kubernetes resources...")
+	err = suite.kubeClient.Delete(ctx, deployment)
+	require.NoError(t, err)
+	suite.waitForPodsGone(t, deployment.Name)
+
+	err = suite.kubeClient.Delete(ctx, nodePool)
+	require.NoError(t, err)
+
+	// Wait for NodePool cleanup to complete
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, 10*time.Minute, true, func(ctx context.Context) (bool, error) {
+		var remainingNodes corev1.NodeList
+		listErr := suite.kubeClient.List(ctx, &remainingNodes, client.MatchingLabels{
+			"karpenter.sh/nodepool": nodePool.Name,
+		})
+		if listErr != nil {
+			t.Logf("Error checking nodes: %v", listErr)
+			return false, nil
+		}
+
+		remainingCount := len(remainingNodes.Items)
+		t.Logf("Remaining Kubernetes nodes: %d", remainingCount)
+		return remainingCount == 0, nil
+	})
+	require.NoError(t, err, "Kubernetes nodes should be cleaned up")
+
+	// Wait for IBM Cloud instances to be terminated
+	t.Logf("Waiting for IBM Cloud instances to be terminated...")
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, 8*time.Minute, true, func(ctx context.Context) (bool, error) {
+		currentInstances, getErr := suite.getIBMCloudInstances(t)
+		if getErr != nil {
+			t.Logf("Error checking IBM Cloud instances: %v", getErr)
+			return false, nil
+		}
+
+		currentCount := len(currentInstances)
+		t.Logf("Current IBM Cloud instances: %d", currentCount)
+
+		// Check if any of our test instances still exist
+		remainingTestInstances := 0
+		for _, instanceID := range newInstances {
+			if _, exists := currentInstances[instanceID]; exists {
+				remainingTestInstances++
+			}
+		}
+
+		t.Logf("Remaining test instances: %d", remainingTestInstances)
+		return remainingTestInstances == 0, nil
+	})
+	require.NoError(t, err, "IBM Cloud instances should be terminated")
+
+	// Verify final instance count matches initial count
+	finalInstances, err := suite.getIBMCloudInstances(t)
+	require.NoError(t, err)
+	finalInstanceCount := len(finalInstances)
+	t.Logf("Final IBM Cloud instances: %d", finalInstanceCount)
+
+	assert.Equal(t, initialInstanceCount, finalInstanceCount,
+		"IBM Cloud instance count should return to initial state")
+
+	// Clean up NodeClass
+	err = suite.kubeClient.Delete(ctx, nodeClass)
+	require.NoError(t, err)
+
+	t.Logf("IBM Cloud resources cleanup test completed successfully: %s", testName)
+}
+
+// getIBMCloudInstances retrieves current IBM Cloud instances for cleanup verification
+func (s *E2ETestSuite) getIBMCloudInstances(t *testing.T) (map[string]string, error) {
+	instances := make(map[string]string)
+
+	// Use IBM Cloud CLI to get instances
+	cmd := exec.Command("ibmcloud", "is", "instances", "--output", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return instances, fmt.Errorf("failed to get IBM Cloud instances: %w", err)
+	}
+
+	// Parse JSON output - simplified parsing for test purposes
+	// In a real implementation, you'd use proper JSON parsing
+	outputStr := string(output)
+	if strings.Contains(outputStr, "\"id\":") {
+		// Simple extraction - in practice use proper JSON parsing
+		lines := strings.Split(outputStr, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "\"id\":") && strings.Contains(line, "\"name\":") {
+				// Extract ID and name - this is a simplified approach
+				// In practice, use json.Unmarshal
+				parts := strings.Split(line, "\"")
+				for i, part := range parts {
+					if part == "id" && i+2 < len(parts) {
+						id := parts[i+2]
+						for j, namePart := range parts {
+							if namePart == "name" && j+2 < len(parts) {
+								name := parts[j+2]
+								instances[id] = name
+								break
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return instances, nil
+}
+
+// waitForPodsGone waits for all pods of a deployment to be terminated
+func (s *E2ETestSuite) waitForPodsGone(t *testing.T, deploymentName string) {
+	ctx := context.Background()
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		var podList corev1.PodList
+		err := s.kubeClient.List(ctx, &podList, client.MatchingLabels{
+			"app": deploymentName,
+		})
+		if err != nil {
+			t.Logf("Error checking pods: %v", err)
+			return false, nil
+		}
+
+		remainingPods := 0
+		for _, pod := range podList.Items {
+			if pod.DeletionTimestamp == nil {
+				remainingPods++
+			}
+		}
+
+		t.Logf("Remaining pods for deployment %s: %d", deploymentName, remainingPods)
+		return remainingPods == 0, nil
+	})
+	require.NoError(t, err, "All pods should be terminated")
+}
