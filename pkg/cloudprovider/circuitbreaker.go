@@ -3,6 +3,7 @@ package cloudprovider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,9 +113,15 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 		if time.Since(cb.lastStateChange) >= cb.config.RecoveryTimeout {
 			cb.transitionToHalfOpen()
 		} else {
+			// Include recent failure context for better troubleshooting
+			recentFailures := cb.getRecentFailuresSummary()
+			failureContext := ""
+			if len(recentFailures) > 0 {
+				failureContext = fmt.Sprintf(" Recent failures: %s", recentFailures)
+			}
 			return &CircuitBreakerError{
 				State:      cb.state,
-				Message:    "Circuit breaker is OPEN - provisioning blocked due to recent failures",
+				Message:    fmt.Sprintf("Circuit breaker is OPEN - provisioning blocked due to recent failures.%s", failureContext),
 				TimeToWait: cb.config.RecoveryTimeout - time.Since(cb.lastStateChange),
 			}
 		}
@@ -335,6 +342,110 @@ func (cb *CircuitBreaker) getTimeToRecovery() time.Duration {
 		return 0
 	}
 	return cb.config.RecoveryTimeout - elapsed
+}
+
+// getRecentFailuresSummary returns a summary of recent failures for better troubleshooting
+func (cb *CircuitBreaker) getRecentFailuresSummary() string {
+	cutoff := time.Now().Add(-cb.config.FailureWindow)
+	var recentErrors []string
+
+	// Group similar errors and show the most recent ones
+	errorCounts := make(map[string]int)
+	errorExamples := make(map[string]string)
+
+	for _, failure := range cb.failures {
+		if failure.Timestamp.After(cutoff) {
+			// Create a simplified error key for grouping
+			errorKey := cb.simplifyError(failure.Error)
+			errorCounts[errorKey]++
+			// Keep the most recent example
+			if errorExamples[errorKey] == "" || failure.Timestamp.After(cb.getTimestampFromExample(errorExamples[errorKey])) {
+				errorExamples[errorKey] = fmt.Sprintf("%s (%s)", errorKey, failure.Timestamp.Format("15:04:05"))
+			}
+		}
+	}
+
+	// Build summary with counts
+	for errorKey, count := range errorCounts {
+		if count == 1 {
+			recentErrors = append(recentErrors, errorExamples[errorKey])
+		} else {
+			recentErrors = append(recentErrors, fmt.Sprintf("%s (x%d)", errorKey, count))
+		}
+	}
+
+	// Limit to 3 most common/recent errors to keep message readable
+	if len(recentErrors) > 3 {
+		recentErrors = recentErrors[:3]
+		recentErrors = append(recentErrors, "...")
+	}
+
+	if len(recentErrors) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("[%s]", fmt.Sprintf("%v", recentErrors))
+}
+
+// simplifyError creates a simplified version of error messages for grouping
+func (cb *CircuitBreaker) simplifyError(fullError string) string {
+	// Extract key error patterns for grouping
+	if strings.Contains(fullError, "timeout") || strings.Contains(fullError, "Timeout") {
+		return "API timeout"
+	}
+	if strings.Contains(fullError, "subnet") && strings.Contains(fullError, "not found") {
+		return "Subnet not found"
+	}
+	if strings.Contains(fullError, "security group") && strings.Contains(fullError, "not found") {
+		return "Security group not found"
+	}
+	if strings.Contains(fullError, "image") && strings.Contains(fullError, "not found") {
+		return "Image not found"
+	}
+	if (strings.Contains(fullError, "quota") && strings.Contains(fullError, "exceeded")) ||
+		(strings.Contains(fullError, "limit") && (strings.Contains(fullError, "reached") || strings.Contains(fullError, "exceeded"))) {
+		return "Resource quota/limit exceeded"
+	}
+	if strings.Contains(fullError, "unauthorized") || strings.Contains(fullError, "Unauthorized") {
+		return "Unauthorized/authentication error"
+	}
+	if strings.Contains(fullError, "insufficient") {
+		return "Insufficient capacity"
+	}
+	if (strings.Contains(fullError, "invalid") || strings.Contains(fullError, "Invalid")) && 
+	   (strings.Contains(fullError, "parameter") || strings.Contains(fullError, "configuration") || strings.Contains(fullError, "request")) {
+		return "Invalid configuration"
+	}
+	if strings.Contains(fullError, "network") || strings.Contains(fullError, "Network") {
+		return "Network error"
+	}
+
+	// For other errors, try to extract the first meaningful part
+	parts := strings.Split(fullError, ":")
+	if len(parts) > 0 && len(parts[0]) < 50 {
+		return strings.TrimSpace(parts[0])
+	}
+
+	// Fallback: truncate long messages
+	if len(fullError) > 50 {
+		return fullError[:47] + "..."
+	}
+	return fullError
+}
+
+// getTimestampFromExample extracts timestamp from error example string
+func (cb *CircuitBreaker) getTimestampFromExample(example string) time.Time {
+	// Simple heuristic - if we can't parse, return zero time
+	// In practice, this is only used for comparison, so it's okay
+	if idx := strings.LastIndex(example, "("); idx >= 0 {
+		timeStr := strings.TrimSuffix(example[idx+1:], ")")
+		if t, err := time.Parse("15:04:05", timeStr); err == nil {
+			// Use today's date with the parsed time
+			now := time.Now()
+			return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
+		}
+	}
+	return time.Time{}
 }
 
 // Error types
