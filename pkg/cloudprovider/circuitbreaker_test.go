@@ -614,3 +614,331 @@ func TestCircuitBreaker_ScaleUpStormPrevention(t *testing.T) {
 	t.Logf("Protection Summary: %d successful, %d rate limited, %d circuit blocked",
 		successfulProvisions, rateLimitErrors, circuitBreakerErrors)
 }
+
+// TestCircuitBreaker_EnhancedLogging tests the enhanced logging functionality
+func TestCircuitBreaker_EnhancedLogging(t *testing.T) {
+	tests := []struct {
+		name           string
+		failures       []string
+		expectedPhrase string
+	}{
+		{
+			name: "single_timeout_error",
+			failures: []string{
+				"request timeout occurred",
+				"another timeout",
+				"third timeout",
+			},
+			expectedPhrase: "API timeout",
+		},
+		{
+			name: "multiple_similar_errors",
+			failures: []string{
+				"request timeout occurred",
+				"connection timeout",
+				"timeout waiting for response",
+			},
+			expectedPhrase: "API timeout (x3)",
+		},
+		{
+			name: "mixed_error_types",
+			failures: []string{
+				"subnet not found",
+				"request timeout occurred",
+				"security group not found",
+			},
+			expectedPhrase: "Subnet not found",
+		},
+		{
+			name: "quota_limit_errors",
+			failures: []string{
+				"quota exceeded for instances",
+				"instance limit reached",
+				"quota limit exceeded",
+			},
+			expectedPhrase: "Resource quota/limit exceeded",
+		},
+		{
+			name: "network_errors",
+			failures: []string{
+				"network connection failed",
+				"network unreachable",
+				"network timeout",
+			},
+			expectedPhrase: "Network error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &CircuitBreakerConfig{
+				FailureThreshold:    3,
+				FailureWindow:       5 * time.Minute,
+				RecoveryTimeout:     15 * time.Minute,
+				HalfOpenMaxRequests: 2,
+			}
+
+			logger := logr.Discard()
+			cb := NewCircuitBreaker(config, logger)
+			ctx := context.Background()
+
+			// Record the test failures
+			for _, failureMsg := range tt.failures {
+				cb.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("%s", failureMsg))
+			}
+
+			// Check that the circuit breaker is now open
+			err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
+			assert.Error(t, err)
+
+			cbErr, ok := err.(*CircuitBreakerError)
+			if !assert.True(t, ok, "Expected CircuitBreakerError") {
+				t.Logf("Got error of type: %T, value: %v", err, err)
+				return
+			}
+			assert.Contains(t, cbErr.Message, tt.expectedPhrase, "Error message should contain expected phrase")
+			assert.Contains(t, cbErr.Message, "Recent failures:", "Error message should contain failure context")
+		})
+	}
+}
+
+// TestCircuitBreaker_SimplifyError tests the error simplification logic
+func TestCircuitBreaker_SimplifyError(t *testing.T) {
+	config := DefaultCircuitBreakerConfig()
+	logger := logr.Discard()
+	cb := NewCircuitBreaker(config, logger)
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "timeout_error",
+			input:    "request timeout occurred while calling API",
+			expected: "API timeout",
+		},
+		{
+			name:     "subnet_not_found",
+			input:    "subnet subnet-123 not found in region us-south",
+			expected: "Subnet not found",
+		},
+		{
+			name:     "security_group_not_found",
+			input:    "security group sg-456 not found",
+			expected: "Security group not found",
+		},
+		{
+			name:     "image_not_found",
+			input:    "image img-789 not found in catalog",
+			expected: "Image not found",
+		},
+		{
+			name:     "quota_exceeded",
+			input:    "quota exceeded: cannot create more instances",
+			expected: "Resource quota/limit exceeded",
+		},
+		{
+			name:     "unauthorized",
+			input:    "unauthorized access to resource",
+			expected: "Unauthorized/authentication error",
+		},
+		{
+			name:     "insufficient_capacity",
+			input:    "insufficient capacity in zone us-south-1",
+			expected: "Insufficient capacity",
+		},
+		{
+			name:     "invalid_configuration",
+			input:    "invalid instance configuration provided",
+			expected: "Invalid configuration",
+		},
+		{
+			name:     "network_error",
+			input:    "network connection failed",
+			expected: "Network error",
+		},
+		{
+			name:     "long_error_truncated",
+			input:    "this is a very long error message that should be truncated because it exceeds the length limit",
+			expected: "this is a very long error message that should b...",
+		},
+		{
+			name:     "short_specific_error",
+			input:    "connection refused",
+			expected: "connection refused",
+		},
+		{
+			name:     "colon_separated_error",
+			input:    "API Error: invalid parameter value",
+			expected: "Invalid configuration",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := cb.simplifyError(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestCircuitBreaker_GetRecentFailuresSummary tests the failure summary generation
+func TestCircuitBreaker_GetRecentFailuresSummary(t *testing.T) {
+	config := &CircuitBreakerConfig{
+		FailureThreshold: 3,
+		FailureWindow:    5 * time.Minute,
+		RecoveryTimeout:  15 * time.Minute,
+	}
+
+	logger := logr.Discard()
+	cb := NewCircuitBreaker(config, logger)
+
+	t.Run("empty_failures", func(t *testing.T) {
+		summary := cb.getRecentFailuresSummary()
+		assert.Empty(t, summary, "Summary should be empty when no failures")
+	})
+
+	t.Run("single_failure", func(t *testing.T) {
+		cb.failures = []FailureRecord{
+			{
+				Timestamp: time.Now(),
+				Error:     "request timeout",
+				NodeClass: "test",
+				Region:    "us-south",
+			},
+		}
+
+		summary := cb.getRecentFailuresSummary()
+		assert.Contains(t, summary, "API timeout")
+		assert.Contains(t, summary, "[")
+		assert.Contains(t, summary, "]")
+	})
+
+	t.Run("multiple_same_failures", func(t *testing.T) {
+		now := time.Now()
+		cb.failures = []FailureRecord{
+			{Timestamp: now.Add(-1 * time.Minute), Error: "request timeout", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-2 * time.Minute), Error: "connection timeout", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-3 * time.Minute), Error: "timeout occurred", NodeClass: "test", Region: "us-south"},
+		}
+
+		summary := cb.getRecentFailuresSummary()
+		assert.Contains(t, summary, "API timeout")
+		assert.Contains(t, summary, "x3")
+	})
+
+	t.Run("mixed_failures", func(t *testing.T) {
+		now := time.Now()
+		cb.failures = []FailureRecord{
+			{Timestamp: now.Add(-1 * time.Minute), Error: "request timeout", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-2 * time.Minute), Error: "subnet not found", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-3 * time.Minute), Error: "quota exceeded", NodeClass: "test", Region: "us-south"},
+		}
+
+		summary := cb.getRecentFailuresSummary()
+		assert.Contains(t, summary, "API timeout")
+		assert.Contains(t, summary, "Subnet not found")
+		assert.Contains(t, summary, "Resource quota/limit exceeded")
+	})
+
+	t.Run("too_many_failures_truncated", func(t *testing.T) {
+		now := time.Now()
+		cb.failures = []FailureRecord{
+			{Timestamp: now.Add(-1 * time.Minute), Error: "timeout 1", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-2 * time.Minute), Error: "subnet not found", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-3 * time.Minute), Error: "quota exceeded", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-4 * time.Minute), Error: "unauthorized", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-5 * time.Minute), Error: "invalid config", NodeClass: "test", Region: "us-south"},
+		}
+
+		summary := cb.getRecentFailuresSummary()
+		// Should be limited to 3 errors plus "..."
+		assert.Contains(t, summary, "...")
+	})
+
+	t.Run("old_failures_excluded", func(t *testing.T) {
+		now := time.Now()
+		cb.failures = []FailureRecord{
+			{Timestamp: now.Add(-1 * time.Minute), Error: "recent timeout", NodeClass: "test", Region: "us-south"},
+			{Timestamp: now.Add(-10 * time.Minute), Error: "old timeout", NodeClass: "test", Region: "us-south"}, // Outside failure window
+		}
+
+		summary := cb.getRecentFailuresSummary()
+		assert.Contains(t, summary, "API timeout")
+		// Should only contain 1 failure, not 2
+		assert.NotContains(t, summary, "x2")
+	})
+}
+
+// TestCircuitBreaker_GetTimestampFromExample tests timestamp parsing from examples
+func TestCircuitBreaker_GetTimestampFromExample(t *testing.T) {
+	config := DefaultCircuitBreakerConfig()
+	logger := logr.Discard()
+	cb := NewCircuitBreaker(config, logger)
+
+	tests := []struct {
+		name    string
+		input   string
+		hasTime bool
+	}{
+		{
+			name:    "valid_timestamp",
+			input:   "API timeout (13:45:30)",
+			hasTime: true,
+		},
+		{
+			name:    "invalid_format",
+			input:   "API timeout",
+			hasTime: false,
+		},
+		{
+			name:    "empty_string",
+			input:   "",
+			hasTime: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := cb.getTimestampFromExample(tt.input)
+			if tt.hasTime {
+				assert.False(t, result.IsZero(), "Should parse a valid time")
+			} else {
+				assert.True(t, result.IsZero(), "Should return zero time for invalid input")
+			}
+		})
+	}
+}
+
+// TestCircuitBreaker_EnhancedErrorMessage tests the complete enhanced error message
+func TestCircuitBreaker_EnhancedErrorMessage(t *testing.T) {
+	config := &CircuitBreakerConfig{
+		FailureThreshold: 2,
+		FailureWindow:    5 * time.Minute,
+		RecoveryTimeout:  15 * time.Minute,
+	}
+
+	logger := logr.Discard()
+	cb := NewCircuitBreaker(config, logger)
+	ctx := context.Background()
+
+	// Record failures to open the circuit breaker
+	cb.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("request timeout"))
+	cb.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("connection timeout"))
+
+	// Try to provision - should be blocked
+	err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
+
+	assert.Error(t, err)
+	cbErr, ok := err.(*CircuitBreakerError)
+	assert.True(t, ok, "Should be CircuitBreakerError")
+
+	// Check that the enhanced message contains failure context
+	assert.Contains(t, cbErr.Message, "Circuit breaker is OPEN - provisioning blocked due to recent failures")
+	assert.Contains(t, cbErr.Message, "Recent failures:")
+	assert.Contains(t, cbErr.Message, "API timeout")
+
+	// Check that retry time is included
+	assert.Contains(t, cbErr.Error(), "retry in")
+}
