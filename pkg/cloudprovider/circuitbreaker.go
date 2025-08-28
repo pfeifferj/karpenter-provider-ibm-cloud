@@ -412,8 +412,8 @@ func (cb *CircuitBreaker) simplifyError(fullError string) string {
 	if strings.Contains(fullError, "insufficient") {
 		return "Insufficient capacity"
 	}
-	if (strings.Contains(fullError, "invalid") || strings.Contains(fullError, "Invalid")) && 
-	   (strings.Contains(fullError, "parameter") || strings.Contains(fullError, "configuration") || strings.Contains(fullError, "request")) {
+	if (strings.Contains(fullError, "invalid") || strings.Contains(fullError, "Invalid")) &&
+		(strings.Contains(fullError, "parameter") || strings.Contains(fullError, "configuration") || strings.Contains(fullError, "request")) {
 		return "Invalid configuration"
 	}
 	if strings.Contains(fullError, "network") || strings.Contains(fullError, "Network") {

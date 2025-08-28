@@ -460,8 +460,8 @@ func TestCloudProvider_Create_EnhancedCircuitBreakerLogging(t *testing.T) {
 					scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, "test-instance-type"),
 				),
 				Capacity: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("4"),
-					corev1.ResourceMemory: resource.MustParse("16Gi"),
+					corev1.ResourceCPU:     resource.MustParse("4"),
+					corev1.ResourceMemory:  resource.MustParse("16Gi"),
 					corev1.ResourceStorage: resource.MustParse("20Gi"),
 				},
 				Overhead: &cloudprovider.InstanceTypeOverhead{
@@ -476,7 +476,7 @@ func TestCloudProvider_Create_EnhancedCircuitBreakerLogging(t *testing.T) {
 							scheduling.NewRequirement(karpv1.CapacityTypeLabelKey, corev1.NodeSelectorOpIn, karpv1.CapacityTypeOnDemand),
 							scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, "us-south-1"),
 						),
-						Price: 0.1,
+						Price:     0.1,
 						Available: true,
 					},
 				},
@@ -499,7 +499,7 @@ func TestCloudProvider_Create_EnhancedCircuitBreakerLogging(t *testing.T) {
 	// Should get circuit breaker error with enhanced message
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "circuit breaker")
-	
+
 	// The enhanced message should contain failure context
 	cbErr, ok := err.(*CircuitBreakerError)
 	if ok {

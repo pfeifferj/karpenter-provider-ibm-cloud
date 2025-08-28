@@ -677,7 +677,7 @@ func TestCircuitBreaker_EnhancedLogging(t *testing.T) {
 				RecoveryTimeout:     15 * time.Minute,
 				HalfOpenMaxRequests: 2,
 			}
-			
+
 			logger := logr.Discard()
 			cb := NewCircuitBreaker(config, logger)
 			ctx := context.Background()
@@ -690,7 +690,7 @@ func TestCircuitBreaker_EnhancedLogging(t *testing.T) {
 			// Check that the circuit breaker is now open
 			err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
 			assert.Error(t, err)
-			
+
 			cbErr, ok := err.(*CircuitBreakerError)
 			if !assert.True(t, ok, "Expected CircuitBreakerError") {
 				t.Logf("Got error of type: %T, value: %v", err, err)
@@ -769,7 +769,7 @@ func TestCircuitBreaker_SimplifyError(t *testing.T) {
 			expected: "connection refused",
 		},
 		{
-			name:     "colon_separated_error", 
+			name:     "colon_separated_error",
 			input:    "API Error: invalid parameter value",
 			expected: "Invalid configuration",
 		},
@@ -790,7 +790,7 @@ func TestCircuitBreaker_GetRecentFailuresSummary(t *testing.T) {
 		FailureWindow:    5 * time.Minute,
 		RecoveryTimeout:  15 * time.Minute,
 	}
-	
+
 	logger := logr.Discard()
 	cb := NewCircuitBreaker(config, logger)
 
@@ -808,7 +808,7 @@ func TestCircuitBreaker_GetRecentFailuresSummary(t *testing.T) {
 				Region:    "us-south",
 			},
 		}
-		
+
 		summary := cb.getRecentFailuresSummary()
 		assert.Contains(t, summary, "API timeout")
 		assert.Contains(t, summary, "[")
@@ -822,7 +822,7 @@ func TestCircuitBreaker_GetRecentFailuresSummary(t *testing.T) {
 			{Timestamp: now.Add(-2 * time.Minute), Error: "connection timeout", NodeClass: "test", Region: "us-south"},
 			{Timestamp: now.Add(-3 * time.Minute), Error: "timeout occurred", NodeClass: "test", Region: "us-south"},
 		}
-		
+
 		summary := cb.getRecentFailuresSummary()
 		assert.Contains(t, summary, "API timeout")
 		assert.Contains(t, summary, "x3")
@@ -835,7 +835,7 @@ func TestCircuitBreaker_GetRecentFailuresSummary(t *testing.T) {
 			{Timestamp: now.Add(-2 * time.Minute), Error: "subnet not found", NodeClass: "test", Region: "us-south"},
 			{Timestamp: now.Add(-3 * time.Minute), Error: "quota exceeded", NodeClass: "test", Region: "us-south"},
 		}
-		
+
 		summary := cb.getRecentFailuresSummary()
 		assert.Contains(t, summary, "API timeout")
 		assert.Contains(t, summary, "Subnet not found")
@@ -851,9 +851,9 @@ func TestCircuitBreaker_GetRecentFailuresSummary(t *testing.T) {
 			{Timestamp: now.Add(-4 * time.Minute), Error: "unauthorized", NodeClass: "test", Region: "us-south"},
 			{Timestamp: now.Add(-5 * time.Minute), Error: "invalid config", NodeClass: "test", Region: "us-south"},
 		}
-		
+
 		summary := cb.getRecentFailuresSummary()
-		// Should be limited to 3 errors plus "..." 
+		// Should be limited to 3 errors plus "..."
 		assert.Contains(t, summary, "...")
 	})
 
@@ -863,7 +863,7 @@ func TestCircuitBreaker_GetRecentFailuresSummary(t *testing.T) {
 			{Timestamp: now.Add(-1 * time.Minute), Error: "recent timeout", NodeClass: "test", Region: "us-south"},
 			{Timestamp: now.Add(-10 * time.Minute), Error: "old timeout", NodeClass: "test", Region: "us-south"}, // Outside failure window
 		}
-		
+
 		summary := cb.getRecentFailuresSummary()
 		assert.Contains(t, summary, "API timeout")
 		// Should only contain 1 failure, not 2
@@ -878,9 +878,9 @@ func TestCircuitBreaker_GetTimestampFromExample(t *testing.T) {
 	cb := NewCircuitBreaker(config, logger)
 
 	tests := []struct {
-		name     string
-		input    string
-		hasTime  bool
+		name    string
+		input   string
+		hasTime bool
 	}{
 		{
 			name:    "valid_timestamp",
@@ -918,7 +918,7 @@ func TestCircuitBreaker_EnhancedErrorMessage(t *testing.T) {
 		FailureWindow:    5 * time.Minute,
 		RecoveryTimeout:  15 * time.Minute,
 	}
-	
+
 	logger := logr.Discard()
 	cb := NewCircuitBreaker(config, logger)
 	ctx := context.Background()
@@ -929,16 +929,16 @@ func TestCircuitBreaker_EnhancedErrorMessage(t *testing.T) {
 
 	// Try to provision - should be blocked
 	err := cb.CanProvision(ctx, "test-nodeclass", "us-south", 0)
-	
+
 	assert.Error(t, err)
 	cbErr, ok := err.(*CircuitBreakerError)
 	assert.True(t, ok, "Should be CircuitBreakerError")
-	
+
 	// Check that the enhanced message contains failure context
 	assert.Contains(t, cbErr.Message, "Circuit breaker is OPEN - provisioning blocked due to recent failures")
 	assert.Contains(t, cbErr.Message, "Recent failures:")
 	assert.Contains(t, cbErr.Message, "API timeout")
-	
+
 	// Check that retry time is included
 	assert.Contains(t, cbErr.Error(), "retry in")
 }
