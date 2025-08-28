@@ -30,12 +30,14 @@ import (
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -2295,4 +2297,321 @@ func (s *E2ETestSuite) waitForPodsGone(t *testing.T, deploymentName string) {
 		return remainingPods == 0, nil
 	})
 	require.NoError(t, err, "All pods should be terminated")
+}
+
+// getKarpenterNodes returns nodes managed by the given NodePool
+func (s *E2ETestSuite) getKarpenterNodes(t *testing.T, nodePoolName string) []corev1.Node {
+	var nodeList corev1.NodeList
+	err := s.kubeClient.List(context.Background(), &nodeList, client.MatchingLabels{
+		"karpenter.sh/nodepool": nodePoolName,
+	})
+	require.NoError(t, err, "Failed to list nodes")
+	return nodeList.Items
+}
+
+// TestE2EConsolidationWithPDB tests that node consolidation respects Pod Disruption Budgets
+func TestE2EConsolidationWithPDB(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	testName := fmt.Sprintf("consolidation-pdb-%d", time.Now().Unix())
+	t.Logf("Starting consolidation with PDB test: %s", testName)
+
+	nodeClass := suite.createTestNodeClass(t, testName)
+	t.Logf("Created NodeClass: %s", nodeClass.Name)
+
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+
+	// Create NodePool with multiple instances to enable consolidation
+	nodePool := suite.createTestNodePool(t, testName, nodeClass.Name)
+	t.Logf("Created NodePool: %s", nodePool.Name)
+
+	// Create workload with multiple replicas to spread across nodes
+	workload := suite.createTestWorkload(t, testName)
+	// Scale workload to 6 replicas to trigger multiple nodes
+	workload.Spec.Replicas = &[]int32{6}[0]
+	err := suite.kubeClient.Update(context.Background(), workload)
+	require.NoError(t, err, "Failed to scale workload to 6 replicas")
+	t.Logf("Created test workload: %s", workload.Name)
+
+	suite.waitForPodsToBeScheduled(t, workload.Name, workload.Namespace)
+	t.Logf("Workload is ready with 6 replicas")
+
+	// Wait for nodes to be provisioned
+	time.Sleep(2 * time.Minute)
+
+	// Get initial node count
+	initialNodes := suite.getKarpenterNodes(t, nodePool.Name)
+	initialNodeCount := len(initialNodes)
+	t.Logf("Initial node count: %d", initialNodeCount)
+
+	require.GreaterOrEqual(t, initialNodeCount, 2, "Should have at least 2 nodes for consolidation test")
+
+	// Create PDB that prevents disruption of more than 2 pods at once
+	pdb := &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-pdb", testName),
+			Namespace: "default",
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MaxUnavailable: &intstr.IntOrString{
+				Type:   intstr.Int,
+				IntVal: 2, // Allow max 2 pods to be unavailable
+			},
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": workload.Name,
+				},
+			},
+		},
+	}
+
+	err = suite.kubeClient.Create(context.Background(), pdb)
+	require.NoError(t, err, "Failed to create PDB")
+	t.Logf("Created PDB: %s", pdb.Name)
+
+	// Scale down workload to trigger consolidation opportunity
+	workload.Spec.Replicas = &[]int32{3}[0] // Reduce to 3 replicas
+	err = suite.kubeClient.Update(context.Background(), workload)
+	require.NoError(t, err, "Failed to scale down workload")
+
+	suite.waitForPodsToBeScheduled(t, workload.Name, workload.Namespace)
+	t.Logf("Scaled workload down to 3 replicas")
+
+	// Monitor consolidation while respecting PDB
+	ctx := context.Background()
+	consolidationRespected := false
+	timeout := time.Now().Add(10 * time.Minute)
+
+	for time.Now().Before(timeout) {
+		// Check current nodes
+		currentNodes := suite.getKarpenterNodes(t, nodePool.Name)
+
+		// Check PDB status
+		var currentPDB policyv1.PodDisruptionBudget
+		err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pdb.Name, Namespace: pdb.Namespace}, &currentPDB)
+		require.NoError(t, err, "Failed to get PDB")
+
+		// Verify PDB is not violated
+		if currentPDB.Status.DisruptionsAllowed < 0 {
+			t.Errorf("PDB violated: DisruptionsAllowed=%d", currentPDB.Status.DisruptionsAllowed)
+		}
+
+		// Check if consolidation occurred while respecting PDB
+		if len(currentNodes) < initialNodeCount {
+			// Ensure all pods are still running
+			var podList corev1.PodList
+			err = suite.kubeClient.List(ctx, &podList, client.MatchingLabels{
+				"app": workload.Name,
+			})
+			require.NoError(t, err, "Failed to list pods")
+
+			runningPods := 0
+			for _, pod := range podList.Items {
+				if pod.Status.Phase == corev1.PodRunning && pod.DeletionTimestamp == nil {
+					runningPods++
+				}
+			}
+
+			if runningPods == 3 {
+				consolidationRespected = true
+				t.Logf("Consolidation completed successfully while respecting PDB")
+				t.Logf("Nodes: %d -> %d, Running pods: %d", initialNodeCount, len(currentNodes), runningPods)
+				break
+			}
+		}
+
+		time.Sleep(30 * time.Second)
+	}
+
+	require.True(t, consolidationRespected, "Consolidation should respect PDB constraints")
+
+	// Cleanup
+	err = suite.kubeClient.Delete(ctx, pdb)
+	require.NoError(t, err, "Failed to delete PDB")
+	t.Logf("Consolidation with PDB test completed successfully: %s", testName)
+}
+
+// TestE2EPodDisruptionBudget tests PDB enforcement during node operations
+func TestE2EPodDisruptionBudget(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	testName := fmt.Sprintf("pdb-enforcement-%d", time.Now().Unix())
+	t.Logf("Starting PDB enforcement test: %s", testName)
+
+	nodeClass := suite.createTestNodeClass(t, testName)
+	t.Logf("Created NodeClass: %s", nodeClass.Name)
+
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+
+	nodePool := suite.createTestNodePool(t, testName, nodeClass.Name)
+	t.Logf("Created NodePool: %s", nodePool.Name)
+
+	// Create workload with 5 replicas
+	workload := suite.createTestWorkload(t, testName)
+	// Scale workload to 5 replicas
+	workload.Spec.Replicas = &[]int32{5}[0]
+	err := suite.kubeClient.Update(context.Background(), workload)
+	require.NoError(t, err, "Failed to scale workload to 5 replicas")
+	t.Logf("Created test workload: %s", workload.Name)
+
+	suite.waitForPodsToBeScheduled(t, workload.Name, workload.Namespace)
+	t.Logf("Workload is ready with 5 replicas")
+
+	// Create strict PDB that allows only 1 pod to be unavailable
+	pdb := &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-pdb", testName),
+			Namespace: "default",
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MaxUnavailable: &intstr.IntOrString{
+				Type:   intstr.Int,
+				IntVal: 1, // Very strict - only 1 pod can be unavailable
+			},
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": workload.Name,
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	err = suite.kubeClient.Create(ctx, pdb)
+	require.NoError(t, err, "Failed to create PDB")
+	t.Logf("Created strict PDB: %s", pdb.Name)
+
+	// Wait for PDB to be ready
+	time.Sleep(30 * time.Second)
+
+	// Verify PDB status
+	var currentPDB policyv1.PodDisruptionBudget
+	err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pdb.Name, Namespace: pdb.Namespace}, &currentPDB)
+	require.NoError(t, err, "Failed to get PDB")
+
+	t.Logf("PDB Status - Current: %d, Desired: %d, Allowed: %d, Expected: %d",
+		currentPDB.Status.CurrentHealthy,
+		currentPDB.Status.DesiredHealthy,
+		currentPDB.Status.DisruptionsAllowed,
+		currentPDB.Status.ExpectedPods,
+	)
+
+	// Ensure PDB is protecting the expected number of pods
+	require.Equal(t, int32(5), currentPDB.Status.ExpectedPods, "PDB should protect 5 pods")
+	require.GreaterOrEqual(t, currentPDB.Status.CurrentHealthy, int32(4), "At least 4 pods should be healthy")
+
+	// Test PDB enforcement by trying to delete a pod manually
+	// Get one of the pods
+	var podList corev1.PodList
+	err = suite.kubeClient.List(ctx, &podList, client.MatchingLabels{
+		"app": workload.Name,
+	})
+	require.NoError(t, err, "Failed to list pods")
+	require.Greater(t, len(podList.Items), 0, "Should have pods to test with")
+
+	testPod := podList.Items[0]
+	t.Logf("Testing PDB enforcement by deleting pod: %s", testPod.Name)
+
+	// Delete the pod and verify it's recreated quickly (due to deployment controller)
+	err = suite.kubeClient.Delete(ctx, &testPod)
+	require.NoError(t, err, "Failed to delete test pod")
+
+	// Wait and verify the deployment maintains desired replicas despite PDB
+	time.Sleep(1 * time.Minute)
+	suite.waitForPodsToBeScheduled(t, workload.Name, workload.Namespace)
+
+	// Verify PDB status remains stable
+	err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pdb.Name, Namespace: pdb.Namespace}, &currentPDB)
+	require.NoError(t, err, "Failed to get updated PDB")
+
+	require.Equal(t, int32(5), currentPDB.Status.ExpectedPods, "PDB should still protect 5 pods")
+	t.Logf("PDB maintained protection during pod replacement")
+
+	// Test that PDB prevents excessive simultaneous disruptions
+	// Simulate a scenario where multiple pods might be disrupted
+	t.Logf("Testing PDB disruption limits...")
+
+	// Create a temporary workload that would compete for resources
+	competitorWorkload := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-competitor", testName),
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &[]int32{10}[0], // High resource demand
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": fmt.Sprintf("%s-competitor", testName)},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": fmt.Sprintf("%s-competitor", testName)},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: "nginx:1.21",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("1Gi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = suite.kubeClient.Create(ctx, competitorWorkload)
+	require.NoError(t, err, "Failed to create competitor workload")
+	t.Logf("Created competitor workload to trigger resource pressure")
+
+	// Monitor for a period to ensure PDB is respected during any scaling/consolidation
+	monitoringPeriod := 5 * time.Minute
+	monitorEnd := time.Now().Add(monitoringPeriod)
+	pdbViolationCount := 0
+
+	for time.Now().Before(monitorEnd) {
+		err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pdb.Name, Namespace: pdb.Namespace}, &currentPDB)
+		if err == nil {
+			if currentPDB.Status.DisruptionsAllowed < 0 {
+				pdbViolationCount++
+				t.Logf("PDB violation detected: DisruptionsAllowed=%d", currentPDB.Status.DisruptionsAllowed)
+			}
+		}
+
+		// Verify original workload pods are still healthy
+		err = suite.kubeClient.List(ctx, &podList, client.MatchingLabels{
+			"app": workload.Name,
+		})
+		require.NoError(t, err, "Failed to list protected pods")
+
+		healthyPods := 0
+		for _, pod := range podList.Items {
+			if pod.Status.Phase == corev1.PodRunning && pod.DeletionTimestamp == nil {
+				healthyPods++
+			}
+		}
+
+		if healthyPods < 4 { // With maxUnavailable=1, we should have at least 4 healthy pods
+			t.Errorf("PDB violation: only %d healthy pods, expected at least 4", healthyPods)
+		}
+
+		time.Sleep(30 * time.Second)
+	}
+
+	require.Equal(t, 0, pdbViolationCount, "No PDB violations should occur during monitoring period")
+	t.Logf("PDB successfully enforced protection during %v monitoring period", monitoringPeriod)
+
+	// Cleanup competitor workload
+	err = suite.kubeClient.Delete(ctx, competitorWorkload)
+	require.NoError(t, err, "Failed to delete competitor workload")
+
+	// Cleanup PDB
+	err = suite.kubeClient.Delete(ctx, pdb)
+	require.NoError(t, err, "Failed to delete PDB")
+
+	t.Logf("PDB enforcement test completed successfully: %s", testName)
 }
