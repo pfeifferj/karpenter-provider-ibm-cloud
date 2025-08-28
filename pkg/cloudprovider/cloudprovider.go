@@ -384,6 +384,20 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		}
 	}
 
+	// Ensure all single-valued requirements from the NodePool are reflected as labels
+	// This prevents drift detection issues when requirements are added to the NodePool
+	for _, req := range nodeClaim.Spec.Requirements {
+		// For single-valued requirements, add them as labels if not already present
+		if len(req.Values) == 1 && nc.Labels[req.Key] == "" {
+			nc.Labels[req.Key] = req.Values[0]
+		}
+		// For multi-valued requirements where we've selected a specific instance type,
+		// ensure the label reflects the actual selected value
+		if req.Key == "node.kubernetes.io/instance-type" && instanceType != nil {
+			nc.Labels[req.Key] = instanceType.Name
+		}
+	}
+
 	// Populate labels from instance type requirements (similar to AWS)
 	// These take precedence over node labels when available
 	if instanceType != nil {
