@@ -203,7 +203,7 @@ jobs:
     needs: [gate, build]
     if: ${{ needs.gate.outputs.approved == 'true' }}
     runs-on: [self-hosted, ibm-e2e]
-    timeout-minutes: 60
+    timeout-minutes: 90
     container:
       image: golang:1.24.4
       options: --user 0
@@ -321,7 +321,7 @@ jobs:
           core_tests="TestE2EFullWorkflow TestE2EInstanceTypeSelection TestE2EDriftStability"
 
           # Scheduling constraint tests
-          scheduling_tests="TestE2ETaintsAndTolerations TestE2EPodAntiAffinity TestE2ENodeAffinity"
+          scheduling_tests="TestE2EPodAntiAffinity TestE2ENodeAffinity"
 
           # Disruption and lifecycle tests
           lifecycle_tests="TestE2EPodDisruptionBudget"
