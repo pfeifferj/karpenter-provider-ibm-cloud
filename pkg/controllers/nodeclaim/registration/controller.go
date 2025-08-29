@@ -19,6 +19,7 @@ package registration
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/samber/lo"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/scheduling"
 )
 
 const (
@@ -260,6 +262,29 @@ func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.
 		modified = true
 	}
 
+	// Convert Requirements to labels using Karpenter core scheduling pattern
+	// This handles both single-value and multi-value Requirements (using first value for multi-value)
+	requirementLabels := scheduling.NewNodeSelectorRequirementsWithMinValues(nodeClaim.Spec.Requirements...).Labels()
+	for k, v := range requirementLabels {
+		// Skip system labels that are managed elsewhere (Karpenter core already filters restricted labels)
+		if strings.HasPrefix(k, "karpenter.sh/") ||
+			strings.HasPrefix(k, "karpenter.ibm.sh/") ||
+			strings.HasPrefix(k, "kubernetes.io/") ||
+			strings.HasPrefix(k, "node.kubernetes.io/") ||
+			strings.HasPrefix(k, "topology.kubernetes.io/") ||
+			strings.HasPrefix(k, "beta.kubernetes.io/") ||
+			strings.HasPrefix(k, "node-restriction.kubernetes.io/") {
+			continue
+		}
+
+		// Apply requirement as node label
+		if node.Labels[k] != v {
+			logger.V(1).Info("syncing requirement as node label", "key", k, "value", v)
+			node.Labels[k] = v
+			modified = true
+		}
+	}
+
 	// Sync taints from NodeClaim to Node (unless do-not-sync label is set)
 	if _, skipSync := nodeClaim.Labels["karpenter.sh/do-not-sync-taints"]; !skipSync {
 		if c.syncTaintsToNode(nodeClaim, node) {
@@ -292,9 +317,16 @@ func (c *Controller) syncTaintsToNode(nodeClaim *karpv1.NodeClaim, node *corev1.
 
 	for _, ncTaint := range nodeClaim.Spec.Taints {
 		found := false
-		for _, nodeTaint := range node.Spec.Taints {
+		needsUpdate := false
+		var existingTaintIndex int
+
+		for i, nodeTaint := range node.Spec.Taints {
 			if nodeTaint.Key == ncTaint.Key && nodeTaint.Effect == ncTaint.Effect {
 				found = true
+				if nodeTaint.Value != ncTaint.Value {
+					needsUpdate = true
+					existingTaintIndex = i
+				}
 				break
 			}
 		}
@@ -305,6 +337,9 @@ func (c *Controller) syncTaintsToNode(nodeClaim *karpv1.NodeClaim, node *corev1.
 				Value:  ncTaint.Value,
 				Effect: ncTaint.Effect,
 			})
+			modified = true
+		} else if needsUpdate {
+			node.Spec.Taints[existingTaintIndex].Value = ncTaint.Value
 			modified = true
 		}
 	}

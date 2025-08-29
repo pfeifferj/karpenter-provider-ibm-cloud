@@ -420,6 +420,39 @@ func TestController_SyncTaintsToNode_NoChange(t *testing.T) {
 	assert.Len(t, node.Spec.Taints, 1)
 }
 
+func TestController_SyncTaintsToNode_UpdateValue(t *testing.T) {
+	controller := &Controller{}
+
+	nodeClaim := getTestNodeClaim("test-nodeclaim", "ibm://test-instance-id")
+	nodeClaim.Spec.Taints = []corev1.Taint{
+		{
+			Key:    "existing-taint",
+			Value:  "updated-value",
+			Effect: corev1.TaintEffectNoSchedule,
+		},
+	}
+
+	node := &corev1.Node{
+		Spec: corev1.NodeSpec{
+			Taints: []corev1.Taint{
+				{
+					Key:    "existing-taint",
+					Value:  "old-value",
+					Effect: corev1.TaintEffectNoSchedule,
+				},
+			},
+		},
+	}
+
+	modified := controller.syncTaintsToNode(nodeClaim, node)
+
+	assert.True(t, modified)
+	assert.Len(t, node.Spec.Taints, 1)
+	assert.Equal(t, "updated-value", node.Spec.Taints[0].Value)
+	assert.Equal(t, "existing-taint", node.Spec.Taints[0].Key)
+	assert.Equal(t, corev1.TaintEffectNoSchedule, node.Spec.Taints[0].Effect)
+}
+
 func TestController_RemoveTaintFromNode(t *testing.T) {
 	controller := &Controller{}
 

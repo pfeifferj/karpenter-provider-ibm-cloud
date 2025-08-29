@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/scheduling"
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -194,6 +195,13 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 		// Start with NodeClaim labels
 		options.Labels = make(map[string]string)
 		for k, v := range nodeClaimObj.Labels {
+			options.Labels[k] = v
+		}
+
+		// Convert Requirements to labels using Karpenter core scheduling pattern
+		// This handles both single-value and multi-value Requirements (using first value for multi-value)
+		requirementLabels := scheduling.NewNodeSelectorRequirementsWithMinValues(nodeClaimObj.Spec.Requirements...).Labels()
+		for k, v := range requirementLabels {
 			options.Labels[k] = v
 		}
 
