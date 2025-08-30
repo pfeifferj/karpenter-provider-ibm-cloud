@@ -213,11 +213,26 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 			options.Labels["karpenter.ibm.sh/ibmnodeclass"] = nodeClass
 		}
 
-		// Add taints from NodeClaim
-		options.Taints = nodeClaimObj.Spec.Taints
+		// Add taints from NodeClaim (including startup taints)
+		options.Taints = append(nodeClaimObj.Spec.Taints, nodeClaimObj.Spec.StartupTaints...)
+
+		// Add the unregistered taint if not already present (following AWS pattern)
+		hasUnregisteredTaint := false
+		for _, taint := range options.Taints {
+			if taint.MatchTaint(&karpv1.UnregisteredNoExecuteTaint) {
+				hasUnregisteredTaint = true
+				break
+			}
+		}
+		if !hasUnregisteredTaint {
+			options.Taints = append(options.Taints, karpv1.UnregisteredNoExecuteTaint)
+		}
 	} else {
 		// If no NodeClaim found, create basic labels map
 		options.Labels = make(map[string]string)
+
+		// Still add the unregistered taint even without NodeClaim for safety
+		options.Taints = []corev1.Taint{karpv1.UnregisteredNoExecuteTaint}
 	}
 
 	// Add kubelet extra args if needed

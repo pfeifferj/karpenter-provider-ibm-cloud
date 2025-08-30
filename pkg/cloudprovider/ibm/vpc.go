@@ -235,12 +235,24 @@ func (c *VPCClient) GetSubnet(ctx context.Context, subnetID string) (*vpcv1.Subn
 }
 
 func (c *VPCClient) GetVPC(ctx context.Context, vpcID string) (*vpcv1.VPC, error) {
+	return c.GetVPCWithResourceGroup(ctx, vpcID, "")
+}
+
+func (c *VPCClient) GetVPCWithResourceGroup(ctx context.Context, vpcID, resourceGroupID string) (*vpcv1.VPC, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("VPC client not initialized")
 	}
 
 	options := &vpcv1.GetVPCOptions{
 		ID: &vpcID,
+	}
+
+	// Add resource group header if provided
+	if resourceGroupID != "" {
+		if options.Headers == nil {
+			options.Headers = make(map[string]string)
+		}
+		options.Headers["X-Auth-Resource-Group"] = resourceGroupID
 	}
 
 	vpc, _, err := c.client.GetVPCWithContext(ctx, options)

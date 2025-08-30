@@ -38,14 +38,13 @@ const (
 	// NodeClaimRegistrationFinalizer is added to NodeClaims to ensure proper cleanup
 	NodeClaimRegistrationFinalizer = "registration.nodeclaim.ibm.sh/finalizer"
 
-	// Labels and taints for registered nodes
-	RegisteredLabel   = "karpenter.sh/registered"
-	InitializedLabel  = "karpenter.sh/initialized"
-	UnregisteredTaint = "karpenter.sh/unregistered"
-	NodePoolLabel     = "karpenter.sh/nodepool"
-	NodeClassLabel    = "karpenter.ibm.sh/ibmnodeclass"
-	ProvisionerLabel  = "provisioner"
-	ProvisionedTaint  = "karpenter.ibm.sh/provisioned"
+	// Labels for registered nodes
+	RegisteredLabel  = "karpenter.sh/registered"
+	InitializedLabel = "karpenter.sh/initialized"
+	NodePoolLabel    = "karpenter.sh/nodepool"
+	NodeClassLabel   = "karpenter.ibm.sh/ibmnodeclass"
+	ProvisionerLabel = "provisioner"
+	ProvisionedTaint = "karpenter.ibm.sh/provisioned"
 )
 
 // Controller reconciles NodeClaim registration with corresponding Nodes
@@ -292,8 +291,8 @@ func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.
 		}
 	}
 
-	// Remove unregistered taint
-	if c.removeTaintFromNode(node, UnregisteredTaint) {
+	// Remove unregistered taint using standard Karpenter taint
+	if c.removeTaintFromNode(node, karpv1.UnregisteredTaintKey) {
 		modified = true
 	}
 
@@ -311,35 +310,33 @@ func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.
 	return nil
 }
 
-// syncTaintsToNode syncs taints from NodeClaim to Node
+// syncTaintsToNode syncs both regular and startup taints from NodeClaim to Node
 func (c *Controller) syncTaintsToNode(nodeClaim *karpv1.NodeClaim, node *corev1.Node) bool {
+	// Store original taints to check if they changed
+	originalTaints := make([]corev1.Taint, len(node.Spec.Taints))
+	copy(originalTaints, node.Spec.Taints)
+
+	// Combine all taints that need to be synced
+	allTaints := append(nodeClaim.Spec.Taints, nodeClaim.Spec.StartupTaints...)
+
+	// Update existing taints and add new ones
 	modified := false
-
-	for _, ncTaint := range nodeClaim.Spec.Taints {
+	for _, ncTaint := range allTaints {
 		found := false
-		needsUpdate := false
-		var existingTaintIndex int
-
 		for i, nodeTaint := range node.Spec.Taints {
 			if nodeTaint.Key == ncTaint.Key && nodeTaint.Effect == ncTaint.Effect {
 				found = true
+				// Update the value if it's different (this handles the value update case)
 				if nodeTaint.Value != ncTaint.Value {
-					needsUpdate = true
-					existingTaintIndex = i
+					node.Spec.Taints[i].Value = ncTaint.Value
+					modified = true
 				}
 				break
 			}
 		}
-
+		// Add new taint if not found
 		if !found {
-			node.Spec.Taints = append(node.Spec.Taints, corev1.Taint{
-				Key:    ncTaint.Key,
-				Value:  ncTaint.Value,
-				Effect: ncTaint.Effect,
-			})
-			modified = true
-		} else if needsUpdate {
-			node.Spec.Taints[existingTaintIndex].Value = ncTaint.Value
+			node.Spec.Taints = append(node.Spec.Taints, ncTaint)
 			modified = true
 		}
 	}

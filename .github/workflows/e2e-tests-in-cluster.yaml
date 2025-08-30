@@ -225,7 +225,14 @@ jobs:
 
           # Wait for cleanup to complete
           echo "⏳ Waiting for cleanup to complete..."
-          sleep 30
+
+          # Extended cleanup wait for drift stability test due to NodeClaim deletion timeouts
+          if [ "$test" = "TestE2EDriftStability" ]; then
+            echo "⏳ Extended cleanup wait for drift stability test..."
+            sleep 120  # 2 minutes for NodeClaim finalizers to complete
+          else
+            sleep 30   # Standard cleanup wait
+          fi
 
           # Check cluster health before next test
           kubectl get nodes --no-headers | grep -c Ready | xargs echo "Ready nodes:"

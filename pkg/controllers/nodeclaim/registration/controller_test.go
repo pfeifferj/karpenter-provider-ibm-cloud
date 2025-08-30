@@ -107,8 +107,8 @@ func getUnregisteredNode(name, providerID string) *corev1.Node {
 	node := getTestNode(name, providerID)
 	node.Spec.Taints = []corev1.Taint{
 		{
-			Key:    UnregisteredTaint,
-			Effect: corev1.TaintEffectNoSchedule,
+			Key:    karpv1.UnregisteredTaintKey,
+			Effect: corev1.TaintEffectNoExecute,
 		},
 	}
 	return node
@@ -263,7 +263,7 @@ func TestController_Reconcile_SuccessfulRegistration(t *testing.T) {
 
 	// Check unregistered taint was removed
 	for _, taint := range updatedNode.Spec.Taints {
-		assert.NotEqual(t, UnregisteredTaint, taint.Key)
+		assert.NotEqual(t, karpv1.UnregisteredTaintKey, taint.Key)
 	}
 
 	// Check NodeClaim taint was added
@@ -658,7 +658,7 @@ func TestController_SyncNodeWithDoNotSyncTaints(t *testing.T) {
 	// But unregistered taint should still be removed
 	foundUnregisteredTaint := false
 	for _, taint := range node.Spec.Taints {
-		if taint.Key == UnregisteredTaint {
+		if taint.Key == karpv1.UnregisteredTaintKey {
 			foundUnregisteredTaint = true
 		}
 	}
@@ -722,6 +722,155 @@ func TestController_FinalizerLogic(t *testing.T) {
 			assert.Equal(t, tt.expectDeletion, isDeletion)
 		})
 	}
+}
+
+func TestController_SyncStartupTaintsToNode(t *testing.T) {
+	controller := &Controller{}
+
+	nodeClaim := getTestNodeClaim("test-nodeclaim", "ibm://test-instance-id")
+	// Add startup taints
+	nodeClaim.Spec.StartupTaints = []corev1.Taint{
+		{
+			Key:    "node.kubernetes.io/not-ready",
+			Effect: corev1.TaintEffectNoSchedule,
+		},
+		{
+			Key:    "example.com/initializing",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		},
+	}
+
+	node := &corev1.Node{
+		Spec: corev1.NodeSpec{
+			Taints: []corev1.Taint{
+				{
+					Key:    "existing-taint",
+					Value:  "existing-value",
+					Effect: corev1.TaintEffectNoSchedule,
+				},
+			},
+		},
+	}
+
+	modified := controller.syncTaintsToNode(nodeClaim, node)
+
+	assert.True(t, modified)
+	// Should have: existing taint + regular taint + 2 startup taints = 4 total
+	assert.Len(t, node.Spec.Taints, 4)
+
+	// Check startup taints were added
+	foundNotReady := false
+	foundInitializing := false
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == "node.kubernetes.io/not-ready" {
+			foundNotReady = true
+			assert.Equal(t, corev1.TaintEffectNoSchedule, taint.Effect)
+		}
+		if taint.Key == "example.com/initializing" {
+			foundInitializing = true
+			assert.Equal(t, "true", taint.Value)
+			assert.Equal(t, corev1.TaintEffectNoSchedule, taint.Effect)
+		}
+	}
+	assert.True(t, foundNotReady, "StartupTaint 'not-ready' should be synced to Node")
+	assert.True(t, foundInitializing, "StartupTaint 'initializing' should be synced to Node")
+}
+
+func TestController_SyncBothTaintsAndStartupTaints(t *testing.T) {
+	controller := &Controller{}
+
+	nodeClaim := getTestNodeClaim("test-nodeclaim", "ibm://test-instance-id")
+	// Regular taint from getTestNodeClaim: test-taint=test-value:NoSchedule
+	// Add startup taint
+	nodeClaim.Spec.StartupTaints = []corev1.Taint{
+		{
+			Key:    "startup-taint",
+			Value:  "startup-value",
+			Effect: corev1.TaintEffectNoExecute,
+		},
+	}
+
+	node := &corev1.Node{
+		Spec: corev1.NodeSpec{
+			Taints: []corev1.Taint{},
+		},
+	}
+
+	modified := controller.syncTaintsToNode(nodeClaim, node)
+
+	assert.True(t, modified)
+	assert.Len(t, node.Spec.Taints, 2) // Both regular and startup taint
+
+	// Check both taints were added
+	foundRegularTaint := false
+	foundStartupTaint := false
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == "test-taint" {
+			foundRegularTaint = true
+			assert.Equal(t, "test-value", taint.Value)
+			assert.Equal(t, corev1.TaintEffectNoSchedule, taint.Effect)
+		}
+		if taint.Key == "startup-taint" {
+			foundStartupTaint = true
+			assert.Equal(t, "startup-value", taint.Value)
+			assert.Equal(t, corev1.TaintEffectNoExecute, taint.Effect)
+		}
+	}
+	assert.True(t, foundRegularTaint, "Regular taint should be synced to Node")
+	assert.True(t, foundStartupTaint, "StartupTaint should be synced to Node")
+}
+
+func TestController_SyncTaintsWithEmptyTaints(t *testing.T) {
+	controller := &Controller{}
+
+	// Create NodeClaim with no taints or startup taints
+	nodeClaim := &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-nodeclaim",
+		},
+		Spec: karpv1.NodeClaimSpec{
+			Taints:        []corev1.Taint{}, // No regular taints
+			StartupTaints: []corev1.Taint{}, // No startup taints
+		},
+	}
+
+	node := &corev1.Node{
+		Spec: corev1.NodeSpec{
+			Taints: []corev1.Taint{},
+		},
+	}
+
+	modified := controller.syncTaintsToNode(nodeClaim, node)
+
+	// Should return false because there are no taints to sync
+	assert.False(t, modified)
+	assert.Len(t, node.Spec.Taints, 0) // No taints should be added
+}
+
+func TestController_RemoveStandardUnregisteredTaint(t *testing.T) {
+	controller := &Controller{}
+
+	node := &corev1.Node{
+		Spec: corev1.NodeSpec{
+			Taints: []corev1.Taint{
+				{
+					Key:    karpv1.UnregisteredTaintKey,
+					Effect: corev1.TaintEffectNoExecute,
+				},
+				{
+					Key:    "taint-to-keep",
+					Effect: corev1.TaintEffectNoSchedule,
+				},
+			},
+		},
+	}
+
+	removed := controller.removeTaintFromNode(node, karpv1.UnregisteredTaintKey)
+
+	assert.True(t, removed)
+	assert.Len(t, node.Spec.Taints, 1)
+	assert.Equal(t, "taint-to-keep", node.Spec.Taints[0].Key)
 }
 
 func TestController_Register(t *testing.T) {

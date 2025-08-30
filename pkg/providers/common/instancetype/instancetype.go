@@ -18,14 +18,18 @@ package instancetype
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
@@ -102,33 +106,102 @@ func getArchitecture(it *cloudprovider.InstanceType) string {
 }
 
 func (p *IBMInstanceTypeProvider) Get(ctx context.Context, name string) (*cloudprovider.InstanceType, error) {
+	logger := log.FromContext(ctx)
+
 	if p.client == nil {
 		return nil, fmt.Errorf("IBM client not initialized")
 	}
 
-	// Get VPC client
-	vpcClient, err := p.vpcClientManager.GetVPCClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get VPC client: %w", err)
+	var instanceType *cloudprovider.InstanceType
+	var lastErr error
+
+	// Use same retry logic as List
+	backoff := wait.Backoff{
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Jitter:   0.1,
+		Steps:    10,
+		Cap:      15 * time.Second,
 	}
 
-	// List all profiles and find the one we want
-	profiles, _, err := vpcClient.ListInstanceProfiles(&vpcv1.ListInstanceProfilesOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list instance profiles: %w", err)
-	}
+	retryErr := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
+		attemptStart := time.Now()
 
-	if profiles == nil || profiles.Profiles == nil {
-		return nil, fmt.Errorf("no instance profiles returned from VPC API")
-	}
-
-	for _, profile := range profiles.Profiles {
-		if profile.Name != nil && *profile.Name == name {
-			return p.convertVPCProfileToInstanceType(ctx, profile)
+		// Get VPC client
+		vpcClient, err := p.vpcClientManager.GetVPCClient(ctx)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to get VPC client: %w", err)
+			logger.V(1).Info("Failed to get VPC client, will retry",
+				"error", err,
+				"duration", time.Since(attemptStart))
+			return false, nil // Retry
 		}
+
+		// List all profiles
+		// Note: VPCClient wrapper doesn't support context, uses internal timeout
+		profiles, response, err := vpcClient.ListInstanceProfiles(&vpcv1.ListInstanceProfilesOptions{})
+		if err != nil {
+			lastErr = fmt.Errorf("failed to list instance profiles: %w", err)
+
+			statusCode := 0
+			if response != nil && response.StatusCode != 0 {
+				statusCode = response.StatusCode
+			}
+
+			if isRetryableError(err, statusCode) {
+				logger.Info("Retryable error getting instance type",
+					"name", name,
+					"error", err,
+					"status_code", statusCode,
+					"duration", time.Since(attemptStart),
+					"will_retry", true)
+				return false, nil // Retry
+			}
+
+			logger.Error(err, "Non-retryable error getting instance type",
+				"name", name,
+				"status_code", statusCode,
+				"duration", time.Since(attemptStart))
+			return false, err // Don't retry
+		}
+
+		if profiles == nil || profiles.Profiles == nil {
+			lastErr = fmt.Errorf("no instance profiles returned from VPC API")
+			return false, lastErr // Don't retry for empty response
+		}
+
+		// Find the requested profile
+		for _, profile := range profiles.Profiles {
+			if profile.Name != nil && *profile.Name == name {
+				it, err := p.convertVPCProfileToInstanceType(ctx, profile)
+				if err != nil {
+					lastErr = fmt.Errorf("failed to convert profile %s: %w", name, err)
+					return false, lastErr // Don't retry conversion errors
+				}
+				instanceType = it
+				logger.V(1).Info("Successfully retrieved instance type",
+					"name", name,
+					"duration", time.Since(attemptStart))
+				return true, nil // Success
+			}
+		}
+
+		lastErr = fmt.Errorf("instance profile %s not found in VPC API", name)
+		return false, lastErr // Don't retry if not found
+	})
+
+	if retryErr != nil {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, retryErr
 	}
 
-	return nil, fmt.Errorf("instance profile %s not found in VPC API", name)
+	if instanceType == nil {
+		return nil, fmt.Errorf("instance profile %s not found", name)
+	}
+
+	return instanceType, nil
 }
 
 func (p *IBMInstanceTypeProvider) List(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
@@ -342,34 +415,148 @@ func (p *IBMInstanceTypeProvider) RankInstanceTypes(instanceTypes []*cloudprovid
 	return result
 }
 
-// listFromVPC lists instance types using VPC API
+// listFromVPC lists instance types using VPC API with exponential backoff retry
 func (p *IBMInstanceTypeProvider) listFromVPC(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
 	logger := log.FromContext(ctx)
 
-	vpcClient, err := p.vpcClientManager.GetVPCClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// List instance profiles from VPC
-	options := &vpcv1.ListInstanceProfilesOptions{}
-	result, _, err := vpcClient.ListInstanceProfiles(options)
-	if err != nil {
-		return nil, fmt.Errorf("listing VPC instance profiles: %w", err)
-	}
-
 	var instanceTypes []*cloudprovider.InstanceType
-	for _, profile := range result.Profiles {
-		instanceType, err := p.convertVPCProfileToInstanceType(ctx, profile)
-		if err != nil {
-			logger.Error(err, "Failed to convert VPC profile", "profile", *profile.Name)
-			continue
-		}
-		instanceTypes = append(instanceTypes, instanceType)
+	var lastErr error
+
+	// Exponential backoff configuration
+	backoff := wait.Backoff{
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Jitter:   0.1,
+		Steps:    10, // Will retry up to 4 times
+		Cap:      15 * time.Second,
 	}
 
-	logger.V(1).Info("Listed instance types from VPC API", "count", len(instanceTypes))
+	retryErr := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
+		attemptStart := time.Now()
+
+		vpcClient, err := p.vpcClientManager.GetVPCClient(ctx)
+		if err != nil {
+			lastErr = fmt.Errorf("getting VPC client: %w", err)
+			logger.V(1).Info("Failed to get VPC client, will retry",
+				"error", err,
+				"duration", time.Since(attemptStart))
+			return false, nil // Retry
+		}
+
+		// List instance profiles from VPC
+		// Note: VPCClient wrapper doesn't support context, uses internal timeout
+		options := &vpcv1.ListInstanceProfilesOptions{}
+		result, response, err := vpcClient.ListInstanceProfiles(options)
+
+		if err != nil {
+			lastErr = fmt.Errorf("listing VPC instance profiles: %w", err)
+
+			// Log detailed error information
+			statusCode := 0
+			if response != nil && response.StatusCode != 0 {
+				statusCode = response.StatusCode
+			}
+
+			// Determine if error is retryable
+			if isRetryableError(err, statusCode) {
+				logger.Info("Retryable error listing instance types",
+					"error", err,
+					"status_code", statusCode,
+					"duration", time.Since(attemptStart),
+					"will_retry", true)
+				return false, nil // Retry
+			}
+
+			// Non-retryable error
+			logger.Error(err, "Non-retryable error listing instance types",
+				"status_code", statusCode,
+				"duration", time.Since(attemptStart))
+			return false, err // Don't retry
+		}
+
+		// Success - process the results
+		var types []*cloudprovider.InstanceType
+		for _, profile := range result.Profiles {
+			instanceType, err := p.convertVPCProfileToInstanceType(ctx, profile)
+			if err != nil {
+				logger.Error(err, "Failed to convert VPC profile", "profile", *profile.Name)
+				continue
+			}
+			types = append(types, instanceType)
+		}
+
+		instanceTypes = types
+		logger.V(1).Info("Successfully listed instance types from VPC API",
+			"count", len(instanceTypes),
+			"duration", time.Since(attemptStart))
+		return true, nil // Success, stop retrying
+	})
+
+	if retryErr != nil {
+		if lastErr != nil {
+			return nil, fmt.Errorf("failed after retries: %w", lastErr)
+		}
+		return nil, fmt.Errorf("failed to list instance types: %w", retryErr)
+	}
+
+	if len(instanceTypes) == 0 {
+		return nil, fmt.Errorf("no instance types returned from VPC API")
+	}
+
 	return instanceTypes, nil
+}
+
+// isRetryableError determines if an error should trigger a retry
+func isRetryableError(err error, statusCode int) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check HTTP status codes
+	switch statusCode {
+	case 500, 502, 503, 504, 522, 524: // Server errors and timeouts
+		return true
+	case 429: // Rate limiting
+		return true
+	}
+
+	// Check for network errors (timeout is the primary concern)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+
+	// Check for context errors
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	// Check error message for known retryable patterns
+	errStr := strings.ToLower(err.Error())
+	retryablePatterns := []string{
+		"connection refused",
+		"connection reset",
+		"connection timed out",
+		"temporary failure",
+		"eof",
+		"broken pipe",
+		"no such host",
+		"internal server error",
+		"service unavailable",
+		"gateway timeout",
+		"bad gateway",
+		"cloudflare", // Cloudflare errors
+		"timeout",
+		"deadline exceeded",
+	}
+
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // getZonesForRegion fetches available zones for a region from VPC API
