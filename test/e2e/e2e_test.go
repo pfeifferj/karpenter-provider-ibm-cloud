@@ -124,6 +124,7 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, policyv1.AddToScheme(scheme))
 
 	// Add Karpenter v1 types manually with proper group version registration
 	karpenterGV := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
@@ -2614,4 +2615,695 @@ func TestE2EPodDisruptionBudget(t *testing.T) {
 	require.NoError(t, err, "Failed to delete PDB")
 
 	t.Logf("PDB enforcement test completed successfully: %s", testName)
+}
+
+// TestE2EPodAntiAffinity tests strict pod anti-affinity rules
+// Tests that pods with anti-affinity are properly distributed across nodes
+func TestE2EPodAntiAffinity(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	ctx := context.Background()
+
+	testName := fmt.Sprintf("e2e-antiaffinity-%d", time.Now().Unix())
+	t.Logf("Starting pod anti-affinity E2E test: %s", testName)
+
+	// Step 1: Create NodeClass
+	nodeClass := suite.createTestNodeClass(t, testName)
+	t.Logf("Created NodeClass: %s", nodeClass.Name)
+
+	// Step 2: Wait for NodeClass to be ready
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+
+	// Step 3: Create NodePool that can provision multiple nodes
+	nodePool := suite.createTestNodePool(t, testName, nodeClass.Name)
+	t.Logf("Created NodePool: %s", nodePool.Name)
+
+	// Step 4: Deploy workload with strict pod anti-affinity
+	workload := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-antiaffinity", testName),
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &[]int32{3}[0], // 3 replicas that must be on different nodes
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": fmt.Sprintf("%s-antiaffinity", testName)},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":           fmt.Sprintf("%s-antiaffinity", testName),
+						"anti-affinity": "required",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{
+											"app": fmt.Sprintf("%s-antiaffinity", testName),
+										},
+									},
+									TopologyKey: "kubernetes.io/hostname", // Each pod on different node
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: "nginx:1.21",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := suite.kubeClient.Create(ctx, workload)
+	require.NoError(t, err, "Failed to create workload with anti-affinity")
+	t.Logf("Created workload with strict anti-affinity: %s", workload.Name)
+
+	// Step 5: Wait for pods to be scheduled
+	suite.waitForPodsToBeScheduled(t, workload.Name, workload.Namespace)
+	t.Logf("Pods with anti-affinity scheduled successfully")
+
+	// Step 6: Verify each pod is on a different node
+	var pods corev1.PodList
+	err = suite.kubeClient.List(ctx, &pods, client.MatchingLabels{
+		"app": fmt.Sprintf("%s-antiaffinity", testName),
+	})
+	require.NoError(t, err, "Failed to list anti-affinity pods")
+
+	nodeNames := make(map[string]bool)
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName != "" {
+			if nodeNames[pod.Spec.NodeName] {
+				t.Errorf("Anti-affinity violated: multiple pods on node %s", pod.Spec.NodeName)
+			}
+			nodeNames[pod.Spec.NodeName] = true
+			t.Logf("Pod %s scheduled on unique node: %s", pod.Name, pod.Spec.NodeName)
+		}
+	}
+
+	require.Equal(t, 3, len(nodeNames), "Should have 3 different nodes for 3 pods with anti-affinity")
+	t.Logf("Verified: All %d pods are on different nodes as required by anti-affinity", len(pods.Items))
+
+	// Step 7: Test soft anti-affinity (preferred but not required)
+	softAntiAffinityWorkload := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-soft-antiaffinity", testName),
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &[]int32{5}[0], // More replicas to test soft anti-affinity
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": fmt.Sprintf("%s-soft-antiaffinity", testName)},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":           fmt.Sprintf("%s-soft-antiaffinity", testName),
+						"anti-affinity": "preferred",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+								{
+									Weight: 100,
+									PodAffinityTerm: corev1.PodAffinityTerm{
+										LabelSelector: &metav1.LabelSelector{
+											MatchLabels: map[string]string{
+												"app": fmt.Sprintf("%s-soft-antiaffinity", testName),
+											},
+										},
+										TopologyKey: "kubernetes.io/hostname",
+									},
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: "nginx:1.21",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = suite.kubeClient.Create(ctx, softAntiAffinityWorkload)
+	require.NoError(t, err, "Failed to create workload with soft anti-affinity")
+	t.Logf("Created workload with soft anti-affinity: %s", softAntiAffinityWorkload.Name)
+
+	// Wait for soft anti-affinity pods to be scheduled
+	suite.waitForPodsToBeScheduled(t, softAntiAffinityWorkload.Name, softAntiAffinityWorkload.Namespace)
+
+	// Verify distribution of soft anti-affinity pods
+	var softPods corev1.PodList
+	err = suite.kubeClient.List(ctx, &softPods, client.MatchingLabels{
+		"app": fmt.Sprintf("%s-soft-antiaffinity", testName),
+	})
+	require.NoError(t, err, "Failed to list soft anti-affinity pods")
+
+	nodeDistribution := make(map[string]int)
+	for _, pod := range softPods.Items {
+		if pod.Spec.NodeName != "" {
+			nodeDistribution[pod.Spec.NodeName]++
+		}
+	}
+
+	t.Logf("Soft anti-affinity pod distribution across %d nodes:", len(nodeDistribution))
+	for node, count := range nodeDistribution {
+		t.Logf("  Node %s: %d pods", node, count)
+	}
+
+	// Step 8: Test zone-based anti-affinity
+	zoneAntiAffinityWorkload := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-zone-antiaffinity", testName),
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &[]int32{2}[0],
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": fmt.Sprintf("%s-zone-antiaffinity", testName)},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":           fmt.Sprintf("%s-zone-antiaffinity", testName),
+						"anti-affinity": "zone",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+								{
+									Weight: 100,
+									PodAffinityTerm: corev1.PodAffinityTerm{
+										LabelSelector: &metav1.LabelSelector{
+											MatchLabels: map[string]string{
+												"app": fmt.Sprintf("%s-zone-antiaffinity", testName),
+											},
+										},
+										TopologyKey: "topology.kubernetes.io/zone", // Prefer different zones
+									},
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: "nginx:1.21",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = suite.kubeClient.Create(ctx, zoneAntiAffinityWorkload)
+	require.NoError(t, err, "Failed to create workload with zone anti-affinity")
+	t.Logf("Created workload with zone-based anti-affinity: %s", zoneAntiAffinityWorkload.Name)
+
+	// Wait for zone anti-affinity pods to be scheduled
+	suite.waitForPodsToBeScheduled(t, zoneAntiAffinityWorkload.Name, zoneAntiAffinityWorkload.Namespace)
+
+	// Verify zone distribution
+	var zonePods corev1.PodList
+	err = suite.kubeClient.List(ctx, &zonePods, client.MatchingLabels{
+		"app": fmt.Sprintf("%s-zone-antiaffinity", testName),
+	})
+	require.NoError(t, err, "Failed to list zone anti-affinity pods")
+
+	zoneDistribution := make(map[string]int)
+	for _, pod := range zonePods.Items {
+		if pod.Spec.NodeName != "" {
+			var node corev1.Node
+			err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, &node)
+			if err == nil {
+				if zone, ok := node.Labels["topology.kubernetes.io/zone"]; ok {
+					zoneDistribution[zone]++
+					t.Logf("Pod %s in zone: %s", pod.Name, zone)
+				}
+			}
+		}
+	}
+
+	if len(zoneDistribution) > 1 {
+		t.Logf("Successfully distributed pods across %d zones", len(zoneDistribution))
+	} else {
+		t.Logf("All pods in single zone (may be due to single-zone test environment)")
+	}
+
+	// Step 9: Cleanup
+	suite.cleanupTestWorkload(t, workload.Name, workload.Namespace)
+	suite.cleanupTestWorkload(t, softAntiAffinityWorkload.Name, softAntiAffinityWorkload.Namespace)
+	suite.cleanupTestWorkload(t, zoneAntiAffinityWorkload.Name, zoneAntiAffinityWorkload.Namespace)
+	suite.cleanupTestResources(t, testName)
+
+	t.Logf("Pod anti-affinity E2E test completed successfully: %s", testName)
+}
+
+// TestE2ENodeAffinity tests required node affinity rules
+// Tests that pods with node affinity are scheduled only on matching nodes
+func TestE2ENodeAffinity(t *testing.T) {
+	suite := SetupE2ETestSuite(t)
+	ctx := context.Background()
+
+	testName := fmt.Sprintf("e2e-nodeaffinity-%d", time.Now().Unix())
+	t.Logf("Starting node affinity E2E test: %s", testName)
+
+	// Step 1: Create NodeClass
+	nodeClass := suite.createTestNodeClass(t, testName)
+	t.Logf("Created NodeClass: %s", nodeClass.Name)
+
+	// Step 2: Wait for NodeClass to be ready
+	suite.waitForNodeClassReady(t, nodeClass.Name)
+	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+
+	// Step 3: Create NodePool with specific labels for affinity matching
+	nodePool := &karpv1.NodePool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-nodepool", testName),
+		},
+		Spec: karpv1.NodePoolSpec{
+			Template: karpv1.NodeClaimTemplate{
+				ObjectMeta: karpv1.ObjectMeta{
+					Labels: map[string]string{
+						"test":      "e2e-nodeaffinity",
+						"test-name": testName,
+					},
+				},
+				Spec: karpv1.NodeClaimTemplateSpec{
+					NodeClassRef: &karpv1.NodeClassReference{
+						Group: "karpenter.ibm.com",
+						Kind:  "IBMNodeClass",
+						Name:  nodeClass.Name,
+					},
+					Requirements: []karpv1.NodeSelectorRequirementWithMinValues{
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      "node.kubernetes.io/instance-type",
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"bx2-2x8", "bx2-4x16"},
+							},
+						},
+					},
+				},
+			},
+			Limits: karpv1.Limits{
+				"cpu": resource.MustParse("1000"),
+			},
+		},
+	}
+
+	err := suite.kubeClient.Create(ctx, nodePool)
+	require.NoError(t, err, "Failed to create NodePool with labels")
+	t.Logf("Created NodePool with specific labels: %s", nodePool.Name)
+
+	// Step 4: Deploy workload with REQUIRED node affinity
+	workloadWithRequiredAffinity := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-required-affinity", testName),
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &[]int32{3}[0],
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": fmt.Sprintf("%s-required-affinity", testName)},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":      fmt.Sprintf("%s-required-affinity", testName),
+						"affinity": "required",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Affinity: &corev1.Affinity{
+						NodeAffinity: &corev1.NodeAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+								NodeSelectorTerms: []corev1.NodeSelectorTerm{
+									{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      "node.kubernetes.io/instance-type",
+												Operator: corev1.NodeSelectorOpIn,
+												Values:   []string{"bx2-2x8", "bx2-4x16"},
+											},
+											{
+												Key:      "kubernetes.io/arch",
+												Operator: corev1.NodeSelectorOpIn,
+												Values:   []string{"amd64"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: "nginx:1.21",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = suite.kubeClient.Create(ctx, workloadWithRequiredAffinity)
+	require.NoError(t, err, "Failed to create workload with required node affinity")
+	t.Logf("Created workload with required node affinity: %s", workloadWithRequiredAffinity.Name)
+
+	// Step 5: Wait for pods to be scheduled
+	suite.waitForPodsToBeScheduled(t, workloadWithRequiredAffinity.Name, workloadWithRequiredAffinity.Namespace)
+	t.Logf("Pods with required node affinity scheduled successfully")
+
+	// Step 6: Verify all pods are on nodes matching the affinity rules
+	var requiredAffinityPods corev1.PodList
+	err = suite.kubeClient.List(ctx, &requiredAffinityPods, client.MatchingLabels{
+		"app": fmt.Sprintf("%s-required-affinity", testName),
+	})
+	require.NoError(t, err, "Failed to list required affinity pods")
+
+	for _, pod := range requiredAffinityPods.Items {
+		if pod.Spec.NodeName != "" {
+			var node corev1.Node
+			err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, &node)
+			require.NoError(t, err, "Failed to get node for pod")
+
+			// Verify node has all required labels
+			require.Contains(t, []string{"bx2-2x8", "bx2-4x16"}, node.Labels["node.kubernetes.io/instance-type"], "Node should have matching instance type")
+			require.Equal(t, "amd64", node.Labels["kubernetes.io/arch"], "Node should have amd64 architecture")
+			t.Logf("Pod %s correctly scheduled on node %s with matching labels", pod.Name, node.Name)
+		}
+	}
+
+	// Step 7: Deploy workload with PREFERRED node affinity
+	workloadWithPreferredAffinity := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-preferred-affinity", testName),
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &[]int32{3}[0],
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": fmt.Sprintf("%s-preferred-affinity", testName)},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":      fmt.Sprintf("%s-preferred-affinity", testName),
+						"affinity": "preferred",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Affinity: &corev1.Affinity{
+						NodeAffinity: &corev1.NodeAffinity{
+							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
+								{
+									Weight: 100,
+									Preference: corev1.NodeSelectorTerm{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      "node.kubernetes.io/instance-type",
+												Operator: corev1.NodeSelectorOpIn,
+												Values:   []string{"bx2-2x8"},
+											},
+										},
+									},
+								},
+								{
+									Weight: 50,
+									Preference: corev1.NodeSelectorTerm{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      "kubernetes.io/arch",
+												Operator: corev1.NodeSelectorOpIn,
+												Values:   []string{"amd64"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: "nginx:1.21",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = suite.kubeClient.Create(ctx, workloadWithPreferredAffinity)
+	require.NoError(t, err, "Failed to create workload with preferred node affinity")
+	t.Logf("Created workload with preferred node affinity: %s", workloadWithPreferredAffinity.Name)
+
+	// Wait for preferred affinity pods to be scheduled
+	suite.waitForPodsToBeScheduled(t, workloadWithPreferredAffinity.Name, workloadWithPreferredAffinity.Namespace)
+
+	// Verify preferred affinity pod placement
+	var preferredAffinityPods corev1.PodList
+	err = suite.kubeClient.List(ctx, &preferredAffinityPods, client.MatchingLabels{
+		"app": fmt.Sprintf("%s-preferred-affinity", testName),
+	})
+	require.NoError(t, err, "Failed to list preferred affinity pods")
+
+	preferredNodesCount := 0
+	for _, pod := range preferredAffinityPods.Items {
+		if pod.Spec.NodeName != "" {
+			var node corev1.Node
+			err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, &node)
+			if err == nil {
+				// Check if node matches preferred criteria
+				if node.Labels["node.kubernetes.io/instance-type"] == "bx2-2x8" || node.Labels["kubernetes.io/arch"] == "amd64" {
+					preferredNodesCount++
+					t.Logf("Pod %s scheduled on preferred node %s", pod.Name, node.Name)
+				} else {
+					t.Logf("Pod %s scheduled on non-preferred node %s (acceptable for preferred affinity)", pod.Name, node.Name)
+				}
+			}
+		}
+	}
+
+	t.Logf("Preferred affinity: %d/%d pods on preferred nodes", preferredNodesCount, len(preferredAffinityPods.Items))
+
+	// Step 8: Test node affinity with NOT IN operator
+	workloadWithNotInAffinity := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-notin-affinity", testName),
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &[]int32{2}[0],
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": fmt.Sprintf("%s-notin-affinity", testName)},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":      fmt.Sprintf("%s-notin-affinity", testName),
+						"affinity": "not-in",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Affinity: &corev1.Affinity{
+						NodeAffinity: &corev1.NodeAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+								NodeSelectorTerms: []corev1.NodeSelectorTerm{
+									{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      "gpu-enabled",
+												Operator: corev1.NodeSelectorOpNotIn,
+												Values:   []string{"true"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: "nginx:1.21",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = suite.kubeClient.Create(ctx, workloadWithNotInAffinity)
+	require.NoError(t, err, "Failed to create workload with NotIn node affinity")
+	t.Logf("Created workload with NotIn node affinity: %s", workloadWithNotInAffinity.Name)
+
+	// Wait for NotIn affinity pods to be scheduled
+	suite.waitForPodsToBeScheduled(t, workloadWithNotInAffinity.Name, workloadWithNotInAffinity.Namespace)
+
+	// Verify NotIn affinity pod placement
+	var notInAffinityPods corev1.PodList
+	err = suite.kubeClient.List(ctx, &notInAffinityPods, client.MatchingLabels{
+		"app": fmt.Sprintf("%s-notin-affinity", testName),
+	})
+	require.NoError(t, err, "Failed to list NotIn affinity pods")
+
+	for _, pod := range notInAffinityPods.Items {
+		if pod.Spec.NodeName != "" {
+			var node corev1.Node
+			err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, &node)
+			if err == nil {
+				// Verify node does NOT have gpu-enabled=true
+				if node.Labels["gpu-enabled"] == "true" {
+					t.Errorf("Pod %s incorrectly scheduled on GPU node %s", pod.Name, node.Name)
+				} else {
+					t.Logf("Pod %s correctly scheduled on non-GPU node %s", pod.Name, node.Name)
+				}
+			}
+		}
+	}
+
+	// Step 9: Test combining node affinity with node selector
+	workloadWithAffinityAndSelector := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-combined", testName),
+			Namespace: "default",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &[]int32{2}[0],
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": fmt.Sprintf("%s-combined", testName)},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": fmt.Sprintf("%s-combined", testName),
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"node.kubernetes.io/instance-type": "bx2-2x8",
+					},
+					Affinity: &corev1.Affinity{
+						NodeAffinity: &corev1.NodeAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+								NodeSelectorTerms: []corev1.NodeSelectorTerm{
+									{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      "kubernetes.io/arch",
+												Operator: corev1.NodeSelectorOpIn,
+												Values:   []string{"amd64"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: "nginx:1.21",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = suite.kubeClient.Create(ctx, workloadWithAffinityAndSelector)
+	require.NoError(t, err, "Failed to create workload with combined affinity and selector")
+	t.Logf("Created workload with combined node affinity and selector: %s", workloadWithAffinityAndSelector.Name)
+
+	// Wait for combined pods to be scheduled
+	suite.waitForPodsToBeScheduled(t, workloadWithAffinityAndSelector.Name, workloadWithAffinityAndSelector.Namespace)
+
+	// Verify combined placement rules
+	var combinedPods corev1.PodList
+	err = suite.kubeClient.List(ctx, &combinedPods, client.MatchingLabels{
+		"app": fmt.Sprintf("%s-combined", testName),
+	})
+	require.NoError(t, err, "Failed to list combined affinity pods")
+
+	for _, pod := range combinedPods.Items {
+		if pod.Spec.NodeName != "" {
+			var node corev1.Node
+			err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, &node)
+			require.NoError(t, err, "Failed to get node for combined pod")
+
+			// Verify both nodeSelector and affinity are satisfied
+			require.Equal(t, "bx2-2x8", node.Labels["node.kubernetes.io/instance-type"], "Node should satisfy nodeSelector")
+			require.Equal(t, "amd64", node.Labels["kubernetes.io/arch"], "Node should satisfy node affinity")
+			t.Logf("Pod %s correctly scheduled on node %s satisfying both nodeSelector and affinity", pod.Name, node.Name)
+		}
+	}
+
+	// Step 10: Cleanup
+	suite.cleanupTestWorkload(t, workloadWithRequiredAffinity.Name, workloadWithRequiredAffinity.Namespace)
+	suite.cleanupTestWorkload(t, workloadWithPreferredAffinity.Name, workloadWithPreferredAffinity.Namespace)
+	suite.cleanupTestWorkload(t, workloadWithNotInAffinity.Name, workloadWithNotInAffinity.Namespace)
+	suite.cleanupTestWorkload(t, workloadWithAffinityAndSelector.Name, workloadWithAffinityAndSelector.Namespace)
+	suite.cleanupTestResources(t, testName)
+
+	t.Logf("Node affinity E2E test completed successfully: %s", testName)
 }

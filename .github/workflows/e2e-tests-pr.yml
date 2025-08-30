@@ -203,7 +203,7 @@ jobs:
     needs: [gate, build]
     if: ${{ needs.gate.outputs.approved == 'true' }}
     runs-on: [self-hosted, ibm-e2e]
-    timeout-minutes: 60
+    timeout-minutes: 90
     container:
       image: golang:1.24.4
       options: --user 0
@@ -314,19 +314,59 @@ jobs:
           E2E_CLEANUP_TIMEOUT: "300s"
           E2E_STABILIZATION_WAIT: "60s"
         run: |
-          echo "🚀 Starting sequential E2E tests..."
-          tests="TestE2EFullWorkflow TestE2EInstanceTypeSelection"
+          echo "🚀 Starting E2E test suite..."
 
-          for test in $tests; do
+          # Define test groups for better organization
+          # Core functionality tests
+          core_tests="TestE2EFullWorkflow TestE2EInstanceTypeSelection TestE2EDriftStability"
+
+          # Scheduling constraint tests
+          scheduling_tests="TestE2EPodAntiAffinity TestE2ENodeAffinity"
+
+          # Disruption and lifecycle tests
+          lifecycle_tests="TestE2EPodDisruptionBudget"
+
+          # Combine all tests
+          all_tests="$core_tests $scheduling_tests $lifecycle_tests"
+
+          test_failed="false"
+          passed_tests=0
+          failed_tests=0
+          total_tests=$(echo $all_tests | wc -w)
+
+          echo "📋 Test Suite Summary:"
+          echo "  Core Tests: $(echo $core_tests | wc -w)"
+          echo "  Scheduling Tests: $(echo $scheduling_tests | wc -w)"
+          echo "  Lifecycle Tests: $(echo $lifecycle_tests | wc -w)"
+          echo "  Total Tests: $total_tests"
+          echo ""
+
+          for test in $all_tests; do
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "🧪 Running test: $test"
+            echo "Progress: $((passed_tests + failed_tests + 1))/$total_tests"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            if go test -v -timeout 20m ./test/e2e -run "$test" -count=1; then
+            # Set appropriate timeout based on test type
+            timeout="20m"
+            if [ "$test" = "TestE2EDriftStability" ]; then
+              timeout="30m"  # Drift test needs more time
+            fi
+
+            if go test -v -timeout $timeout ./test/e2e -run "^$test$" -count=1; then
               echo "✅ Test $test passed"
+              passed_tests=$((passed_tests + 1))
             else
               echo "❌ Test $test failed"
-              kubectl get nodes --no-headers | wc -l | xargs echo "Total nodes:"
-              kubectl get nodeclaims --no-headers | wc -l | xargs echo "Total nodeclaims:"
-              kubectl get pods -l test=e2e --all-namespaces --no-headers | wc -l | xargs echo "Total e2e pods:"
+              failed_tests=$((failed_tests + 1))
+
+              # Collect debug information on failure
+              echo "📊 Debug information for failed test:"
+              kubectl get nodes --no-headers | wc -l | xargs echo "  Total nodes:"
+              kubectl get nodeclaims --no-headers | wc -l | xargs echo "  Total nodeclaims:"
+              kubectl get pods -l test=e2e --all-namespaces --no-headers | wc -l | xargs echo "  Total e2e pods:"
+              kubectl get events -A --field-selector type=Warning --sort-by='.lastTimestamp' | tail -10
+
               test_failed="true"
             fi
 
@@ -344,15 +384,24 @@ jobs:
             kubectl get nodeclaims --no-headers | grep -c True | xargs echo "Ready nodeclaims:" || echo "Ready nodeclaims: 0"
 
             echo "✅ Completed test: $test"
-            echo "---"
+            echo ""
           done
 
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 Test Suite Results:"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Total Tests: $total_tests"
+          echo "  ✅ Passed: $passed_tests"
+          echo "  ❌ Failed: $failed_tests"
+          echo "  Success Rate: $((passed_tests * 100 / total_tests))%"
+          echo ""
+
           if [ "$test_failed" = "true" ]; then
-            echo "❌ One or more tests failed"
+            echo "❌ Test suite failed with $failed_tests failures"
             exit 1
           fi
 
-          echo "✅ All sequential E2E tests completed successfully"
+          echo "✅ All E2E tests completed successfully!"
 
       - name: Collect test artifacts
         if: always()
