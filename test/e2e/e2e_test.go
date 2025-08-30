@@ -1,3 +1,6 @@
+//go:build e2e
+// +build e2e
+
 /*
 Copyright The Kubernetes Authors.
 
@@ -69,21 +72,6 @@ func init() {
 
 	zapLogger, _ := zapConfig.Build()
 	log.SetLogger(zapr.NewLogger(zapLogger))
-}
-
-// E2ETestSuite contains the test environment
-type E2ETestSuite struct {
-	kubeClient           client.Client
-	ibmClient            *ibm.Client
-	cloudProvider        *ibmcloud.CloudProvider
-	instanceTypeProvider instancetype.Provider
-
-	// Test IBM Cloud resources
-	testVPC    string
-	testSubnet string
-	testImage  string
-	testRegion string
-	testZone   string
 }
 
 // SetupE2ETestSuite initializes the test environment
@@ -274,6 +262,9 @@ func TestE2ENodePoolInstanceTypeSelection(t *testing.T) {
 }
 
 func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alpha1.IBMNodeClass {
+	// Dynamically get an available instance type
+	instanceType := s.GetAvailableInstanceType(t)
+
 	nodeClass := &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-nodeclass", testName),
@@ -281,7 +272,7 @@ func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alp
 		Spec: v1alpha1.IBMNodeClassSpec{
 			Region:            s.testRegion,
 			Zone:              s.testZone,
-			InstanceProfile:   "bx2a-2x8", // Small instance for testing
+			InstanceProfile:   instanceType, // Use dynamically detected instance type
 			Image:             s.testImage,
 			VPC:               s.testVPC,
 			Subnet:            s.testSubnet,
@@ -308,6 +299,10 @@ func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alp
 func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName string) *karpv1.NodePool {
 	// Set 5-minute expiration for e2e test nodes to ensure cleanup
 	expireAfter := karpv1.MustParseNillableDuration("5m")
+
+	// Dynamically get available instance types
+	instanceTypes := s.GetMultipleInstanceTypes(t, 3)
+
 	nodePool := &karpv1.NodePool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-nodepool", testName),
@@ -329,7 +324,7 @@ func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName 
 							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
 								Key:      "node.kubernetes.io/instance-type",
 								Operator: corev1.NodeSelectorOpIn,
-								Values:   []string{"bx2a-2x8"},
+								Values:   instanceTypes, // Use dynamically detected instance types
 							},
 						},
 					},
@@ -548,22 +543,63 @@ func (s *E2ETestSuite) waitForNodeClassReady(t *testing.T, nodeClassName string)
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
+	checkCount := 0
 	err := wait.PollUntilContextTimeout(ctx, pollInterval, testTimeout, true, func(ctx context.Context) (bool, error) {
+		checkCount++
 		var nodeClass v1alpha1.IBMNodeClass
 		err := s.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClassName}, &nodeClass)
 		if err != nil {
+			t.Logf("Check #%d: Failed to get NodeClass: %v", checkCount, err)
 			return false, err
 		}
+
+		// Log the full NodeClass spec on first check
+		if checkCount == 1 {
+			t.Logf("NodeClass Spec: VPC=%s, Subnet=%s, Zone=%s, Region=%s, InstanceProfile=%s",
+				nodeClass.Spec.VPC, nodeClass.Spec.Subnet, nodeClass.Spec.Zone,
+				nodeClass.Spec.Region, nodeClass.Spec.InstanceProfile)
+			t.Logf("NodeClass ResourceGroup: %s", nodeClass.Spec.ResourceGroup)
+			t.Logf("NodeClass SecurityGroups: %v", nodeClass.Spec.SecurityGroups)
+			t.Logf("NodeClass APIServerEndpoint: %s", nodeClass.Spec.APIServerEndpoint)
+		}
+
+		// Log all conditions every check
+		t.Logf("Check #%d: NodeClass %s conditions:", checkCount, nodeClassName)
+		for _, condition := range nodeClass.Status.Conditions {
+			t.Logf("  - Type: %s, Status: %s, Reason: %s, Message: %s",
+				condition.Type, condition.Status, condition.Reason, condition.Message)
+		}
+
+		// Log any additional status information if available
+		// Note: IBMNodeClassStatus might not have Subnets/SecurityGroups fields
+		// Log the raw status for debugging
+		t.Logf("  Raw Status: %+v", nodeClass.Status)
 
 		// Check if Ready condition is True
 		for _, condition := range nodeClass.Status.Conditions {
 			if condition.Type == "Ready" && condition.Status == metav1.ConditionTrue {
+				t.Logf("✅ NodeClass became ready after %d checks", checkCount)
 				return true, nil
 			}
 		}
 
+		// Log events related to this NodeClass
+		if checkCount%3 == 0 { // Every 3rd check to avoid spam
+			s.logNodeClassEvents(t, nodeClassName)
+		}
+
 		return false, nil
 	})
+
+	if err != nil {
+		// Final status dump on failure
+		var nodeClass v1alpha1.IBMNodeClass
+		if getErr := s.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClassName}, &nodeClass); getErr == nil {
+			t.Logf("❌ Final NodeClass status after timeout:")
+			t.Logf("  Status: %+v", nodeClass.Status)
+		}
+		s.logNodeClassEvents(t, nodeClassName)
+	}
 
 	require.NoError(t, err, "NodeClass should become ready within timeout")
 }
@@ -637,7 +673,9 @@ func (s *E2ETestSuite) waitForPodsToBeScheduled(t *testing.T, deploymentName, na
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
+	checkCount := 0
 	err := wait.PollUntilContextTimeout(ctx, pollInterval, testTimeout, true, func(ctx context.Context) (bool, error) {
+		checkCount++
 		var deployment appsv1.Deployment
 		err := s.kubeClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, &deployment)
 		if err != nil {
@@ -646,19 +684,36 @@ func (s *E2ETestSuite) waitForPodsToBeScheduled(t *testing.T, deploymentName, na
 
 		// Check if deployment has desired replicas ready
 		if deployment.Status.ReadyReplicas == *deployment.Spec.Replicas {
-			t.Logf("All %d replicas are ready for deployment %s", deployment.Status.ReadyReplicas, deploymentName)
+			t.Logf("✅ All %d replicas are ready for deployment %s after %d checks",
+				deployment.Status.ReadyReplicas, deploymentName, checkCount)
 			return true, nil
 		}
 
-		t.Logf("Deployment %s: %d/%d replicas ready", deploymentName, deployment.Status.ReadyReplicas, *deployment.Spec.Replicas)
+		t.Logf("Check #%d: Deployment %s: %d/%d replicas ready, %d available, %d unavailable",
+			checkCount, deploymentName, deployment.Status.ReadyReplicas,
+			*deployment.Spec.Replicas, deployment.Status.AvailableReplicas,
+			deployment.Status.UnavailableReplicas)
 
-		// Add detailed diagnostics for debugging (but less frequently to avoid log spam)
-		if time.Now().Unix()%30 == 0 { // Log diagnostics every ~5 minutes
+		// Log NodeClaim status every 3 checks
+		if checkCount%3 == 0 {
+			s.logNodeClaimStatus(t)
+			s.logNodePoolStatus(t, deploymentName+"-nodepool") // Assuming naming convention
+		}
+
+		// Add detailed diagnostics for debugging every 5 checks
+		if checkCount%5 == 0 {
 			s.logDeploymentDiagnostics(t, deploymentName, namespace)
 		}
 
 		return false, nil
 	})
+
+	if err != nil {
+		// Final diagnostic dump on failure
+		t.Logf("❌ Failed to schedule pods after %d checks", checkCount)
+		s.logDeploymentDiagnostics(t, deploymentName, namespace)
+		s.logNodeClaimStatus(t)
+	}
 
 	require.NoError(t, err, "Pods should be scheduled and running within timeout")
 }
@@ -3306,4 +3361,87 @@ func TestE2ENodeAffinity(t *testing.T) {
 	suite.cleanupTestResources(t, testName)
 
 	t.Logf("Node affinity E2E test completed successfully: %s", testName)
+}
+
+// logNodeClassEvents logs Kubernetes events related to a NodeClass
+func (s *E2ETestSuite) logNodeClassEvents(t *testing.T, nodeClassName string) {
+	ctx := context.Background()
+
+	// List events in all namespaces
+	var eventList corev1.EventList
+	err := s.kubeClient.List(ctx, &eventList)
+	if err != nil {
+		t.Logf("Failed to list events: %v", err)
+		return
+	}
+
+	t.Logf("📋 Events related to NodeClass %s:", nodeClassName)
+	eventFound := false
+	for _, event := range eventList.Items {
+		// Check if event is related to our NodeClass
+		if event.InvolvedObject.Kind == "IBMNodeClass" && event.InvolvedObject.Name == nodeClassName {
+			eventFound = true
+			t.Logf("  Event: Type=%s, Reason=%s, Message=%s, Count=%d, LastSeen=%v",
+				event.Type, event.Reason, event.Message, event.Count, event.LastTimestamp.Time)
+		}
+	}
+
+	if !eventFound {
+		t.Logf("  No events found for NodeClass %s", nodeClassName)
+	}
+}
+
+// logNodePoolStatus logs detailed NodePool status for debugging
+func (s *E2ETestSuite) logNodePoolStatus(t *testing.T, nodePoolName string) {
+	ctx := context.Background()
+
+	var nodePool karpv1.NodePool
+	err := s.kubeClient.Get(ctx, types.NamespacedName{Name: nodePoolName}, &nodePool)
+	if err != nil {
+		t.Logf("Failed to get NodePool %s: %v", nodePoolName, err)
+		return
+	}
+
+	t.Logf("📊 NodePool %s status:", nodePoolName)
+	t.Logf("  Conditions:")
+	for _, condition := range nodePool.Status.Conditions {
+		t.Logf("    - Type: %s, Status: %s, Reason: %s, Message: %s",
+			condition.Type, condition.Status, condition.Reason, condition.Message)
+	}
+
+	if nodePool.Status.Resources != nil {
+		cpuQty := nodePool.Status.Resources[corev1.ResourceCPU]
+		memQty := nodePool.Status.Resources[corev1.ResourceMemory]
+		t.Logf("  Resources: CPU=%s, Memory=%s",
+			cpuQty.String(),
+			memQty.String())
+	}
+}
+
+// logNodeClaimStatus logs detailed NodeClaim status for debugging
+func (s *E2ETestSuite) logNodeClaimStatus(t *testing.T) {
+	ctx := context.Background()
+
+	var nodeClaimList karpv1.NodeClaimList
+	err := s.kubeClient.List(ctx, &nodeClaimList)
+	if err != nil {
+		t.Logf("Failed to list NodeClaims: %v", err)
+		return
+	}
+
+	t.Logf("📊 NodeClaims in cluster: %d", len(nodeClaimList.Items))
+	for _, nodeClaim := range nodeClaimList.Items {
+		// Only log test-related NodeClaims
+		if val, ok := nodeClaim.Labels["test"]; ok && val == "e2e" {
+			t.Logf("  NodeClaim %s:", nodeClaim.Name)
+			t.Logf("    Phase: %s", nodeClaim.StatusConditions())
+			t.Logf("    ProviderID: %s", nodeClaim.Status.ProviderID)
+			t.Logf("    NodeName: %s", nodeClaim.Status.NodeName)
+
+			for _, condition := range nodeClaim.Status.Conditions {
+				t.Logf("    Condition: Type=%s, Status=%s, Reason=%s",
+					condition.Type, condition.Status, condition.Reason)
+			}
+		}
+	}
 }
