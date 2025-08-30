@@ -499,6 +499,7 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 		log.Error(err, "Failed to list instance types")
 		return nil, err
 	}
+
 	log.Info("Successfully retrieved instance types", "count", len(instanceTypes))
 	return instanceTypes, nil
 }
