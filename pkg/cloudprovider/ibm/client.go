@@ -86,7 +86,7 @@ func (c *Client) GetVPCClient() (*VPCClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("getting VPC API key: %w", err)
 	}
-	return NewVPCClient(c.vpcURL, c.vpcAuthType, vpcAPIKey, c.region)
+	return NewVPCClient(c.vpcURL, c.vpcAuthType, vpcAPIKey, c.region, "")
 }
 
 // GetGlobalCatalogClient returns a configured Global Catalog API client

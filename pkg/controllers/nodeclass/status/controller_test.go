@@ -1494,7 +1494,7 @@ func TestNewController(t *testing.T) {
 				defer tt.cleanupEnv()
 			}
 
-			controller, err := NewController(tt.client)
+			controller, err := NewController(tt.client, tt.client)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1545,7 +1545,7 @@ func TestValidateRegion(t *testing.T) {
 	kubeClient := fake.NewClientBuilder().WithScheme(s).Build()
 
 	// Create controller with real credentials for VPC API access
-	controller, err := NewController(kubeClient)
+	controller, err := NewController(kubeClient, kubeClient)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -1605,7 +1605,7 @@ func TestValidateVPC(t *testing.T) {
 	s := getTestScheme()
 	kubeClient := fake.NewClientBuilder().WithScheme(s).Build()
 
-	controller, err := NewController(kubeClient)
+	controller, err := NewController(kubeClient, kubeClient)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -1905,7 +1905,7 @@ func TestValidateImage(t *testing.T) {
 	s := getTestScheme()
 	kubeClient := fake.NewClientBuilder().WithScheme(s).Build()
 
-	controller, err := NewController(kubeClient)
+	controller, err := NewController(kubeClient, kubeClient)
 	require.NoError(t, err)
 
 	tests := []struct {
