@@ -18,6 +18,7 @@ package status
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -279,7 +280,7 @@ func (c *Controller) validateIBMCloudResources(ctx context.Context, nc *v1alpha1
 	}
 
 	// Validate VPC exists and is accessible
-	if err := c.validateVPC(ctx, nc.Spec.VPC); err != nil {
+	if err := c.validateVPC(ctx, nc.Spec.VPC, nc.Spec.ResourceGroup); err != nil {
 		return fmt.Errorf("VPC validation failed: %w", err)
 	}
 
@@ -373,14 +374,53 @@ func (c *Controller) validateBusinessLogic(ctx context.Context, nc *v1alpha1.IBM
 	return nil
 }
 
+// retryWithExponentialBackoff retries a function with exponential backoff
+func retryWithExponentialBackoff(ctx context.Context, maxRetries int, baseDelay time.Duration, fn func() error) error {
+	var err error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+
+		// Don't retry on final attempt
+		if attempt == maxRetries-1 {
+			break
+		}
+
+		// Calculate delay with exponential backoff and jitter
+		delay := time.Duration(float64(baseDelay) * math.Pow(2, float64(attempt)))
+		if delay > 30*time.Second {
+			delay = 30 * time.Second // Cap at 30 seconds
+		}
+
+		// Add jitter (±25%)
+		jitter := time.Duration(float64(delay) * 0.25 * (2*math.Floor(math.Mod(float64(time.Now().UnixNano()), 2)) - 1))
+		delay += jitter
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+			continue
+		}
+	}
+	return err
+}
+
 // validateVPC checks if the VPC exists and is accessible
-func (c *Controller) validateVPC(ctx context.Context, vpcID string) error {
+func (c *Controller) validateVPC(ctx context.Context, vpcID, resourceGroupID string) error {
 	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
 	if err != nil {
 		return err
 	}
 
-	_, err = vpcClient.GetVPC(ctx, vpcID)
+	// Retry VPC validation with exponential backoff to handle transient API failures
+	err = retryWithExponentialBackoff(ctx, 3, 1*time.Second, func() error {
+		_, vpcErr := vpcClient.GetVPCWithResourceGroup(ctx, vpcID, resourceGroupID)
+		return vpcErr
+	})
+
 	if err != nil {
 		return fmt.Errorf("VPC %s not found or not accessible: %w", vpcID, err)
 	}
