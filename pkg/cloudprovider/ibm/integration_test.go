@@ -39,7 +39,7 @@ func TestRealVPCConnection(t *testing.T) {
 	defer cancel()
 
 	// Create VPC client with real credentials
-	client, err := NewVPCClient("", "iam", vpcAPIKey, region)
+	client, err := NewVPCClient("", "iam", vpcAPIKey, region, "")
 	if err != nil {
 		t.Fatalf("Failed to create VPC client: %v", err)
 	}

@@ -74,7 +74,7 @@ func (c *VPCClient) GetSDKClient() vpcClientInterface {
 	return c.client
 }
 
-func NewVPCClient(baseURL, authType, apiKey, region string) (*VPCClient, error) {
+func NewVPCClient(baseURL, authType, apiKey, region, resourceGroupID string) (*VPCClient, error) {
 	authenticator := &core.IamAuthenticator{
 		ApiKey: apiKey,
 	}
@@ -90,11 +90,12 @@ func NewVPCClient(baseURL, authType, apiKey, region string) (*VPCClient, error) 
 	}
 
 	return &VPCClient{
-		baseURL:  baseURL,
-		authType: authType,
-		apiKey:   apiKey,
-		region:   region,
-		client:   client,
+		baseURL:         baseURL,
+		authType:        authType,
+		apiKey:          apiKey,
+		region:          region,
+		resourceGroupID: resourceGroupID,
+		client:          client,
 	}, nil
 }
 
@@ -253,18 +254,32 @@ func (c *VPCClient) GetVPCWithResourceGroup(ctx context.Context, vpcID string, r
 	if effectiveResourceGroupID == "" {
 		effectiveResourceGroupID = c.resourceGroupID
 	}
+
+	// Debug logging for VPC validation troubleshooting
 	if effectiveResourceGroupID != "" {
 		if options.Headers == nil {
 			options.Headers = make(map[string]string)
 		}
 		options.Headers["X-Auth-Resource-Group"] = effectiveResourceGroupID
+		fmt.Printf("[VPC-DEBUG] GetVPCWithResourceGroup - VPC ID: %s, Resource Group: %s, Header Set: %v\n",
+			vpcID, effectiveResourceGroupID, options.Headers["X-Auth-Resource-Group"])
+	} else {
+		fmt.Printf("[VPC-DEBUG] GetVPCWithResourceGroup - VPC ID: %s, No Resource Group provided\n", vpcID)
 	}
 
-	vpc, _, err := c.client.GetVPCWithContext(ctx, options)
+	vpc, response, err := c.client.GetVPCWithContext(ctx, options)
+
+	// Log response details for debugging
+	if response != nil {
+		fmt.Printf("[VPC-DEBUG] API Response - Status: %d, Headers: %v\n", response.StatusCode, response.Headers)
+	}
+
 	if err != nil {
+		fmt.Printf("[VPC-DEBUG] GetVPCWithResourceGroup failed - Error: %v\n", err)
 		return nil, fmt.Errorf("getting VPC: %w", err)
 	}
 
+	fmt.Printf("[VPC-DEBUG] GetVPCWithResourceGroup success - VPC Name: %s\n", *vpc.Name)
 	return vpc, nil
 }
 

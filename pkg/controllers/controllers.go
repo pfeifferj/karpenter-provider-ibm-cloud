@@ -139,7 +139,7 @@ func NewControllers(
 		logger.Info("successfully registered autoplacement controller")
 	}
 
-	if statusCtrl, err := nodeclaasstatus.NewController(kubeClient); err != nil {
+	if statusCtrl, err := nodeclaasstatus.NewController(kubeClient, mgr.GetAPIReader()); err != nil {
 		logger.Error(err, "failed to create status controller")
 	} else {
 		controllers = append(controllers, statusCtrl)

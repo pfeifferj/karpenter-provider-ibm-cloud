@@ -42,6 +42,7 @@ import (
 // Controller reconciles an IBMNodeClass object to update its status
 type Controller struct {
 	kubeClient       client.Client
+	apiReader        client.Reader
 	ibmClient        *ibm.Client
 	subnetProvider   subnet.Provider
 	cache            *cache.Cache
@@ -49,9 +50,12 @@ type Controller struct {
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client) (*Controller, error) {
+func NewController(kubeClient client.Client, apiReader client.Reader) (*Controller, error) {
 	if kubeClient == nil {
 		return nil, fmt.Errorf("kubeClient cannot be nil")
+	}
+	if apiReader == nil {
+		return nil, fmt.Errorf("apiReader cannot be nil")
 	}
 
 	// Create IBM client for validation
@@ -68,6 +72,7 @@ func NewController(kubeClient client.Client) (*Controller, error) {
 
 	return &Controller{
 		kubeClient:       kubeClient,
+		apiReader:        apiReader,
 		ibmClient:        ibmClient,
 		subnetProvider:   subnetProvider,
 		cache:            zoneSubnetCache,
@@ -79,6 +84,7 @@ func NewController(kubeClient client.Client) (*Controller, error) {
 func NewTestController(kubeClient client.Client) *Controller {
 	return &Controller{
 		kubeClient: kubeClient,
+		apiReader:  kubeClient, // Use the same client for testing
 		// ibmClient and subnetProvider are nil for testing
 		// The controller handles nil clients gracefully by skipping IBM Cloud validation
 	}
@@ -86,8 +92,21 @@ func NewTestController(kubeClient client.Client) *Controller {
 
 // Reconcile executes a control loop for the resource
 func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	logger := log.FromContext(ctx).WithValues("nodeclass", req.NamespacedName)
+
 	nc := &v1alpha1.IBMNodeClass{}
-	if err := c.kubeClient.Get(ctx, req.NamespacedName, nc); err != nil {
+
+	// First try cache for performance
+	err := c.kubeClient.Get(ctx, req.NamespacedName, nc)
+	if err != nil && errors.IsNotFound(err) && c.apiReader != nil {
+		// Cache miss - try direct API read to handle race conditions
+		logger.V(2).Info("NodeClass not found in cache, trying direct API read")
+		err = c.apiReader.Get(ctx, req.NamespacedName, nc)
+		if err != nil {
+			return reconcile.Result{}, client.IgnoreNotFound(err)
+		}
+		logger.V(2).Info("NodeClass found via direct API read", "resourceVersion", nc.ResourceVersion)
+	} else if err != nil {
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 

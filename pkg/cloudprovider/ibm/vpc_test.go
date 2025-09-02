@@ -276,7 +276,7 @@ func TestNewVPCClient(t *testing.T) {
 	apiKey := "test-key"
 	region := "us-south"
 
-	client, err := NewVPCClient(baseURL, authType, apiKey, region)
+	client, err := NewVPCClient(baseURL, authType, apiKey, region, "")
 	if err != nil {
 		t.Fatalf("failed to create VPC client: %v", err)
 	}
