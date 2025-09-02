@@ -321,7 +321,7 @@ jobs:
           core_tests="TestE2EFullWorkflow TestE2EInstanceTypeSelection TestE2EDriftStability"
 
           # Scheduling constraint tests
-          scheduling_tests="TestE2EPodAntiAffinity TestE2ENodeAffinity"
+          scheduling_tests="TestE2EStartupTaints TestE2ETaintsBasicScheduling TestE2ETaintValues TestE2ETaintSync TestE2EUnregisteredTaintHandling TestE2EPodAntiAffinity TestE2ENodeAffinity"
 
           # Disruption and lifecycle tests
           lifecycle_tests="TestE2EPodDisruptionBudget"
