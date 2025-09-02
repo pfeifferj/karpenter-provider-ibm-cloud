@@ -88,7 +88,7 @@ func (s *E2ETestSuite) createTestNodeClass(t *testing.T, testName string) *v1alp
 func (s *E2ETestSuite) createTestNodeClassWithoutInstanceProfile(t *testing.T, testName string) *v1alpha1.IBMNodeClass {
 	// Helper to create string pointer
 	bootstrapMode := "cloud-init"
-	
+
 	nodeClass := &v1alpha1.IBMNodeClass{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "karpenter.ibm.sh/v1alpha1",
