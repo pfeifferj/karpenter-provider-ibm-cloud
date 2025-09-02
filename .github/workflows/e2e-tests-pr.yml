@@ -316,7 +316,7 @@ jobs:
         run: |
           echo "🚀 Starting E2E test suite..."
 
-          # Define test groups based on actual refactored test files
+          # Define test groups
           # Core functionality tests from basic_workflow_test.go
           core_tests="TestE2EFullWorkflow TestE2ENodePoolInstanceTypeSelection TestE2EInstanceTypeSelection TestE2EDriftStability"
 
