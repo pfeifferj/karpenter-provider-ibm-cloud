@@ -341,7 +341,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		"hasPlacementTarget", instancePrototype.PlacementTarget != nil,
 		"hasName", instancePrototype.Name != nil,
 		"hasAvailabilityPolicy", instancePrototype.AvailabilityPolicy != nil)
-	
+
 	// Log Profile struct details specifically
 	if instancePrototype.Profile != nil {
 		logger.Info("Profile field details for oneOf debugging",
