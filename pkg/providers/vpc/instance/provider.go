@@ -151,9 +151,15 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	selectedInstanceType := instanceTypes[0]
 	instanceProfile := selectedInstanceType.Name
 
+	// Validate that instanceProfile is not empty
+	if instanceProfile == "" {
+		return nil, fmt.Errorf("selected instance type has empty name: %+v, available types: %d", selectedInstanceType, len(instanceTypes))
+	}
+
 	logger.Info("Selected instance type",
 		"instanceType", instanceProfile,
 		"availableTypes", len(instanceTypes),
+		"selectedInstanceTypeDetails", fmt.Sprintf("%+v", selectedInstanceType),
 		"nodeClaim", nodeClaim.Name)
 
 	// Determine zone and subnet - support both explicit and dynamic selection
@@ -260,7 +266,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			ID: &nodeClass.Spec.VPC,
 		},
 		Name: &nodeClaim.Name,
-		Profile: &vpcv1.InstanceProfileIdentity{
+		Profile: &vpcv1.InstanceProfileIdentityByName{
 			Name: &instanceProfile,
 		},
 		BootVolumeAttachment: bootVolumeAttachment,
@@ -314,6 +320,36 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		Enabled:          &[]bool{true}[0],
 		Protocol:         &[]string{"http"}[0],
 		ResponseHopLimit: &[]int64{2}[0],
+	}
+
+	// Debug logging: COMPREHENSIVE struct validation
+	logger.Info("COMPREHENSIVE VPC instance prototype validation",
+		"instance_name", nodeClaim.Name,
+		"instanceProfile", instanceProfile,
+		"imageID", imageID,
+		"zone", zone,
+		"subnet", subnet,
+		"vpc", nodeClass.Spec.VPC,
+		"PlacementTarget", nodeClass.Spec.PlacementTarget,
+		// Check all required and optional fields
+		"hasImage", instancePrototype.Image != nil,
+		"hasZone", instancePrototype.Zone != nil,
+		"hasProfile", instancePrototype.Profile != nil,
+		"hasPrimaryNetworkAttachment", instancePrototype.PrimaryNetworkAttachment != nil,
+		"hasVPC", instancePrototype.VPC != nil,
+		"hasBootVolumeAttachment", instancePrototype.BootVolumeAttachment != nil,
+		"hasPlacementTarget", instancePrototype.PlacementTarget != nil,
+		"hasName", instancePrototype.Name != nil,
+		"hasAvailabilityPolicy", instancePrototype.AvailabilityPolicy != nil)
+	
+	// Log Profile struct details specifically
+	if instancePrototype.Profile != nil {
+		logger.Info("Profile field details for oneOf debugging",
+			"profileType", fmt.Sprintf("%T", instancePrototype.Profile),
+			"profileName", instanceProfile,
+			"profilePtr", fmt.Sprintf("%p", instancePrototype.Profile))
+	} else {
+		logger.Info("CRITICAL: Profile field is nil - this violates oneOf constraint!")
 	}
 
 	// Create the instance
