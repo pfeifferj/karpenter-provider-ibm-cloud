@@ -178,17 +178,20 @@ func TestE2EPodDisruptionBudget(t *testing.T) {
 	testName := fmt.Sprintf("pdb-test-%d", time.Now().Unix())
 	t.Logf("Starting PodDisruptionBudget test: %s", testName)
 	ctx := context.Background()
+	
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		t.Logf("Running deferred cleanup for test: %s", testName)
+		suite.cleanupTestResources(t, testName)
+	}()
 
 	// Create infrastructure
 	nodeClass := suite.createTestNodeClass(t, testName)
 	suite.waitForNodeClassReady(t, nodeClass.Name)
 	_ = suite.createTestNodePool(t, testName, nodeClass.Name)
 
-	// Create deployment
+	// Create deployment with 3 replicas (default from createTestWorkload)
 	deployment := suite.createTestWorkload(t, testName)
-	deployment.Spec.Replicas = &[]int32{3}[0]
-	err := suite.kubeClient.Update(ctx, deployment)
-	require.NoError(t, err)
 
 	suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
 
@@ -215,7 +218,7 @@ func TestE2EPodDisruptionBudget(t *testing.T) {
 		},
 	}
 
-	err = suite.kubeClient.Create(ctx, pdb)
+	err := suite.kubeClient.Create(ctx, pdb)
 	require.NoError(t, err)
 	t.Logf("Created restrictive PDB: %s", pdb.Name)
 
@@ -234,9 +237,8 @@ func TestE2EPodDisruptionBudget(t *testing.T) {
 	require.True(t, updatedPDB.Status.CurrentHealthy >= updatedPDB.Status.DesiredHealthy,
 		"PDB should maintain desired number of healthy pods")
 
-	// Cleanup
+	// Cleanup workload explicitly (resources will be cleaned by defer)
 	suite.cleanupTestWorkload(t, deployment.Name, "default")
-	suite.cleanupTestResources(t, testName)
 	t.Logf("✅ PodDisruptionBudget test completed: %s", testName)
 }
 
@@ -366,7 +368,7 @@ func TestE2ENodeAffinity(t *testing.T) {
 	nodePool := suite.createTestNodePool(t, testName, nodeClass.Name)
 
 	// Wait for initial node to be created and get its instance type
-	initialDeployment := suite.createTestWorkload(t, testName+"-initial")
+	initialDeployment := suite.createTestWorkload(t, testName)
 	suite.waitForPodsToBeScheduled(t, initialDeployment.Name, "default")
 
 	// Get the instance type of the first node
@@ -376,8 +378,7 @@ func TestE2ENodeAffinity(t *testing.T) {
 	require.NotEmpty(t, firstNodeInstanceType, "Node should have instance type label")
 	t.Logf("First node instance type: %s", firstNodeInstanceType)
 
-	// Clean up the initial deployment
-	suite.cleanupTestWorkload(t, initialDeployment.Name, "default")
+	// Don't clean up initial deployment yet - we need the nodes to remain for affinity test
 
 	// Create deployment with node affinity targeting the same instance type
 	deployment := &appsv1.Deployment{
@@ -473,8 +474,9 @@ func TestE2ENodeAffinity(t *testing.T) {
 			pod.Name, pod.Spec.NodeName, nodeInstanceType)
 	}
 
-	// Cleanup
+	// Cleanup both deployments
 	suite.cleanupTestWorkload(t, deployment.Name, "default")
+	suite.cleanupTestWorkload(t, initialDeployment.Name, "default")
 	suite.cleanupTestResources(t, testName)
 	t.Logf("✅ Node affinity test completed: %s", testName)
 }
