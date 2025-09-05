@@ -239,6 +239,73 @@ type InstanceTypeRequirements struct {
 // +kubebuilder:validation:XValidation:rule="self.bootstrapMode != 'iks-api' || has(self.iksClusterID)", message="iksClusterID is required when bootstrapMode is 'iks-api'"
 // +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == \"\"", message="zone must be within the specified region"
 // +kubebuilder:validation:XValidation:rule="self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="vpc must be a valid IBM Cloud VPC ID format"
+// BlockDeviceMapping defines storage device configuration for instances
+// This allows customization of boot and data volumes attached to instances
+type BlockDeviceMapping struct {
+	// DeviceName is the name for this volume attachment
+	// If not specified, a name will be auto-generated
+	// +optional
+	DeviceName *string `json:"deviceName,omitempty"`
+
+	// VolumeSpec contains the volume configuration
+	// +optional
+	VolumeSpec *VolumeSpec `json:"volumeSpec,omitempty"`
+
+	// RootVolume indicates if this is the boot/root volume
+	// Only one volume can be marked as root volume
+	// +optional
+	RootVolume bool `json:"rootVolume,omitempty"`
+}
+
+// VolumeSpec defines IBM Cloud volume configuration
+type VolumeSpec struct {
+	// Capacity is the volume size in gigabytes
+	// For boot volumes: minimum is typically the image's minimum provisioned size, maximum is 250GB
+	// For data volumes: ranges vary by profile (typically 10GB to 16000GB)
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=16000
+	// +optional
+	Capacity *int64 `json:"capacity,omitempty"`
+
+	// Profile is the storage profile to use
+	// Examples: "general-purpose", "5iops-tier", "10iops-tier", "custom"
+	// If not specified, defaults to "general-purpose"
+	// +optional
+	Profile *string `json:"profile,omitempty"`
+
+	// IOPS is the max I/O operations per second
+	// Only applicable when Profile is "custom" or "defined_performance"
+	// Must be within the range supported by the profile and capacity
+	// +optional
+	// +kubebuilder:validation:Minimum=100
+	// +kubebuilder:validation:Maximum=64000
+	IOPS *int64 `json:"iops,omitempty"`
+
+	// Bandwidth is the max bandwidth in megabits per second
+	// If not specified, it will be calculated based on profile, capacity, and IOPS
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=16000
+	Bandwidth *int64 `json:"bandwidth,omitempty"`
+
+	// EncryptionKeyID is the CRN of the customer root key for volume encryption
+	// If not specified, provider-managed encryption will be used
+	// Example: "crn:v1:bluemix:public:kms:us-south:a/..."
+	// +optional
+	EncryptionKeyID *string `json:"encryptionKeyID,omitempty"`
+
+	// DeleteOnTermination controls whether the volume is deleted when the instance is terminated
+	// Defaults to true
+	// +kubebuilder:default=true
+	// +optional
+	DeleteOnTermination *bool `json:"deleteOnTermination,omitempty"`
+
+	// Tags are user tags to apply to the volume
+	// +optional
+	// +kubebuilder:validation:MaxItems=10
+	Tags []string `json:"tags,omitempty"`
+}
+
 // +kubebuilder:validation:XValidation:rule="self.subnet == \"\" || self.subnet.matches('^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="subnet must be a valid IBM Cloud subnet ID format"
 // +kubebuilder:validation:XValidation:rule="self.image.matches('^[a-z0-9-]+$')", message="image must contain only lowercase letters, numbers, and hyphens"
 type IBMNodeClassSpec struct {
@@ -372,6 +439,13 @@ type IBMNodeClassSpec struct {
 	// When configured, nodes will be automatically registered with IBM Cloud Load Balancers
 	// +optional
 	LoadBalancerIntegration *LoadBalancerIntegration `json:"loadBalancerIntegration,omitempty"`
+
+	// BlockDeviceMappings defines custom block device configurations for instances
+	// If not specified, a default 100GB general-purpose boot volume will be used
+	// When specified, at least one mapping must have RootVolume set to true
+	// +optional
+	// +kubebuilder:validation:MaxItems=10
+	BlockDeviceMappings []BlockDeviceMapping `json:"blockDeviceMappings,omitempty"`
 }
 
 // IBMNodeClassStatus defines the observed state of IBMNodeClass
