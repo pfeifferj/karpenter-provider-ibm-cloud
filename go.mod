@@ -26,7 +26,7 @@ require (
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
 	sigs.k8s.io/controller-runtime v0.21.0
 	sigs.k8s.io/controller-tools v0.18.0
-	sigs.k8s.io/karpenter v1.6.1
+	sigs.k8s.io/karpenter v1.6.2
 )
 
 require (
