@@ -62,6 +62,7 @@ import (
 	nodeclaimgc "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
 	nodeclaimloadbalancer "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/loadbalancer"
 	nodeclaimregistration "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
+	nodeclaimstartuptaint "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/startuptaint"
 	nodeclaimtagging "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/tagging"
 	nodeclassautoplacement "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/autoplacement"
 	nodeclasshash "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
@@ -166,6 +167,14 @@ func NewControllers(
 		logger.Error(err, "failed to create registration controller")
 	} else {
 		controllers = append(controllers, registrationCtrl)
+	}
+
+	// Add startup taint lifecycle controller for proper taint sequencing
+	startupTaintCtrl := nodeclaimstartuptaint.NewController(kubeClient)
+	if err := startupTaintCtrl.Register(ctx, mgr); err != nil {
+		logger.Error(err, "failed to register startup taint lifecycle controller")
+	} else {
+		logger.Info("registered startup taint lifecycle controller")
 	}
 
 	// Add tagging controller (VPC mode only)
