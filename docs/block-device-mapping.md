@@ -91,7 +91,7 @@ spec:
   subnet: 0717-197e06f4-b500-426c-bc0f-900b215f996c
   securityGroups:
     - r010-87654321-4321-8765-cba9-876543210fed
-  
+
   blockDeviceMappings:
     - rootVolume: true
       volumeSpec:
@@ -123,7 +123,7 @@ blockDeviceMappings:
     volumeSpec:
       capacity: 100
       profile: "general-purpose"
-  
+
   # Application storage
   - deviceName: "app-data"
     volumeSpec:
@@ -132,7 +132,7 @@ blockDeviceMappings:
       deleteOnTermination: false      # Persist data
       tags:
         - "application-storage"
-  
+
   # Database storage with custom IOPS
   - deviceName: "database"
     volumeSpec:
@@ -155,13 +155,13 @@ blockDeviceMappings:
     volumeSpec:
       capacity: 100
       profile: "general-purpose"
-  
+
   - deviceName: "database-logs"
     volumeSpec:
       capacity: 200
       profile: "10iops-tier"          # Fast logs
       deleteOnTermination: false
-  
+
   - deviceName: "database-data"
     volumeSpec:
       capacity: 2000
@@ -302,4 +302,4 @@ blockDeviceMappings:
 
 ## API Reference
 
-For complete API specification, see the [IBMNodeClass API reference](../pkg/apis/v1alpha1/ibmnodeclass_types.go).
+For complete API specification, see the IBMNodeClass Go API definitions in the source code repository at `pkg/apis/v1alpha1/ibmnodeclass_types.go`.
