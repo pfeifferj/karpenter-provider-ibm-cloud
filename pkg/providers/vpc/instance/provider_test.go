@@ -2176,7 +2176,7 @@ func TestVPCInstanceProvider_VNIConfiguration(t *testing.T) {
 func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 	tests := []struct {
 		name                 string
-		blockDeviceMappings []v1alpha1.BlockDeviceMapping
+		blockDeviceMappings  []v1alpha1.BlockDeviceMapping
 		expectedBootCapacity int64
 		expectedBootProfile  string
 		expectedDataVolumes  int
@@ -2184,7 +2184,7 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 	}{
 		{
 			name:                 "Default configuration when no mappings specified",
-			blockDeviceMappings: nil,
+			blockDeviceMappings:  nil,
 			expectedBootCapacity: 100,
 			expectedBootProfile:  "general-purpose",
 			expectedDataVolumes:  0,
@@ -2195,8 +2195,8 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 				{
 					RootVolume: true,
 					VolumeSpec: &v1alpha1.VolumeSpec{
-						Capacity: &[]int64{200}[0],
-						Profile:  &[]string{"10iops-tier"}[0],
+						Capacity:            &[]int64{200}[0],
+						Profile:             &[]string{"10iops-tier"}[0],
 						DeleteOnTermination: &[]bool{false}[0],
 					},
 				},
@@ -2214,9 +2214,9 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 				{
 					RootVolume: true,
 					VolumeSpec: &v1alpha1.VolumeSpec{
-						Capacity: &[]int64{150}[0],
-						Profile:  &[]string{"custom"}[0],
-						IOPS:     &[]int64{5000}[0],
+						Capacity:  &[]int64{150}[0],
+						Profile:   &[]string{"custom"}[0],
+						IOPS:      &[]int64{5000}[0],
 						Bandwidth: &[]int64{250}[0],
 					},
 				},
@@ -2300,7 +2300,7 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 					},
 				},
 			},
-			expectedBootCapacity: 100, // Default
+			expectedBootCapacity: 100,               // Default
 			expectedBootProfile:  "general-purpose", // Default
 			expectedDataVolumes:  1,
 		},
@@ -2310,29 +2310,29 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create test provider
 			provider := &VPCInstanceProvider{}
-			
+
 			// Create test node class
 			nodeClass := &v1alpha1.IBMNodeClass{
 				Spec: v1alpha1.IBMNodeClassSpec{
 					BlockDeviceMappings: tt.blockDeviceMappings,
 				},
 			}
-			
+
 			// Call buildVolumeAttachments
 			bootVolume, dataVolumes, err := provider.buildVolumeAttachments(nodeClass, "test-instance")
-			
+
 			// Verify no error
 			assert.NoError(t, err)
 			assert.NotNil(t, bootVolume)
-			
+
 			// Verify boot volume
 			assert.Equal(t, tt.expectedBootCapacity, *bootVolume.Volume.Capacity)
 			profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentity)
 			assert.Equal(t, tt.expectedBootProfile, *profileIdentity.Name)
-			
+
 			// Verify data volumes count
 			assert.Len(t, dataVolumes, tt.expectedDataVolumes)
-			
+
 			// Run custom validations if provided
 			if tt.validateAttachments != nil {
 				tt.validateAttachments(t, bootVolume, dataVolumes)
@@ -2344,7 +2344,7 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 // TestVPCInstanceProvider_BlockDeviceMappingValidation tests validation logic for block device mappings
 func TestVPCInstanceProvider_BlockDeviceMappingValidation(t *testing.T) {
 	provider := &VPCInstanceProvider{}
-	
+
 	t.Run("Empty volume spec for root volume uses defaults", func(t *testing.T) {
 		nodeClass := &v1alpha1.IBMNodeClass{
 			Spec: v1alpha1.IBMNodeClassSpec{
@@ -2356,14 +2356,14 @@ func TestVPCInstanceProvider_BlockDeviceMappingValidation(t *testing.T) {
 				},
 			},
 		}
-		
+
 		bootVolume, _, err := provider.buildVolumeAttachments(nodeClass, "test")
 		assert.NoError(t, err)
 		assert.Equal(t, int64(100), *bootVolume.Volume.Capacity)
 		profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentity)
 		assert.Equal(t, "general-purpose", *profileIdentity.Name)
 	})
-	
+
 	t.Run("Data volume without spec is skipped", func(t *testing.T) {
 		nodeClass := &v1alpha1.IBMNodeClass{
 			Spec: v1alpha1.IBMNodeClassSpec{
@@ -2381,7 +2381,7 @@ func TestVPCInstanceProvider_BlockDeviceMappingValidation(t *testing.T) {
 				},
 			},
 		}
-		
+
 		_, dataVolumes, err := provider.buildVolumeAttachments(nodeClass, "test")
 		assert.NoError(t, err)
 		assert.Len(t, dataVolumes, 1) // Only one data volume should be created

@@ -208,6 +208,18 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		AutoDelete: &[]bool{true}[0],
 	}
 
+	// Add resource group to VNI if specified (required for oneOf validation)
+	if nodeClass.Spec.ResourceGroup != "" {
+		resourceGroupID, rgErr := p.resolveResourceGroupID(ctx, nodeClass.Spec.ResourceGroup)
+		if rgErr != nil {
+			return nil, fmt.Errorf("resolving resource group for VNI %s: %w", nodeClass.Spec.ResourceGroup, rgErr)
+		}
+		vniPrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+			ID: &resourceGroupID,
+		}
+		logger.Info("Added resource group to VNI", "resource_group", resourceGroupID)
+	}
+
 	// Add security groups if specified, otherwise use default
 	if len(nodeClass.Spec.SecurityGroups) > 0 {
 		var securityGroups []vpcv1.SecurityGroupIdentityIntf
@@ -738,14 +750,14 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 	// Process block device mappings
 	var bootVolumeAttachment *vpcv1.VolumeAttachmentPrototypeInstanceByImageContext
 	var additionalVolumes []vpcv1.VolumeAttachmentPrototype
-	
+
 	for _, mapping := range nodeClass.Spec.BlockDeviceMappings {
 		if mapping.RootVolume {
 			// Build boot volume from mapping
 			bootVolume := &vpcv1.VolumePrototypeInstanceByImageContext{
 				Name: &[]string{fmt.Sprintf("%s-boot", instanceName)}[0],
 			}
-			
+
 			// Set volume spec if provided
 			if mapping.VolumeSpec != nil {
 				// Set capacity if specified
@@ -755,7 +767,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 					// Default to 100GB if not specified
 					bootVolume.Capacity = &[]int64{100}[0]
 				}
-				
+
 				// Set profile if specified
 				if mapping.VolumeSpec.Profile != nil {
 					bootVolume.Profile = &vpcv1.VolumeProfileIdentity{
@@ -767,24 +779,24 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 						Name: &[]string{"general-purpose"}[0],
 					}
 				}
-				
+
 				// Set IOPS if specified (for custom profiles)
 				if mapping.VolumeSpec.IOPS != nil {
 					bootVolume.Iops = mapping.VolumeSpec.IOPS
 				}
-				
+
 				// Set bandwidth if specified
 				if mapping.VolumeSpec.Bandwidth != nil {
 					bootVolume.Bandwidth = mapping.VolumeSpec.Bandwidth
 				}
-				
+
 				// Set encryption key if specified
 				if mapping.VolumeSpec.EncryptionKeyID != nil {
 					bootVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentity{
 						CRN: mapping.VolumeSpec.EncryptionKeyID,
 					}
 				}
-				
+
 				// Set user tags if specified
 				if len(mapping.VolumeSpec.Tags) > 0 {
 					bootVolume.UserTags = mapping.VolumeSpec.Tags
@@ -796,18 +808,18 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 					Name: &[]string{"general-purpose"}[0],
 				}
 			}
-			
+
 			// Set delete on termination (default true)
 			deleteOnTermination := true
 			if mapping.VolumeSpec != nil && mapping.VolumeSpec.DeleteOnTermination != nil {
 				deleteOnTermination = *mapping.VolumeSpec.DeleteOnTermination
 			}
-			
+
 			bootVolumeAttachment = &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
-				Volume: bootVolume,
+				Volume:                       bootVolume,
 				DeleteVolumeOnInstanceDelete: &deleteOnTermination,
 			}
-			
+
 			// Set device name if specified
 			if mapping.DeviceName != nil {
 				bootVolumeAttachment.Name = mapping.DeviceName
@@ -817,16 +829,16 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 			if mapping.VolumeSpec == nil {
 				continue // Skip if no volume spec for data volume
 			}
-			
+
 			volumeName := fmt.Sprintf("%s-data-%d", instanceName, len(additionalVolumes))
 			if mapping.DeviceName != nil {
 				volumeName = *mapping.DeviceName
 			}
-			
+
 			dataVolume := &vpcv1.VolumePrototype{
 				Name: &volumeName,
 			}
-			
+
 			// Set capacity (required for data volumes)
 			if mapping.VolumeSpec.Capacity != nil {
 				dataVolume.Capacity = mapping.VolumeSpec.Capacity
@@ -834,7 +846,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 				// Default to 100GB for data volumes
 				dataVolume.Capacity = &[]int64{100}[0]
 			}
-			
+
 			// Set profile
 			if mapping.VolumeSpec.Profile != nil {
 				dataVolume.Profile = &vpcv1.VolumeProfileIdentity{
@@ -845,46 +857,46 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 					Name: &[]string{"general-purpose"}[0],
 				}
 			}
-			
+
 			// Set IOPS if specified
 			if mapping.VolumeSpec.IOPS != nil {
 				dataVolume.Iops = mapping.VolumeSpec.IOPS
 			}
-			
+
 			// Set bandwidth if specified
 			if mapping.VolumeSpec.Bandwidth != nil {
 				dataVolume.Bandwidth = mapping.VolumeSpec.Bandwidth
 			}
-			
+
 			// Set encryption key if specified
 			if mapping.VolumeSpec.EncryptionKeyID != nil {
 				dataVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentity{
 					CRN: mapping.VolumeSpec.EncryptionKeyID,
 				}
 			}
-			
+
 			// Set user tags if specified
 			if len(mapping.VolumeSpec.Tags) > 0 {
 				dataVolume.UserTags = mapping.VolumeSpec.Tags
 			}
-			
+
 			// Set zone (required for data volumes)
 			// This will be set to the same zone as the instance
 			// The zone will be set by the caller
-			
+
 			// Set delete on termination (default true)
 			deleteOnTermination := true
 			if mapping.VolumeSpec.DeleteOnTermination != nil {
 				deleteOnTermination = *mapping.VolumeSpec.DeleteOnTermination
 			}
-			
+
 			// Convert VolumePrototype to VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext
 			volumeContext := &vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext{
 				Name:     dataVolume.Name,
 				Capacity: dataVolume.Capacity,
 				Profile:  dataVolume.Profile,
 			}
-			
+
 			if dataVolume.Iops != nil {
 				volumeContext.Iops = dataVolume.Iops
 			}
@@ -895,17 +907,17 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 				volumeContext.UserTags = dataVolume.UserTags
 			}
 			// Note: EncryptionKey and ResourceGroup would need special handling if supported
-			
+
 			volumeAttachment := vpcv1.VolumeAttachmentPrototype{
-				Name:                          &volumeName,
-				Volume:                        volumeContext,
+				Name:                         &volumeName,
+				Volume:                       volumeContext,
 				DeleteVolumeOnInstanceDelete: &deleteOnTermination,
 			}
-			
+
 			additionalVolumes = append(additionalVolumes, volumeAttachment)
 		}
 	}
-	
+
 	// If no root volume was specified in mappings, use default
 	if bootVolumeAttachment == nil {
 		bootVolumeAttachment = &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
@@ -919,7 +931,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 			DeleteVolumeOnInstanceDelete: &[]bool{true}[0],
 		}
 	}
-	
+
 	return bootVolumeAttachment, additionalVolumes, nil
 }
 

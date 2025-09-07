@@ -178,7 +178,7 @@ func TestE2EPodDisruptionBudget(t *testing.T) {
 	testName := fmt.Sprintf("pdb-test-%d", time.Now().Unix())
 	t.Logf("Starting PodDisruptionBudget test: %s", testName)
 	ctx := context.Background()
-	
+
 	// Ensure cleanup happens even if test fails
 	defer func() {
 		t.Logf("Running deferred cleanup for test: %s", testName)
