@@ -208,7 +208,7 @@ func (s *E2ETestSuite) waitForPodsToBeScheduled(t *testing.T, deploymentName, na
 		if checkCount%3 == 0 {
 			s.logNodeClaimStatus(t)
 			// Extract testName from deploymentName to get correct NodePool name
-			// deploymentName format: "testname-workload" -> NodePool: "testname-nodepool" 
+			// deploymentName format: "testname-workload" -> NodePool: "testname-nodepool"
 			if strings.HasSuffix(deploymentName, "-workload") {
 				testName := strings.TrimSuffix(deploymentName, "-workload")
 				s.logNodePoolStatus(t, testName+"-nodepool")

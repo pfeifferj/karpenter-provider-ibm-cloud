@@ -246,11 +246,11 @@ type BlockDeviceMapping struct {
 	// If not specified, a name will be auto-generated
 	// +optional
 	DeviceName *string `json:"deviceName,omitempty"`
-	
+
 	// VolumeSpec contains the volume configuration
 	// +optional
 	VolumeSpec *VolumeSpec `json:"volumeSpec,omitempty"`
-	
+
 	// RootVolume indicates if this is the boot/root volume
 	// Only one volume can be marked as root volume
 	// +optional
@@ -266,13 +266,13 @@ type VolumeSpec struct {
 	// +kubebuilder:validation:Maximum=16000
 	// +optional
 	Capacity *int64 `json:"capacity,omitempty"`
-	
+
 	// Profile is the storage profile to use
 	// Examples: "general-purpose", "5iops-tier", "10iops-tier", "custom"
 	// If not specified, defaults to "general-purpose"
 	// +optional
 	Profile *string `json:"profile,omitempty"`
-	
+
 	// IOPS is the max I/O operations per second
 	// Only applicable when Profile is "custom" or "defined_performance"
 	// Must be within the range supported by the profile and capacity
@@ -280,26 +280,26 @@ type VolumeSpec struct {
 	// +kubebuilder:validation:Minimum=100
 	// +kubebuilder:validation:Maximum=64000
 	IOPS *int64 `json:"iops,omitempty"`
-	
+
 	// Bandwidth is the max bandwidth in megabits per second
 	// If not specified, it will be calculated based on profile, capacity, and IOPS
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=16000
 	Bandwidth *int64 `json:"bandwidth,omitempty"`
-	
+
 	// EncryptionKeyID is the CRN of the customer root key for volume encryption
 	// If not specified, provider-managed encryption will be used
 	// Example: "crn:v1:bluemix:public:kms:us-south:a/..."
 	// +optional
 	EncryptionKeyID *string `json:"encryptionKeyID,omitempty"`
-	
+
 	// DeleteOnTermination controls whether the volume is deleted when the instance is terminated
 	// Defaults to true
 	// +kubebuilder:default=true
 	// +optional
 	DeleteOnTermination *bool `json:"deleteOnTermination,omitempty"`
-	
+
 	// Tags are user tags to apply to the volume
 	// +optional
 	// +kubebuilder:validation:MaxItems=10
@@ -439,7 +439,7 @@ type IBMNodeClassSpec struct {
 	// When configured, nodes will be automatically registered with IBM Cloud Load Balancers
 	// +optional
 	LoadBalancerIntegration *LoadBalancerIntegration `json:"loadBalancerIntegration,omitempty"`
-	
+
 	// BlockDeviceMappings defines custom block device configurations for instances
 	// If not specified, a default 100GB general-purpose boot volume will be used
 	// When specified, at least one mapping must have RootVolume set to true

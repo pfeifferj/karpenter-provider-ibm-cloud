@@ -11,7 +11,7 @@ spec:
   subnet: 0717-197e06f4-b500-426c-bc0f-900b215f996c
   securityGroups:
     - r010-87654321-4321-8765-cba9-876543210fed
-  
+
   # Block Device Mappings - Similar to AWS Karpenter
   blockDeviceMappings:
     # Custom boot volume with high IOPS
@@ -24,7 +24,7 @@ spec:
         tags:
           - "boot-volume"
           - "encrypted"
-    
+
     # Additional data volume for application storage
     - deviceName: "application-data"
       volumeSpec:
@@ -34,7 +34,7 @@ spec:
         tags:
           - "application-storage"
           - "persistent"
-    
+
     # High-performance storage for databases
     - deviceName: "database-storage"
       volumeSpec:
@@ -65,7 +65,7 @@ spec:
         apiVersion: karpenter.ibm.sh/v1alpha1
         kind: IBMNodeClass
         name: block-device-example
-      
+
       # Resource requirements
       requirements:
         - key: node.kubernetes.io/instance-type
@@ -74,13 +74,13 @@ spec:
         - key: kubernetes.io/arch
           operator: In
           values: ["amd64"]
-      
+
       # Node configurations
       taints:
         - key: "storage-tier"
           value: "high-performance"
           effect: NoSchedule
-  
+
   # Disruption settings
   disruption:
     consolidationPolicy: WhenEmpty
