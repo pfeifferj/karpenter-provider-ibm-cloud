@@ -24,7 +24,7 @@ import (
 
 // GetAvailableInstanceType returns a suitable instance type for testing
 func (s *E2ETestSuite) GetAvailableInstanceType(t *testing.T) string {
-	// Use hardcoded instance types that we know work in br-sao
+	// Use hardcoded instance types that are commonly available
 	availableTypes := []string{
 		"bx2-2x8",   // 2 vCPU, 8 GB RAM
 		"bx3d-2x10", // 2 vCPU, 10 GB RAM
@@ -43,7 +43,7 @@ func (s *E2ETestSuite) GetMultipleInstanceTypes(t *testing.T, count int) []strin
 		count = 3
 	}
 
-	// Use hardcoded instance types that we know work in br-sao
+	// Use hardcoded instance types that are commonly available
 	availableTypes := []string{
 		"bx2-2x8",   // 2 vCPU, 8 GB RAM
 		"bx3d-2x10", // 2 vCPU, 10 GB RAM

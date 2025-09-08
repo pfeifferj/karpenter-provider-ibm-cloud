@@ -137,17 +137,6 @@ spec:
                           type: array
                       type: object
                   type: object
-                  x-kubernetes-validations:
-                  - message: instanceProfile and instanceRequirements are mutually
-                      exclusive
-                    rule: '!(has(self.instanceProfile) && has(self.instanceRequirements))'
-                  - message: iksClusterID is required when bootstrapMode is 'iks-api'
-                    rule: self.bootstrapMode != 'iks-api' || has(self.iksClusterID)
-                  - message: zone must be within the specified region
-                    rule: self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1])
-                      || self.zone == ""
-                  - message: vpc must be a valid IBM Cloud VPC ID format
-                    rule: self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')
                 maxItems: 10
                 type: array
               bootstrapMode:
@@ -485,6 +474,14 @@ spec:
               rule: self.subnet == "" || self.subnet.matches('^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')
             - message: image must contain only lowercase letters, numbers, and hyphens
               rule: self.image.matches('^[a-z0-9-]+$')
+            - message: instanceProfile and instanceRequirements are mutually exclusive
+              rule: '!(has(self.instanceProfile) && has(self.instanceRequirements))'
+            - message: iksClusterID is required when bootstrapMode is 'iks-api'
+              rule: self.bootstrapMode != 'iks-api' || has(self.iksClusterID)
+            - message: zone must be within the specified region
+              rule: self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == ""
+            - message: vpc must be a valid IBM Cloud VPC ID format
+              rule: self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')
           status:
             description: Status defines the observed state of IBMNodeClass
             properties:

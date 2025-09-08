@@ -190,7 +190,7 @@ func (s *E2ETestSuite) verifyCleanState(t *testing.T) {
 	if err == nil && len(nodeClaimList.Items) > 0 {
 		t.Logf("⚠️ Warning: Found %d NodeClaim resources before test start", len(nodeClaimList.Items))
 		for _, nc := range nodeClaimList.Items {
-			t.Logf("  - %s (Status: %s)", nc.Name, nc.Status.Conditions)
+			t.Logf("  - %s (Conditions: %d)", nc.Name, len(nc.Status.Conditions))
 		}
 	}
 
