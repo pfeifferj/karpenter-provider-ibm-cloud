@@ -20,6 +20,7 @@ package e2e
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,7 +207,12 @@ func (s *E2ETestSuite) waitForPodsToBeScheduled(t *testing.T, deploymentName, na
 		// Log NodeClaim status every 3 checks
 		if checkCount%3 == 0 {
 			s.logNodeClaimStatus(t)
-			s.logNodePoolStatus(t, deploymentName+"-nodepool") // Assuming naming convention
+			// Extract testName from deploymentName to get correct NodePool name
+			// deploymentName format: "testname-workload" -> NodePool: "testname-nodepool"
+			if strings.HasSuffix(deploymentName, "-workload") {
+				testName := strings.TrimSuffix(deploymentName, "-workload")
+				s.logNodePoolStatus(t, testName+"-nodepool")
+			}
 		}
 
 		// If we're still waiting after many checks, dump some diagnostics
