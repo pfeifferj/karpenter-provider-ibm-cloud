@@ -52,7 +52,7 @@ spec:
 
 ### Bootstrap Mode Limitations
 
-#### IKS Mode Instance Type Constraint
+#### IKS Mode Instance Type Constraints {#iks-mode-instance-type-constraints}
 - **Impact**: When using IKS mode (when `iksClusterID` is specified or `bootstrapMode: "iks-api"`), the provisioner cannot dynamically select instance types based on pod requirements
 - **Root Cause**: IKS Worker Pool Resize API (`PATCH /v1/clusters/{id}/workerpools/{poolId}`) adds nodes with instance types pre-configured in the worker pool
 - **Current Behavior**:
