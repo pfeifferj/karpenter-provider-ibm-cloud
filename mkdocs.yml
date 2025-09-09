@@ -17,6 +17,14 @@ copyright: |
 docs_dir: docs/
 site_dir: site/
 
+# Exclude specific patterns from being processed
+exclude_docs: |
+  venv/
+  mkdocs-venv/
+  **/venv/**
+  **/.venv/**
+  node_modules/
+
 # Navigation
 nav:
   - Home: index.md

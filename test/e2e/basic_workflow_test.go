@@ -78,39 +78,39 @@ func TestE2ENodePoolInstanceTypeSelection(t *testing.T) {
 	testName := fmt.Sprintf("nodepool-instance-selection-%d", time.Now().Unix())
 	t.Logf("Starting NodePool instance type selection test: %s", testName)
 
-	// Create NodeClass without instanceProfile (let NodePool control selection)
-	nodeClass := suite.createTestNodeClassWithoutInstanceProfile(t, testName)
-	t.Logf("Created NodeClass without instanceProfile: %s", nodeClass.Name)
+	// 🛡️ Use automatic cleanup wrapper - CRITICAL for preventing stale resources
+	suite.WithAutoCleanup(t, testName, func() {
+		// Create NodeClass without instanceProfile (let NodePool control selection)
+		nodeClass := suite.createTestNodeClassWithoutInstanceProfile(t, testName)
+		t.Logf("Created NodeClass without instanceProfile: %s", nodeClass.Name)
 
-	// Wait for NodeClass to be ready
-	suite.waitForNodeClassReady(t, nodeClass.Name)
-	t.Logf("NodeClass is ready: %s", nodeClass.Name)
+		// Wait for NodeClass to be ready
+		suite.waitForNodeClassReady(t, nodeClass.Name)
+		t.Logf("NodeClass is ready: %s", nodeClass.Name)
 
-	// Create NodePool with multiple instance types matching customer's config
-	nodePool := suite.createTestNodePoolWithMultipleInstanceTypes(t, testName, nodeClass.Name)
-	t.Logf("Created NodePool with multiple instance types: %s", nodePool.Name)
+		// Create NodePool with multiple instance types matching customer's config
+		nodePool := suite.createTestNodePoolWithMultipleInstanceTypes(t, testName, nodeClass.Name)
+		t.Logf("Created NodePool with multiple instance types: %s", nodePool.Name)
 
-	// Create workload with specific resource requirements to trigger provisioning
-	deployment := suite.createTestWorkloadWithInstanceTypeRequirements(t, testName)
-	t.Logf("Created test workload with specific resource requirements: %s", deployment.Name)
+		// Create workload with specific resource requirements to trigger provisioning
+		deployment := suite.createTestWorkloadWithInstanceTypeRequirements(t, testName)
+		t.Logf("Created test workload with specific resource requirements: %s", deployment.Name)
 
-	// Wait for pods to be scheduled
-	suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
-	t.Logf("Pods scheduled successfully")
+		// Wait for pods to be scheduled
+		suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
+		t.Logf("Pods scheduled successfully")
 
-	// Verify that instances use one of the allowed types
-	allowedTypes := []string{"bx2-4x16", "mx2-2x16", "mx2d-2x16", "mx3d-2x20"}
-	suite.verifyInstancesUseAllowedTypes(t, allowedTypes)
-	t.Logf("Verified instances use allowed instance types")
+		// Verify that instances use one of the allowed types
+		allowedTypes := []string{"bx2-4x16", "mx2-2x16", "mx2d-2x16", "mx3d-2x20"}
+		suite.verifyInstancesUseAllowedTypes(t, allowedTypes)
+		t.Logf("Verified instances use allowed instance types")
 
-	// Verify NodePool requirements are satisfied on the provisioned nodes
-	suite.verifyNodePoolRequirementsOnNodes(t, nodePool)
-	t.Logf("Verified NodePool requirements are satisfied")
+		// Verify NodePool requirements are satisfied on the provisioned nodes
+		suite.verifyNodePoolRequirementsOnNodes(t, nodePool)
+		t.Logf("Verified NodePool requirements are satisfied")
 
-	// Cleanup
-	suite.cleanupTestWorkload(t, deployment.Name, "default")
-	suite.cleanupTestResources(t, testName)
-	t.Logf("NodePool instance type selection test completed: %s", testName)
+		t.Logf("NodePool instance type selection test completed: %s", testName)
+	})
 }
 
 // TestE2EInstanceTypeSelection tests Karpenter's instance type selection logic
