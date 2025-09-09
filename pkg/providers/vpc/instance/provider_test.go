@@ -2171,3 +2171,219 @@ func TestVPCInstanceProvider_VNIConfiguration(t *testing.T) {
 	// 2. Integration tests with real IBM Cloud API
 	// 3. All existing tests pass with VNI implementation
 }
+
+// TestVPCInstanceProvider_BlockDeviceMappings tests block device mapping functionality
+func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
+	tests := []struct {
+		name                 string
+		blockDeviceMappings  []v1alpha1.BlockDeviceMapping
+		expectedBootCapacity int64
+		expectedBootProfile  string
+		expectedDataVolumes  int
+		validateAttachments  func(*testing.T, *vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, []vpcv1.VolumeAttachmentPrototype)
+	}{
+		{
+			name:                 "Default configuration when no mappings specified",
+			blockDeviceMappings:  nil,
+			expectedBootCapacity: 100,
+			expectedBootProfile:  "general-purpose",
+			expectedDataVolumes:  0,
+		},
+		{
+			name: "Custom boot volume only",
+			blockDeviceMappings: []v1alpha1.BlockDeviceMapping{
+				{
+					RootVolume: true,
+					VolumeSpec: &v1alpha1.VolumeSpec{
+						Capacity:            &[]int64{200}[0],
+						Profile:             &[]string{"10iops-tier"}[0],
+						DeleteOnTermination: &[]bool{false}[0],
+					},
+				},
+			},
+			expectedBootCapacity: 200,
+			expectedBootProfile:  "10iops-tier",
+			expectedDataVolumes:  0,
+			validateAttachments: func(t *testing.T, boot *vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, data []vpcv1.VolumeAttachmentPrototype) {
+				assert.Equal(t, false, *boot.DeleteVolumeOnInstanceDelete)
+			},
+		},
+		{
+			name: "Boot volume with custom IOPS",
+			blockDeviceMappings: []v1alpha1.BlockDeviceMapping{
+				{
+					RootVolume: true,
+					VolumeSpec: &v1alpha1.VolumeSpec{
+						Capacity:  &[]int64{150}[0],
+						Profile:   &[]string{"custom"}[0],
+						IOPS:      &[]int64{5000}[0],
+						Bandwidth: &[]int64{250}[0],
+					},
+				},
+			},
+			expectedBootCapacity: 150,
+			expectedBootProfile:  "custom",
+			expectedDataVolumes:  0,
+			validateAttachments: func(t *testing.T, boot *vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, data []vpcv1.VolumeAttachmentPrototype) {
+				assert.Equal(t, int64(5000), *boot.Volume.Iops)
+				assert.Equal(t, int64(250), *boot.Volume.Bandwidth)
+			},
+		},
+		{
+			name: "Boot volume with encryption",
+			blockDeviceMappings: []v1alpha1.BlockDeviceMapping{
+				{
+					RootVolume: true,
+					VolumeSpec: &v1alpha1.VolumeSpec{
+						Capacity:        &[]int64{100}[0],
+						EncryptionKeyID: &[]string{"crn:v1:bluemix:public:kms:us-south:a/123:456::789"}[0],
+						Tags:            []string{"encrypted", "production"},
+					},
+				},
+			},
+			expectedBootCapacity: 100,
+			expectedBootProfile:  "general-purpose",
+			expectedDataVolumes:  0,
+			validateAttachments: func(t *testing.T, boot *vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, data []vpcv1.VolumeAttachmentPrototype) {
+				assert.NotNil(t, boot.Volume.EncryptionKey)
+				assert.Equal(t, 2, len(boot.Volume.UserTags))
+			},
+		},
+		{
+			name: "Boot volume and data volumes",
+			blockDeviceMappings: []v1alpha1.BlockDeviceMapping{
+				{
+					RootVolume: true,
+					VolumeSpec: &v1alpha1.VolumeSpec{
+						Capacity: &[]int64{100}[0],
+					},
+				},
+				{
+					DeviceName: &[]string{"data-disk-1"}[0],
+					VolumeSpec: &v1alpha1.VolumeSpec{
+						Capacity: &[]int64{500}[0],
+						Profile:  &[]string{"5iops-tier"}[0],
+					},
+				},
+				{
+					DeviceName: &[]string{"data-disk-2"}[0],
+					VolumeSpec: &v1alpha1.VolumeSpec{
+						Capacity:            &[]int64{1000}[0],
+						Profile:             &[]string{"10iops-tier"}[0],
+						DeleteOnTermination: &[]bool{false}[0],
+					},
+				},
+			},
+			expectedBootCapacity: 100,
+			expectedBootProfile:  "general-purpose",
+			expectedDataVolumes:  2,
+			validateAttachments: func(t *testing.T, boot *vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, data []vpcv1.VolumeAttachmentPrototype) {
+				assert.Len(t, data, 2)
+				// Check first data volume
+				assert.Equal(t, "data-disk-1", *data[0].Name)
+				vol1 := data[0].Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext)
+				assert.Equal(t, int64(500), *vol1.Capacity)
+				// Check second data volume
+				assert.Equal(t, "data-disk-2", *data[1].Name)
+				vol2 := data[1].Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext)
+				assert.Equal(t, int64(1000), *vol2.Capacity)
+				assert.Equal(t, false, *data[1].DeleteVolumeOnInstanceDelete)
+			},
+		},
+		{
+			name: "Multiple data volumes without boot volume mapping uses default boot",
+			blockDeviceMappings: []v1alpha1.BlockDeviceMapping{
+				{
+					DeviceName: &[]string{"extra-storage"}[0],
+					VolumeSpec: &v1alpha1.VolumeSpec{
+						Capacity: &[]int64{2000}[0],
+					},
+				},
+			},
+			expectedBootCapacity: 100,               // Default
+			expectedBootProfile:  "general-purpose", // Default
+			expectedDataVolumes:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test provider
+			provider := &VPCInstanceProvider{}
+
+			// Create test node class
+			nodeClass := &v1alpha1.IBMNodeClass{
+				Spec: v1alpha1.IBMNodeClassSpec{
+					BlockDeviceMappings: tt.blockDeviceMappings,
+				},
+			}
+
+			// Call buildVolumeAttachments
+			bootVolume, dataVolumes, err := provider.buildVolumeAttachments(nodeClass, "test-instance")
+
+			// Verify no error
+			assert.NoError(t, err)
+			assert.NotNil(t, bootVolume)
+
+			// Verify boot volume
+			assert.Equal(t, tt.expectedBootCapacity, *bootVolume.Volume.Capacity)
+			profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentity)
+			assert.Equal(t, tt.expectedBootProfile, *profileIdentity.Name)
+
+			// Verify data volumes count
+			assert.Len(t, dataVolumes, tt.expectedDataVolumes)
+
+			// Run custom validations if provided
+			if tt.validateAttachments != nil {
+				tt.validateAttachments(t, bootVolume, dataVolumes)
+			}
+		})
+	}
+}
+
+// TestVPCInstanceProvider_BlockDeviceMappingValidation tests validation logic for block device mappings
+func TestVPCInstanceProvider_BlockDeviceMappingValidation(t *testing.T) {
+	provider := &VPCInstanceProvider{}
+
+	t.Run("Empty volume spec for root volume uses defaults", func(t *testing.T) {
+		nodeClass := &v1alpha1.IBMNodeClass{
+			Spec: v1alpha1.IBMNodeClassSpec{
+				BlockDeviceMappings: []v1alpha1.BlockDeviceMapping{
+					{
+						RootVolume: true,
+						// No VolumeSpec
+					},
+				},
+			},
+		}
+
+		bootVolume, _, err := provider.buildVolumeAttachments(nodeClass, "test")
+		assert.NoError(t, err)
+		assert.Equal(t, int64(100), *bootVolume.Volume.Capacity)
+		profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentity)
+		assert.Equal(t, "general-purpose", *profileIdentity.Name)
+	})
+
+	t.Run("Data volume without spec is skipped", func(t *testing.T) {
+		nodeClass := &v1alpha1.IBMNodeClass{
+			Spec: v1alpha1.IBMNodeClassSpec{
+				BlockDeviceMappings: []v1alpha1.BlockDeviceMapping{
+					{
+						RootVolume: false,
+						// No VolumeSpec - should be skipped
+					},
+					{
+						RootVolume: false,
+						VolumeSpec: &v1alpha1.VolumeSpec{
+							Capacity: &[]int64{200}[0],
+						},
+					},
+				},
+			},
+		}
+
+		_, dataVolumes, err := provider.buildVolumeAttachments(nodeClass, "test")
+		assert.NoError(t, err)
+		assert.Len(t, dataVolumes, 1) // Only one data volume should be created
+	})
+}

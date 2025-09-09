@@ -284,10 +284,13 @@ func (c *Controller) syncNodeClaimToNode(ctx context.Context, nodeClaim *karpv1.
 		}
 	}
 
-	// Sync taints from NodeClaim to Node (unless do-not-sync label is set)
+	// Sync taints from NodeClaim to Node (unless do-not-sync label is set or startup taint lifecycle controller is handling it)
 	if _, skipSync := nodeClaim.Labels["karpenter.sh/do-not-sync-taints"]; !skipSync {
-		if c.syncTaintsToNode(nodeClaim, node) {
-			modified = true
+		// Skip if startup taint lifecycle controller is managing taints
+		if _, lifecycleManaged := nodeClaim.Labels["karpenter.ibm.sh/startup-taint-lifecycle"]; !lifecycleManaged {
+			if c.syncTaintsToNode(nodeClaim, node) {
+				modified = true
+			}
 		}
 	}
 

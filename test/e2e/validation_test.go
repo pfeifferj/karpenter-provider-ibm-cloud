@@ -47,8 +47,8 @@ func TestE2ENodeClassValidation(t *testing.T) {
 			},
 		},
 		Spec: v1alpha1.IBMNodeClassSpec{
-			Region:          "us-south",
-			Zone:            "us-south-1",
+			Region:          suite.testRegion,
+			Zone:            suite.testZone,
 			InstanceProfile: "bx2-2x8",
 			Image:           "r010-00000000-0000-0000-0000-000000000000",           // Valid format but non-existent image
 			VPC:             "r010-00000000-0000-0000-0000-000000000000",           // Valid format but non-existent VPC

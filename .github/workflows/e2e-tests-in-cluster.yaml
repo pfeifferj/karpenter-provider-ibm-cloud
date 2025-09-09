@@ -119,7 +119,8 @@ jobs:
 
         # Wait for no disrupted nodes
         for i in {1..30}; do
-          disrupted_nodes=$(kubectl get nodes --no-headers -o custom-columns="NAME:.metadata.name,TAINTS:.spec.taints[*].key" | grep -c "karpenter.sh/disrupted" || echo "0")
+          disrupted_nodes=$(kubectl get nodes --no-headers -o custom-columns="NAME:.metadata.name,TAINTS:.spec.taints[*].key" | grep -c "karpenter.sh/disrupted" 2>/dev/null || echo "0")
+          disrupted_nodes=$(echo "$disrupted_nodes" | tr -d '\n' | grep -o '[0-9]*' || echo "0")
           if [ "$disrupted_nodes" -eq 0 ]; then
             echo "✅ No disrupted nodes found"
             break
@@ -164,14 +165,17 @@ jobs:
         # NodeClass validation tests from validation_test.go
         validation_tests="TestE2ENodeClassValidation TestE2EValidNodeClassCreation TestE2ENodeClassWithMissingFields"
 
+        # Block device mapping tests from block_device_test.go
+        block_device_tests="TestE2EBlockDeviceMapping TestE2EBlockDeviceMappingValidation"
+
         # Scheduling constraint tests from scheduling_test.go and e2e_taints_test.go
-        scheduling_tests="TestE2EPodDisruptionBudget TestE2EPodAntiAffinity TestE2ENodeAffinity TestE2EStartupTaints TestE2EStartupTaintsRemoval TestE2ETaintsBasicScheduling TestE2ETaintValues TestE2ETaintSync TestE2EUnregisteredTaintHandling"
+        scheduling_tests="TestE2EPodDisruptionBudget TestE2EConsolidationWithPDB TestE2EPodAntiAffinity TestE2ENodeAffinity TestE2EStartupTaints TestE2EStartupTaintsRemoval TestE2ETaintsBasicScheduling TestE2ETaintValues TestE2ETaintSync TestE2EUnregisteredTaintHandling"
 
         # Cleanup tests from cleanup_test.go
         cleanup_tests="TestE2ECleanupNodePoolDeletion TestE2ECleanupNodeClassDeletion TestE2ECleanupOrphanedResources TestE2ECleanupIBMCloudResources"
 
         # Combine all tests
-        all_tests="$core_tests $validation_tests $scheduling_tests $cleanup_tests"
+        all_tests="$core_tests $validation_tests $block_device_tests $scheduling_tests $cleanup_tests"
 
         test_failed="false"
         passed_tests=0
