@@ -477,9 +477,11 @@ spec:
             - message: instanceProfile and instanceRequirements are mutually exclusive
               rule: '!(has(self.instanceProfile) && has(self.instanceRequirements))'
             - message: iksClusterID is required when bootstrapMode is 'iks-api'
-              rule: self.bootstrapMode != 'iks-api' || has(self.iksClusterID)
+              rule: '!has(self.bootstrapMode) || self.bootstrapMode != ''iks-api''
+                || has(self.iksClusterID)'
             - message: zone must be within the specified region
-              rule: self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == ""
+              rule: self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1])
+                || self.zone == ""
             - message: vpc must be a valid IBM Cloud VPC ID format
               rule: self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')
           status:

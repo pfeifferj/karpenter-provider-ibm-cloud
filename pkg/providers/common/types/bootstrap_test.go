@@ -49,6 +49,8 @@ func TestOptionsStruct(t *testing.T) {
 		InstanceID:       "instance-123",
 		ClusterEndpoint:  "https://test.example.com:6443",
 		CABundle:         "LS0tLS1CRUdJTi0=",
+		AdditionalCAs:    []string{"LS0tLS1CRUdJTi1BRERJVELPK0FM", "LS0tLS1CRUdJTi1BRERJVElPTkFM"},
+		KubeletClientCAs: []string{"LS0tLS1CRUdJTi1LVUJFTEVULUNM"},
 		BootstrapToken:   "abcdef.0123456789abcdef",
 		ContainerRuntime: "containerd",
 		CNIPlugin:        "calico",
@@ -70,6 +72,18 @@ func TestOptionsStruct(t *testing.T) {
 	}
 	if options.ProviderID != "ibm://us-south-1/instance-123" {
 		t.Errorf("Options.ProviderID = %v, want ibm://us-south-1/instance-123", options.ProviderID)
+	}
+	if len(options.AdditionalCAs) != 2 {
+		t.Errorf("Options.AdditionalCAs length = %v, want 2", len(options.AdditionalCAs))
+	}
+	if options.AdditionalCAs[0] != "LS0tLS1CRUdJTi1BRERJVELPK0FM" {
+		t.Errorf("Options.AdditionalCAs[0] = %v, want LS0tLS1CRUdJTi1BRERJVELPK0FM", options.AdditionalCAs[0])
+	}
+	if len(options.KubeletClientCAs) != 1 {
+		t.Errorf("Options.KubeletClientCAs length = %v, want 1", len(options.KubeletClientCAs))
+	}
+	if options.KubeletClientCAs[0] != "LS0tLS1CRUdJTi1LVUJFTEVULUNM" {
+		t.Errorf("Options.KubeletClientCAs[0] = %v, want LS0tLS1CRUdJTi1LVUJFTEVULUNM", options.KubeletClientCAs[0])
 	}
 }
 
@@ -262,6 +276,59 @@ clusters:
 
 	if string(caData) != "test-ca-data" {
 		t.Errorf("ParseKubeconfig should handle extra spaces, caData = %v", string(caData))
+	}
+}
+
+func TestOptionsWithEmptyCAs(t *testing.T) {
+	options := Options{
+		ClusterName:      "test-cluster",
+		CABundle:         "LS0tLS1CRUdJTi0=",
+		AdditionalCAs:    []string{},
+		KubeletClientCAs: nil,
+	}
+
+	if len(options.AdditionalCAs) != 0 {
+		t.Errorf("Options.AdditionalCAs should be empty, got length %v", len(options.AdditionalCAs))
+	}
+	if options.KubeletClientCAs != nil {
+		t.Errorf("Options.KubeletClientCAs should be nil, got %v", options.KubeletClientCAs)
+	}
+}
+
+func TestOptionsWithMultipleCAs(t *testing.T) {
+	additionalCAs := []string{
+		"LS0tLS1CRUdJTi1BRERJVELPK0FMUzEtLS0tLQ==",
+		"LS0tLS1CRUdJTi1BRERJVELPK0FMUzItLS0tLQ==",
+		"LS0tLS1CRUdJTi1BRERJVELPK0FMUzMtLS0tLQ==",
+	}
+	kubeletClientCAs := []string{
+		"LS0tLS1CRUdJTi1LVUJFTEVULUNMMQ==",
+		"LS0tLS1CRUdJTi1LVUJFTEVULUNMMI==",
+	}
+
+	options := Options{
+		CABundle:         "LS0tLS1CRUdJTi1QUklNQVJZLUNBLS0tLS0=",
+		AdditionalCAs:    additionalCAs,
+		KubeletClientCAs: kubeletClientCAs,
+	}
+
+	if len(options.AdditionalCAs) != 3 {
+		t.Errorf("Expected 3 additional CAs, got %v", len(options.AdditionalCAs))
+	}
+	if len(options.KubeletClientCAs) != 2 {
+		t.Errorf("Expected 2 kubelet client CAs, got %v", len(options.KubeletClientCAs))
+	}
+
+	for i, ca := range options.AdditionalCAs {
+		if ca != additionalCAs[i] {
+			t.Errorf("AdditionalCAs[%d] = %v, want %v", i, ca, additionalCAs[i])
+		}
+	}
+
+	for i, ca := range options.KubeletClientCAs {
+		if ca != kubeletClientCAs[i] {
+			t.Errorf("KubeletClientCAs[%d] = %v, want %v", i, ca, kubeletClientCAs[i])
+		}
 	}
 }
 
