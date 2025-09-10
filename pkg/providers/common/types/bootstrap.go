@@ -69,6 +69,14 @@ type Options struct {
 	// CABundle is the base64-encoded cluster CA certificate
 	CABundle string
 
+	// AdditionalCAs contains additional CA certificates that kubelet should trust
+	// This is a slice of base64-encoded CA certificates
+	AdditionalCAs []string
+
+	// KubeletClientCAs contains CA certificates specifically for kubelet client auth
+	// This allows separation of concerns between different auth mechanisms
+	KubeletClientCAs []string
+
 	// BootstrapToken is the token used for node bootstrapping
 	BootstrapToken string
 

@@ -235,10 +235,6 @@ type InstanceTypeRequirements struct {
 // - When bootstrapMode is "iks-api", iksClusterID must be provided
 // - When zone is specified, it must belong to the specified region
 //
-// +kubebuilder:validation:XValidation:rule="!(has(self.instanceProfile) && has(self.instanceRequirements))", message="instanceProfile and instanceRequirements are mutually exclusive"
-// +kubebuilder:validation:XValidation:rule="self.bootstrapMode != 'iks-api' || has(self.iksClusterID)", message="iksClusterID is required when bootstrapMode is 'iks-api'"
-// +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == \"\"", message="zone must be within the specified region"
-// +kubebuilder:validation:XValidation:rule="self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="vpc must be a valid IBM Cloud VPC ID format"
 // BlockDeviceMapping defines storage device configuration for instances
 // This allows customization of boot and data volumes attached to instances
 type BlockDeviceMapping struct {
@@ -308,6 +304,10 @@ type VolumeSpec struct {
 
 // +kubebuilder:validation:XValidation:rule="self.subnet == \"\" || self.subnet.matches('^[a-zA-Z0-9]{4}-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="subnet must be a valid IBM Cloud subnet ID format"
 // +kubebuilder:validation:XValidation:rule="self.image.matches('^[a-z0-9-]+$')", message="image must contain only lowercase letters, numbers, and hyphens"
+// +kubebuilder:validation:XValidation:rule="!(has(self.instanceProfile) && has(self.instanceRequirements))", message="instanceProfile and instanceRequirements are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="!has(self.bootstrapMode) || self.bootstrapMode != 'iks-api' || has(self.iksClusterID)", message="iksClusterID is required when bootstrapMode is 'iks-api'"
+// +kubebuilder:validation:XValidation:rule="self.region.startsWith(self.zone.split('-')[0] + '-' + self.zone.split('-')[1]) || self.zone == \"\"", message="zone must be within the specified region"
+// +kubebuilder:validation:XValidation:rule="self.vpc.matches('^r[0-9]+-[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}$')", message="vpc must be a valid IBM Cloud VPC ID format"
 type IBMNodeClassSpec struct {
 	// Region is the IBM Cloud region where nodes will be created.
 	// Must follow IBM Cloud region naming convention: two-letter country code followed by region name.
