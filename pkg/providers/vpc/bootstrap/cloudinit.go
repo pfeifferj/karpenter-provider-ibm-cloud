@@ -17,6 +17,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"text/template"
 
@@ -373,11 +374,45 @@ report_status "configuring" "kubelet-installed"
 # Create directories
 mkdir -p /etc/kubernetes/pki /var/lib/kubelet /etc/systemd/system/kubelet.service.d
 
-# Write CA certificate
+# Write primary CA certificate
 cat > /etc/kubernetes/pki/ca.crt << 'EOF'
 {{ .CABundle }}
 EOF
-echo "$(date): ✅ CA certificate created"
+echo "$(date): ✅ Primary CA certificate created"
+
+# Create combined CA bundle for kubelet client authentication
+cat > /etc/kubernetes/pki/kubelet-client-ca.crt << 'EOF'
+{{ .CABundle }}
+EOF
+
+{{ if .AdditionalCAs }}{{ range .AdditionalCAs }}
+# Add additional CA
+cat >> /etc/kubernetes/pki/kubelet-client-ca.crt << 'EOF'
+{{ . }}
+EOF
+{{ end }}{{ end }}
+
+{{ if .KubeletClientCAs }}{{ range .KubeletClientCAs }}
+# Add kubelet-specific CA
+cat >> /etc/kubernetes/pki/kubelet-client-ca.crt << 'EOF'
+{{ . }}
+EOF
+{{ end }}{{ end }}
+
+echo "$(date): ✅ Combined CA certificate created for kubelet client authentication"
+
+# Allow override of CA trust via environment variable (optional)
+if [[ -n "${KARPENTER_ADDITIONAL_CA:-}" ]]; then
+    echo "$(date): Adding additional CA from environment variable"
+    echo "${KARPENTER_ADDITIONAL_CA}" >> /etc/kubernetes/pki/kubelet-client-ca.crt
+    echo "$(date): ✅ Additional CA added to kubelet client CA bundle"
+fi
+
+# Allow override from file (for testing, optional)
+if [[ -f "/etc/kubernetes/additional-ca.crt" ]]; then
+    echo "$(date): Adding additional CA from file"
+    cat /etc/kubernetes/additional-ca.crt >> /etc/kubernetes/pki/kubelet-client-ca.crt
+fi
 
 # Create bootstrap kubeconfig
 cat > /var/lib/kubelet/bootstrap-kubeconfig << EOF
@@ -411,7 +446,7 @@ authentication:
   webhook:
     enabled: true
   x509:
-    clientCAFile: /etc/kubernetes/pki/ca.crt
+    clientCAFile: /etc/kubernetes/pki/kubelet-client-ca.crt
 authorization:
   mode: Webhook
 clusterDomain: cluster.local
@@ -915,8 +950,20 @@ func (p *VPCBootstrapProvider) generateCloudInitScript(ctx context.Context, opti
 		return "", fmt.Errorf("executing cloud-init template: %w", err)
 	}
 
-	// Return the script as plain text
+	// Get the base script
 	script := buf.String()
+
+	// Add additional CA environment variable if available from secret
+	if additionalCA := os.Getenv("ca_crt"); additionalCA != "" {
+		fmt.Printf("DEBUG: Found ca_crt environment variable, length: %d\n", len(additionalCA))
+		// Inject KARPENTER_ADDITIONAL_CA environment variable at the beginning of the script
+		envVar := fmt.Sprintf("export KARPENTER_ADDITIONAL_CA=\"%s\"\n", additionalCA)
+		script = strings.Replace(script, "#!/bin/bash\nset -euo pipefail\n", "#!/bin/bash\nset -euo pipefail\n\n"+envVar, 1)
+		fmt.Printf("DEBUG: Injected KARPENTER_ADDITIONAL_CA into cloud-init script\n")
+	} else {
+		fmt.Printf("DEBUG: No ca_crt environment variable found\n")
+	}
+
 	return script, nil
 }
 
