@@ -152,6 +152,29 @@ func (c *TokenController) ensureBootstrapRBAC(ctx context.Context) error {
 		return fmt.Errorf("creating auto-approve renewals ClusterRoleBinding: %w", err)
 	}
 
+	// Create ClusterRoleBinding for kubelet serving certificates
+	_, err = c.client.RbacV1().ClusterRoleBindings().Create(ctx, &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "karpenter-ibm-auto-approve-kubelet-serving-csrs",
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:     "Group",
+				Name:     "system:nodes",
+				APIGroup: "rbac.authorization.k8s.io",
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     "system:certificates.k8s.io:kubelet-serving-approver",
+		},
+	}, metav1.CreateOptions{})
+
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("creating auto-approve kubelet serving CSRs ClusterRoleBinding: %w", err)
+	}
+
 	logger.Info("Bootstrap RBAC permissions ensured")
 	return nil
 }

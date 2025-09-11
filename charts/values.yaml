@@ -443,6 +443,16 @@ circuitBreaker:
       rateLimitPerMinute: 20
       maxConcurrentInstances: 15
 
+# Additional CA certificates for cross-VPC kubelet authentication
+additionalCAs:
+  enabled: false
+  # Map of CA certificates (key: filename, value: base64-encoded certificate)
+  # Example:
+  # certs:
+  #   rke2-ca.crt: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t..."
+  #   proxy-ca.crt: "LS0tLS1CRUdJTi1DRVJUSUZJQ0FURS0tLS0t..."
+  certs: {}
+
 # Controller configuration
 controller:
   metrics:
