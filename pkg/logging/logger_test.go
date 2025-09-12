@@ -18,6 +18,7 @@ package logging
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,4 +72,39 @@ func TestLoggingMethods(t *testing.T) {
 	logger.Debug("test debug message", "key", "value")
 	logger.Warn("test warning message", "key", "value")
 	logger.Error(nil, "test error message", "key", "value")
+}
+
+func TestLogLevelFiltering(t *testing.T) {
+	// Save original LOG_LEVEL
+	originalLogLevel := os.Getenv("LOG_LEVEL")
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
+
+	tests := []struct {
+		logLevel       string
+		shouldLogDebug bool
+		shouldLogInfo  bool
+		shouldLogWarn  bool
+		shouldLogError bool
+	}{
+		{"debug", true, true, true, true},
+		{"info", false, true, true, true},
+		{"warn", false, false, true, true},
+		{"error", false, false, false, true},
+		{"", false, true, true, true},        // default to info
+		{"invalid", false, true, true, true}, // fallback to info
+	}
+
+	for _, tt := range tests {
+		t.Run("log_level_"+tt.logLevel, func(t *testing.T) {
+			_ = os.Setenv("LOG_LEVEL", tt.logLevel)
+			logger := NewLogger("test")
+
+			assert.Equal(t, tt.shouldLogDebug, logger.shouldLog("debug"))
+			assert.Equal(t, tt.shouldLogInfo, logger.shouldLog("info"))
+			assert.Equal(t, tt.shouldLogWarn, logger.shouldLog("warn"))
+			assert.Equal(t, tt.shouldLogError, logger.shouldLog("error"))
+		})
+	}
 }
