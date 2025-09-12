@@ -5,7 +5,7 @@ go 1.24.4
 require (
 	github.com/IBM/go-sdk-core/v5 v5.21.0
 	github.com/IBM/platform-services-go-sdk v0.86.1
-	github.com/IBM/vpc-go-sdk v0.70.1
+	github.com/IBM/vpc-go-sdk v0.71.1
 	github.com/awslabs/operatorpkg v0.0.0-20250717190115-4fddcf1f444e
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
