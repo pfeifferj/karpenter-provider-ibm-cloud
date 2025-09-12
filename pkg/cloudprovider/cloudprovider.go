@@ -54,11 +54,11 @@ type CloudProvider struct {
 	recorder   events.Recorder
 	ibmClient  *ibm.Client
 
-	instanceTypeProvider instancetype.Provider
-	providerFactory      *providers.ProviderFactory
-	subnetProvider       subnet.Provider
-	defaultProviderMode  commonTypes.ProviderMode
-	circuitBreaker       *CircuitBreaker
+	instanceTypeProvider  instancetype.Provider
+	providerFactory       *providers.ProviderFactory
+	subnetProvider        subnet.Provider
+	defaultProviderMode   commonTypes.ProviderMode
+	circuitBreakerManager *NodeClassCircuitBreakerManager
 }
 
 func New(kubeClient client.Client,
@@ -73,21 +73,21 @@ func New(kubeClient client.Client,
 		defaultMode = commonTypes.IKSMode
 	}
 
-	// Initialize circuit breaker
-	// If circuitBreakerConfig is nil, the circuit breaker will be disabled
+	// Initialize per-NodeClass circuit breaker manager
+	// If circuitBreakerConfig is nil, circuit breakers will be disabled
 	logger := log.FromContext(context.Background()).WithName("circuit-breaker")
-	circuitBreaker := NewCircuitBreaker(circuitBreakerConfig, logger)
+	circuitBreakerManager := NewNodeClassCircuitBreakerManager(circuitBreakerConfig, logger)
 
 	return &CloudProvider{
 		kubeClient: kubeClient,
 		recorder:   recorder,
 		ibmClient:  ibmClient,
 
-		instanceTypeProvider: instanceTypeProvider,
-		providerFactory:      providers.NewProviderFactory(ibmClient, kubeClient, nil),
-		subnetProvider:       subnetProvider,
-		defaultProviderMode:  defaultMode,
-		circuitBreaker:       circuitBreaker,
+		instanceTypeProvider:  instanceTypeProvider,
+		providerFactory:       providers.NewProviderFactory(ibmClient, kubeClient, nil),
+		subnetProvider:        subnetProvider,
+		defaultProviderMode:   defaultMode,
+		circuitBreakerManager: circuitBreakerManager,
 	}
 }
 
@@ -304,10 +304,10 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 
 	log.Info("Creating instance")
 
-	// Circuit breaker check - validate against failure rate and concurrency safeguards
-	if cbErr := c.circuitBreaker.CanProvision(ctx, nodeClass.Name, nodeClass.Spec.Region, 0); cbErr != nil {
+	// Per-NodeClass circuit breaker check - validate against failure rate and concurrency safeguards
+	if cbErr := c.circuitBreakerManager.CanProvision(ctx, nodeClass.Name, nodeClass.Spec.Region, 0); cbErr != nil {
 		// Get circuit breaker status for enhanced logging
-		if cbStatus, statusErr := c.circuitBreaker.GetState(); statusErr == nil {
+		if cbStatus, statusErr := c.circuitBreakerManager.GetStateForNodeClass(nodeClass.Name, nodeClass.Spec.Region); statusErr == nil {
 			log.Error(cbErr, "Circuit breaker blocked provisioning",
 				"nodeClass", nodeClass.Name,
 				"region", nodeClass.Spec.Region,
@@ -328,7 +328,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 	if err != nil {
 		log.Error(err, "Failed to get instance provider")
-		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
+		c.circuitBreakerManager.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
 		return nil, fmt.Errorf("getting instance provider, %w", err)
 	}
 
@@ -340,12 +340,12 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 			"region", nodeClass.Spec.Region,
 			"zone", nodeClass.Spec.Zone,
 			"instanceTypes", lo.Map(compatible, func(it *cloudprovider.InstanceType, _ int) string { return it.Name }))
-		c.circuitBreaker.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
+		c.circuitBreakerManager.RecordFailure(nodeClass.Name, nodeClass.Spec.Region, err)
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
 
-	// Record successful provisioning
-	c.circuitBreaker.RecordSuccess(nodeClass.Name, nodeClass.Spec.Region)
+	// Record successful provisioning for this specific NodeClass
+	c.circuitBreakerManager.RecordSuccess(nodeClass.Name, nodeClass.Spec.Region)
 	log.Info("Successfully created instance", "providerID", node.Spec.ProviderID)
 
 	instanceType, _ := lo.Find(compatible, func(i *cloudprovider.InstanceType) bool {
