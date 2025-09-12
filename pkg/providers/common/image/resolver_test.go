@@ -177,6 +177,14 @@ func (m *MockVPCSDKClient) ListRegions(*vpcv1.ListRegionsOptions) (*vpcv1.Region
 	}, &core.DetailedResponse{}, nil
 }
 
+func (m *MockVPCSDKClient) GetSecurityGroupWithContext(context.Context, *vpcv1.GetSecurityGroupOptions) (*vpcv1.SecurityGroup, *core.DetailedResponse, error) {
+	return &vpcv1.SecurityGroup{}, &core.DetailedResponse{}, nil
+}
+
+func (m *MockVPCSDKClient) GetKeyWithContext(context.Context, *vpcv1.GetKeyOptions) (*vpcv1.Key, *core.DetailedResponse, error) {
+	return &vpcv1.Key{}, &core.DetailedResponse{}, nil
+}
+
 func TestNewResolver(t *testing.T) {
 	// Create a mock SDK client that implements the interface
 	mockSDKClient := &MockVPCSDKClient{}
