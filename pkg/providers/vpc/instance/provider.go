@@ -193,7 +193,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Create virtual network interface for proper VPC service network access
 	vniPrototype := &vpcv1.InstanceNetworkAttachmentPrototypeVirtualNetworkInterfaceVirtualNetworkInterfacePrototypeInstanceNetworkAttachmentContext{
-		Subnet: &vpcv1.SubnetIdentity{
+		Subnet: &vpcv1.SubnetIdentityByID{
 			ID: &subnet,
 		},
 		// Enable infrastructure NAT for proper VPC service network routing
@@ -214,7 +214,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		if rgErr != nil {
 			return nil, fmt.Errorf("resolving resource group for VNI %s: %w", nodeClass.Spec.ResourceGroup, rgErr)
 		}
-		vniPrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+		vniPrototype.ResourceGroup = &vpcv1.ResourceGroupIdentityByID{
 			ID: &resourceGroupID,
 		}
 		logger.Info("Added resource group to VNI", "resource_group", resourceGroupID)
@@ -224,7 +224,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	if len(nodeClass.Spec.SecurityGroups) > 0 {
 		var securityGroups []vpcv1.SecurityGroupIdentityIntf
 		for _, sg := range nodeClass.Spec.SecurityGroups {
-			securityGroups = append(securityGroups, &vpcv1.SecurityGroupIdentity{ID: &sg})
+			securityGroups = append(securityGroups, &vpcv1.SecurityGroupIdentityByID{ID: &sg})
 		}
 		vniPrototype.SecurityGroups = securityGroups
 		logger.Info("Applying security groups to VNI", "security_groups", nodeClass.Spec.SecurityGroups, "count", len(securityGroups))
@@ -235,7 +235,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			return nil, fmt.Errorf("getting default security group for VPC %s: %w", nodeClass.Spec.VPC, sgErr)
 		}
 		vniPrototype.SecurityGroups = []vpcv1.SecurityGroupIdentityIntf{
-			&vpcv1.SecurityGroupIdentity{ID: defaultSG.ID},
+			&vpcv1.SecurityGroupIdentityByID{ID: defaultSG.ID},
 		}
 		logger.Info("Using default security group for VNI", "security_group", *defaultSG.ID)
 	}
@@ -254,7 +254,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	}
 
 	// Create boot volume attachment based on block device mappings or use default
-	bootVolumeAttachment, additionalVolumes, err := p.buildVolumeAttachments(nodeClass, nodeClaim.Name)
+	bootVolumeAttachment, additionalVolumes, err := p.buildVolumeAttachments(nodeClass, nodeClaim.Name, nodeClass.Spec.Zone)
 	if err != nil {
 		return nil, fmt.Errorf("building volume attachments: %w", err)
 	}
@@ -270,18 +270,18 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Create instance prototype with VNI
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
-		Image: &vpcv1.ImageIdentity{
+		Image: &vpcv1.ImageIdentityByID{
 			ID: &imageID,
 		},
-		Zone: &vpcv1.ZoneIdentity{
+		Zone: &vpcv1.ZoneIdentityByName{
 			Name: &zone,
 		},
 		PrimaryNetworkAttachment: primaryNetworkAttachment,
-		VPC: &vpcv1.VPCIdentity{
+		VPC: &vpcv1.VPCIdentityByID{
 			ID: &nodeClass.Spec.VPC,
 		},
 		Name: &nodeClaim.Name,
-		Profile: &vpcv1.InstanceProfileIdentity{
+		Profile: &vpcv1.InstanceProfileIdentityByName{
 			Name: &instanceProfile,
 		},
 		BootVolumeAttachment: bootVolumeAttachment,
@@ -303,7 +303,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		if rgErr != nil {
 			return nil, fmt.Errorf("resolving resource group %s: %w", nodeClass.Spec.ResourceGroup, rgErr)
 		}
-		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentityByID{
 			ID: &resourceGroupID,
 		}
 		logger.Info("Resource group resolved", "input", nodeClass.Spec.ResourceGroup, "resolved_id", resourceGroupID)
@@ -313,7 +313,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	if len(nodeClass.Spec.SSHKeys) > 0 {
 		var sshKeys []vpcv1.KeyIdentityIntf
 		for _, key := range nodeClass.Spec.SSHKeys {
-			sshKeys = append(sshKeys, &vpcv1.KeyIdentity{ID: &key})
+			sshKeys = append(sshKeys, &vpcv1.KeyIdentityByID{ID: &key})
 		}
 		instancePrototype.Keys = sshKeys
 	}
@@ -377,6 +377,51 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		"instance_name", nodeClaim.Name,
 		"instance_profile", instanceProfile,
 		"zone", zone)
+
+	// DETAILED REQUEST LOGGING: Log the full instance prototype details
+	logger.Info("VPC CreateInstance request details",
+		"prototype_type", fmt.Sprintf("%T", instancePrototype),
+		"name", instancePrototype.Name,
+		"image_id", instancePrototype.Image,
+		"zone", instancePrototype.Zone,
+		"profile", instancePrototype.Profile,
+		"vpc", instancePrototype.VPC,
+		"primary_network_attachment", instancePrototype.PrimaryNetworkAttachment != nil,
+		"boot_volume_attachment", instancePrototype.BootVolumeAttachment != nil,
+		"volume_attachments_count", len(instancePrototype.VolumeAttachments),
+		"availability_policy", instancePrototype.AvailabilityPolicy != nil,
+		"metadata_service", instancePrototype.MetadataService != nil,
+		"placement_target", instancePrototype.PlacementTarget,
+		"resource_group", instancePrototype.ResourceGroup,
+		"user_data_length", len(*instancePrototype.UserData))
+
+	// Log volume attachments details for block device troubleshooting
+	if len(instancePrototype.VolumeAttachments) > 0 {
+		for i, va := range instancePrototype.VolumeAttachments {
+			logger.Info("VolumeAttachment details",
+				"index", i,
+				"name", va.Name,
+				"volume_type", fmt.Sprintf("%T", va.Volume),
+				"delete_on_termination", va.DeleteVolumeOnInstanceDelete)
+
+			// Log detailed volume fields for oneOf debugging
+			if volumeByCapacity, ok := va.Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity); ok {
+				logger.Info("Volume by capacity details",
+					"index", i,
+					"volume_name", volumeByCapacity.Name,
+					"volume_capacity", volumeByCapacity.Capacity,
+					"volume_profile", volumeByCapacity.Profile,
+					"has_name", volumeByCapacity.Name != nil,
+					"has_capacity", volumeByCapacity.Capacity != nil,
+					"has_profile", volumeByCapacity.Profile != nil,
+					"has_iops", volumeByCapacity.Iops != nil,
+					"has_bandwidth", volumeByCapacity.Bandwidth != nil,
+					"has_user_tags", volumeByCapacity.UserTags != nil,
+					"has_encryption_key", volumeByCapacity.EncryptionKey != nil)
+			}
+		}
+	}
+
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
 		// Check if this is a partial failure that might have created resources
@@ -389,7 +434,9 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			"retryable", ibmErr.Retryable,
 			"error_message", err.Error(),
 			"error_type", fmt.Sprintf("%T", err),
-			"instance_prototype_type", fmt.Sprintf("%T", instancePrototype))
+			"instance_prototype_type", fmt.Sprintf("%T", instancePrototype),
+			"ibm_error_message", ibmErr.Message,
+			"ibm_error_more_info", ibmErr.MoreInfo)
 
 		if p.isPartialFailure(ibmErr) {
 			logger.Info("Instance creation failed after partial resource creation, attempting cleanup",
@@ -407,7 +454,38 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		return nil, vpcclient.HandleVPCError(err, logger, "creating VPC instance")
 	}
 
-	logger.Info("VPC instance created successfully", "instance_id", *instance.ID, "name", *instance.Name)
+	// DETAILED RESPONSE LOGGING: Log the full VPC response details
+	logger.Info("VPC instance created successfully",
+		"instance_id", *instance.ID,
+		"name", *instance.Name,
+		"status", instance.Status,
+		"lifecycle_state", instance.LifecycleState,
+		"zone", instance.Zone,
+		"vpc", instance.VPC,
+		"image", instance.Image,
+		"profile", instance.Profile)
+
+	// Log network attachment details
+	if len(instance.NetworkAttachments) > 0 {
+		for i, na := range instance.NetworkAttachments {
+			logger.Info("Network attachment in response",
+				"index", i,
+				"attachment_id", na.ID,
+				"attachment_type", fmt.Sprintf("%T", na))
+		}
+	}
+
+	// Log volume attachment details in response
+	if len(instance.VolumeAttachments) > 0 {
+		for i, va := range instance.VolumeAttachments {
+			logger.Info("Volume attachment in response",
+				"index", i,
+				"attachment_id", va.ID,
+				"volume_id", va.Volume,
+				"attachment_name", va.Name,
+				"device_name", va.Device)
+		}
+	}
 
 	// Verify network attachment was applied correctly
 	if len(instance.NetworkAttachments) > 0 && instance.NetworkAttachments[0].ID != nil {
@@ -730,14 +808,14 @@ func (p *VPCInstanceProvider) cleanupOrphanedVolume(ctx context.Context, vpcClie
 
 // generateBootstrapUserData generates bootstrap user data using the VPC bootstrap provider
 // buildVolumeAttachments creates volume attachments based on block device mappings or uses defaults
-func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNodeClass, instanceName string) (*vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, []vpcv1.VolumeAttachmentPrototype, error) {
+func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNodeClass, instanceName, zone string) (*vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, []vpcv1.VolumeAttachmentPrototype, error) {
 	// If no block device mappings specified, use default configuration
 	if len(nodeClass.Spec.BlockDeviceMappings) == 0 {
 		// Default boot volume: 100GB general-purpose
 		defaultBootVolume := &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
 			Volume: &vpcv1.VolumePrototypeInstanceByImageContext{
 				Name: &[]string{fmt.Sprintf("%s-boot", instanceName)}[0],
-				Profile: &vpcv1.VolumeProfileIdentity{
+				Profile: &vpcv1.VolumeProfileIdentityByName{
 					Name: &[]string{"general-purpose"}[0],
 				},
 				Capacity: &[]int64{100}[0],
@@ -770,12 +848,12 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 
 				// Set profile if specified
 				if mapping.VolumeSpec.Profile != nil {
-					bootVolume.Profile = &vpcv1.VolumeProfileIdentity{
+					bootVolume.Profile = &vpcv1.VolumeProfileIdentityByName{
 						Name: mapping.VolumeSpec.Profile,
 					}
 				} else {
 					// Default to general-purpose
-					bootVolume.Profile = &vpcv1.VolumeProfileIdentity{
+					bootVolume.Profile = &vpcv1.VolumeProfileIdentityByName{
 						Name: &[]string{"general-purpose"}[0],
 					}
 				}
@@ -792,7 +870,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 
 				// Set encryption key if specified
 				if mapping.VolumeSpec.EncryptionKeyID != nil {
-					bootVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentity{
+					bootVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentityByCRN{
 						CRN: mapping.VolumeSpec.EncryptionKeyID,
 					}
 				}
@@ -804,7 +882,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 			} else {
 				// Use defaults if no volume spec
 				bootVolume.Capacity = &[]int64{100}[0]
-				bootVolume.Profile = &vpcv1.VolumeProfileIdentity{
+				bootVolume.Profile = &vpcv1.VolumeProfileIdentityByName{
 					Name: &[]string{"general-purpose"}[0],
 				}
 			}
@@ -835,82 +913,57 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 				volumeName = *mapping.DeviceName
 			}
 
-			dataVolume := &vpcv1.VolumePrototype{
-				Name: &volumeName,
-			}
-
-			// Set capacity (required for data volumes)
-			if mapping.VolumeSpec.Capacity != nil {
-				dataVolume.Capacity = mapping.VolumeSpec.Capacity
-			} else {
-				// Default to 100GB for data volumes
-				dataVolume.Capacity = &[]int64{100}[0]
-			}
-
-			// Set profile
-			if mapping.VolumeSpec.Profile != nil {
-				dataVolume.Profile = &vpcv1.VolumeProfileIdentity{
-					Name: mapping.VolumeSpec.Profile,
-				}
-			} else {
-				dataVolume.Profile = &vpcv1.VolumeProfileIdentity{
-					Name: &[]string{"general-purpose"}[0],
-				}
-			}
-
-			// Set IOPS if specified
-			if mapping.VolumeSpec.IOPS != nil {
-				dataVolume.Iops = mapping.VolumeSpec.IOPS
-			}
-
-			// Set bandwidth if specified
-			if mapping.VolumeSpec.Bandwidth != nil {
-				dataVolume.Bandwidth = mapping.VolumeSpec.Bandwidth
-			}
-
-			// Set encryption key if specified
-			if mapping.VolumeSpec.EncryptionKeyID != nil {
-				dataVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentity{
-					CRN: mapping.VolumeSpec.EncryptionKeyID,
-				}
-			}
-
-			// Set user tags if specified
-			if len(mapping.VolumeSpec.Tags) > 0 {
-				dataVolume.UserTags = mapping.VolumeSpec.Tags
-			}
-
-			// Set zone (required for data volumes)
-			// This will be set to the same zone as the instance
-			// The zone will be set by the caller
-
 			// Set delete on termination (default true)
 			deleteOnTermination := true
 			if mapping.VolumeSpec.DeleteOnTermination != nil {
 				deleteOnTermination = *mapping.VolumeSpec.DeleteOnTermination
 			}
 
-			// Convert VolumePrototype to VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext
-			volumeContext := &vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext{
-				Name:     dataVolume.Name,
-				Capacity: dataVolume.Capacity,
-				Profile:  dataVolume.Profile,
+			// Create the concrete oneOf type directly for VPC SDK
+			// Use VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity
+			volumeByCapacity := &vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity{
+				Name: &volumeName,
 			}
 
-			if dataVolume.Iops != nil {
-				volumeContext.Iops = dataVolume.Iops
+			// Set capacity (required field)
+			if mapping.VolumeSpec.Capacity != nil {
+				volumeByCapacity.Capacity = mapping.VolumeSpec.Capacity
+			} else {
+				// Default to 100GB for data volumes
+				volumeByCapacity.Capacity = &[]int64{100}[0]
 			}
-			if dataVolume.Bandwidth != nil {
-				volumeContext.Bandwidth = dataVolume.Bandwidth
-			}
-			if dataVolume.UserTags != nil {
-				volumeContext.UserTags = dataVolume.UserTags
-			}
-			// Note: EncryptionKey and ResourceGroup would need special handling if supported
 
+			// Set profile (required field)
+			if mapping.VolumeSpec.Profile != nil {
+				volumeByCapacity.Profile = &vpcv1.VolumeProfileIdentityByName{
+					Name: mapping.VolumeSpec.Profile,
+				}
+			} else {
+				volumeByCapacity.Profile = &vpcv1.VolumeProfileIdentityByName{
+					Name: &[]string{"general-purpose"}[0],
+				}
+			}
+
+			// Set optional fields
+			if mapping.VolumeSpec.IOPS != nil {
+				volumeByCapacity.Iops = mapping.VolumeSpec.IOPS
+			}
+			if mapping.VolumeSpec.Bandwidth != nil {
+				volumeByCapacity.Bandwidth = mapping.VolumeSpec.Bandwidth
+			}
+			if mapping.VolumeSpec.EncryptionKeyID != nil {
+				volumeByCapacity.EncryptionKey = &vpcv1.EncryptionKeyIdentityByCRN{
+					CRN: mapping.VolumeSpec.EncryptionKeyID,
+				}
+			}
+			if len(mapping.VolumeSpec.Tags) > 0 {
+				volumeByCapacity.UserTags = mapping.VolumeSpec.Tags
+			}
+
+			// The volumeByCapacity should implement VolumeAttachmentPrototypeVolumeIntf directly
 			volumeAttachment := vpcv1.VolumeAttachmentPrototype{
 				Name:                         &volumeName,
-				Volume:                       volumeContext,
+				Volume:                       volumeByCapacity,
 				DeleteVolumeOnInstanceDelete: &deleteOnTermination,
 			}
 
@@ -923,7 +976,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 		bootVolumeAttachment = &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
 			Volume: &vpcv1.VolumePrototypeInstanceByImageContext{
 				Name: &[]string{fmt.Sprintf("%s-boot", instanceName)}[0],
-				Profile: &vpcv1.VolumeProfileIdentity{
+				Profile: &vpcv1.VolumeProfileIdentityByName{
 					Name: &[]string{"general-purpose"}[0],
 				},
 				Capacity: &[]int64{100}[0],
