@@ -707,6 +707,14 @@ func (m *MockVPCSDKClient) SetListZonesError(err error) {
 	m.listZonesError = err
 }
 
+func (m *MockVPCSDKClient) GetSecurityGroupWithContext(context.Context, *vpcv1.GetSecurityGroupOptions) (*vpcv1.SecurityGroup, *core.DetailedResponse, error) {
+	return &vpcv1.SecurityGroup{}, &core.DetailedResponse{}, nil
+}
+
+func (m *MockVPCSDKClient) GetKeyWithContext(context.Context, *vpcv1.GetKeyOptions) (*vpcv1.Key, *core.DetailedResponse, error) {
+	return &vpcv1.Key{}, &core.DetailedResponse{}, nil
+}
+
 // TestableIBMClient implements the interface needed for pricing provider tests
 type TestableIBMClient struct {
 	mockCatalogClient *MockGlobalCatalogClient

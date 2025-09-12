@@ -272,6 +272,22 @@ func (m *MockVPCSDKClient) ListRegions(options *vpcv1.ListRegionsOptions) (*vpcv
 	return args.Get(0).(*vpcv1.RegionCollection), args.Get(1).(*core.DetailedResponse), args.Error(2)
 }
 
+func (m *MockVPCSDKClient) GetSecurityGroupWithContext(ctx context.Context, options *vpcv1.GetSecurityGroupOptions) (*vpcv1.SecurityGroup, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.SecurityGroup), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
+func (m *MockVPCSDKClient) GetKeyWithContext(ctx context.Context, options *vpcv1.GetKeyOptions) (*vpcv1.Key, *core.DetailedResponse, error) {
+	args := m.Called(ctx, options)
+	if args.Get(0) == nil {
+		return nil, nil, args.Error(2)
+	}
+	return args.Get(0).(*vpcv1.Key), args.Get(1).(*core.DetailedResponse), args.Error(2)
+}
+
 // IBMClientInterface defines the interface we need for testing
 type IBMClientInterface interface {
 	GetVPCClient() (*ibm.VPCClient, error)

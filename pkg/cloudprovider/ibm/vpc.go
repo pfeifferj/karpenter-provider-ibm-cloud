@@ -38,6 +38,8 @@ type vpcClientInterface interface {
 	ListInstanceProfilesWithContext(context.Context, *vpcv1.ListInstanceProfilesOptions) (*vpcv1.InstanceProfileCollection, *core.DetailedResponse, error)
 	GetInstanceProfileWithContext(context.Context, *vpcv1.GetInstanceProfileOptions) (*vpcv1.InstanceProfile, *core.DetailedResponse, error)
 	ListSecurityGroupsWithContext(context.Context, *vpcv1.ListSecurityGroupsOptions) (*vpcv1.SecurityGroupCollection, *core.DetailedResponse, error)
+	GetSecurityGroupWithContext(context.Context, *vpcv1.GetSecurityGroupOptions) (*vpcv1.SecurityGroup, *core.DetailedResponse, error)
+	GetKeyWithContext(context.Context, *vpcv1.GetKeyOptions) (*vpcv1.Key, *core.DetailedResponse, error)
 	// Volume methods
 	ListVolumesWithContext(context.Context, *vpcv1.ListVolumesOptions) (*vpcv1.VolumeCollection, *core.DetailedResponse, error)
 	DeleteVolumeWithContext(context.Context, *vpcv1.DeleteVolumeOptions) (*core.DetailedResponse, error)
