@@ -134,3 +134,11 @@ lint-commits: ## Lint commit messages since main
 
 install-git-hooks: ## Install gitlint git hooks
 	gitlint install-hook
+
+.PHONY: k8s-support-table
+k8s-support-table: ## Generate Kubernetes version support table
+	./scripts/generate-k8s-support-table.sh
+
+.PHONY: update-k8s-support
+update-k8s-support: ## Update README.md with Kubernetes support table
+	./scripts/generate-k8s-support-table.sh --update-readme
