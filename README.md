@@ -23,7 +23,7 @@ Karpenter is an open-source node provisioning project for Kubernetes. This provi
 
 ## Kubernetes Support
 
-| Kubernetes Version | Status | 
+| Kubernetes Version | Status |
 |-------------------|--------|
 | 1.28 | ✅ Supported |
 | 1.29 | ✅ Supported |
