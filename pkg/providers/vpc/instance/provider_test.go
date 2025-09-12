@@ -2297,11 +2297,11 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 				assert.Len(t, data, 2)
 				// Check first data volume
 				assert.Equal(t, "data-disk-1", *data[0].Name)
-				vol1 := data[0].Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext)
+				vol1 := data[0].Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity)
 				assert.Equal(t, int64(500), *vol1.Capacity)
 				// Check second data volume
 				assert.Equal(t, "data-disk-2", *data[1].Name)
-				vol2 := data[1].Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext)
+				vol2 := data[1].Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity)
 				assert.Equal(t, int64(1000), *vol2.Capacity)
 				assert.Equal(t, false, *data[1].DeleteVolumeOnInstanceDelete)
 			},
@@ -2343,7 +2343,7 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 
 			// Verify boot volume
 			assert.Equal(t, tt.expectedBootCapacity, *bootVolume.Volume.Capacity)
-			profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentity)
+			profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentityByName)
 			assert.Equal(t, tt.expectedBootProfile, *profileIdentity.Name)
 
 			// Verify data volumes count
@@ -2376,7 +2376,7 @@ func TestVPCInstanceProvider_BlockDeviceMappingValidation(t *testing.T) {
 		bootVolume, _, err := provider.buildVolumeAttachments(nodeClass, "test")
 		assert.NoError(t, err)
 		assert.Equal(t, int64(100), *bootVolume.Volume.Capacity)
-		profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentity)
+		profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentityByName)
 		assert.Equal(t, "general-purpose", *profileIdentity.Name)
 	})
 

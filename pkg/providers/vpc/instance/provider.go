@@ -193,7 +193,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Create virtual network interface for proper VPC service network access
 	vniPrototype := &vpcv1.InstanceNetworkAttachmentPrototypeVirtualNetworkInterfaceVirtualNetworkInterfacePrototypeInstanceNetworkAttachmentContext{
-		Subnet: &vpcv1.SubnetIdentity{
+		Subnet: &vpcv1.SubnetIdentityByID{
 			ID: &subnet,
 		},
 		// Enable infrastructure NAT for proper VPC service network routing
@@ -214,7 +214,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		if rgErr != nil {
 			return nil, fmt.Errorf("resolving resource group for VNI %s: %w", nodeClass.Spec.ResourceGroup, rgErr)
 		}
-		vniPrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+		vniPrototype.ResourceGroup = &vpcv1.ResourceGroupIdentityByID{
 			ID: &resourceGroupID,
 		}
 		logger.Info("Added resource group to VNI", "resource_group", resourceGroupID)
@@ -224,7 +224,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	if len(nodeClass.Spec.SecurityGroups) > 0 {
 		var securityGroups []vpcv1.SecurityGroupIdentityIntf
 		for _, sg := range nodeClass.Spec.SecurityGroups {
-			securityGroups = append(securityGroups, &vpcv1.SecurityGroupIdentity{ID: &sg})
+			securityGroups = append(securityGroups, &vpcv1.SecurityGroupIdentityByID{ID: &sg})
 		}
 		vniPrototype.SecurityGroups = securityGroups
 		logger.Info("Applying security groups to VNI", "security_groups", nodeClass.Spec.SecurityGroups, "count", len(securityGroups))
@@ -235,7 +235,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			return nil, fmt.Errorf("getting default security group for VPC %s: %w", nodeClass.Spec.VPC, sgErr)
 		}
 		vniPrototype.SecurityGroups = []vpcv1.SecurityGroupIdentityIntf{
-			&vpcv1.SecurityGroupIdentity{ID: defaultSG.ID},
+			&vpcv1.SecurityGroupIdentityByID{ID: defaultSG.ID},
 		}
 		logger.Info("Using default security group for VNI", "security_group", *defaultSG.ID)
 	}
@@ -270,18 +270,18 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Create instance prototype with VNI
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
-		Image: &vpcv1.ImageIdentity{
+		Image: &vpcv1.ImageIdentityByID{
 			ID: &imageID,
 		},
-		Zone: &vpcv1.ZoneIdentity{
+		Zone: &vpcv1.ZoneIdentityByName{
 			Name: &zone,
 		},
 		PrimaryNetworkAttachment: primaryNetworkAttachment,
-		VPC: &vpcv1.VPCIdentity{
+		VPC: &vpcv1.VPCIdentityByID{
 			ID: &nodeClass.Spec.VPC,
 		},
 		Name: &nodeClaim.Name,
-		Profile: &vpcv1.InstanceProfileIdentity{
+		Profile: &vpcv1.InstanceProfileIdentityByName{
 			Name: &instanceProfile,
 		},
 		BootVolumeAttachment: bootVolumeAttachment,
@@ -303,7 +303,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		if rgErr != nil {
 			return nil, fmt.Errorf("resolving resource group %s: %w", nodeClass.Spec.ResourceGroup, rgErr)
 		}
-		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentity{
+		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentityByID{
 			ID: &resourceGroupID,
 		}
 		logger.Info("Resource group resolved", "input", nodeClass.Spec.ResourceGroup, "resolved_id", resourceGroupID)
@@ -313,7 +313,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	if len(nodeClass.Spec.SSHKeys) > 0 {
 		var sshKeys []vpcv1.KeyIdentityIntf
 		for _, key := range nodeClass.Spec.SSHKeys {
-			sshKeys = append(sshKeys, &vpcv1.KeyIdentity{ID: &key})
+			sshKeys = append(sshKeys, &vpcv1.KeyIdentityByID{ID: &key})
 		}
 		instancePrototype.Keys = sshKeys
 	}
@@ -737,7 +737,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 		defaultBootVolume := &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
 			Volume: &vpcv1.VolumePrototypeInstanceByImageContext{
 				Name: &[]string{fmt.Sprintf("%s-boot", instanceName)}[0],
-				Profile: &vpcv1.VolumeProfileIdentity{
+				Profile: &vpcv1.VolumeProfileIdentityByName{
 					Name: &[]string{"general-purpose"}[0],
 				},
 				Capacity: &[]int64{100}[0],
@@ -770,12 +770,12 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 
 				// Set profile if specified
 				if mapping.VolumeSpec.Profile != nil {
-					bootVolume.Profile = &vpcv1.VolumeProfileIdentity{
+					bootVolume.Profile = &vpcv1.VolumeProfileIdentityByName{
 						Name: mapping.VolumeSpec.Profile,
 					}
 				} else {
 					// Default to general-purpose
-					bootVolume.Profile = &vpcv1.VolumeProfileIdentity{
+					bootVolume.Profile = &vpcv1.VolumeProfileIdentityByName{
 						Name: &[]string{"general-purpose"}[0],
 					}
 				}
@@ -792,7 +792,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 
 				// Set encryption key if specified
 				if mapping.VolumeSpec.EncryptionKeyID != nil {
-					bootVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentity{
+					bootVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentityByCRN{
 						CRN: mapping.VolumeSpec.EncryptionKeyID,
 					}
 				}
@@ -804,7 +804,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 			} else {
 				// Use defaults if no volume spec
 				bootVolume.Capacity = &[]int64{100}[0]
-				bootVolume.Profile = &vpcv1.VolumeProfileIdentity{
+				bootVolume.Profile = &vpcv1.VolumeProfileIdentityByName{
 					Name: &[]string{"general-purpose"}[0],
 				}
 			}
@@ -849,11 +849,11 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 
 			// Set profile
 			if mapping.VolumeSpec.Profile != nil {
-				dataVolume.Profile = &vpcv1.VolumeProfileIdentity{
+				dataVolume.Profile = &vpcv1.VolumeProfileIdentityByName{
 					Name: mapping.VolumeSpec.Profile,
 				}
 			} else {
-				dataVolume.Profile = &vpcv1.VolumeProfileIdentity{
+				dataVolume.Profile = &vpcv1.VolumeProfileIdentityByName{
 					Name: &[]string{"general-purpose"}[0],
 				}
 			}
@@ -870,7 +870,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 
 			// Set encryption key if specified
 			if mapping.VolumeSpec.EncryptionKeyID != nil {
-				dataVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentity{
+				dataVolume.EncryptionKey = &vpcv1.EncryptionKeyIdentityByCRN{
 					CRN: mapping.VolumeSpec.EncryptionKeyID,
 				}
 			}
@@ -890,27 +890,31 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 				deleteOnTermination = *mapping.VolumeSpec.DeleteOnTermination
 			}
 
-			// Convert VolumePrototype to VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext
-			volumeContext := &vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContext{
+			// Create the proper concrete oneOf type for VPC SDK  
+			// Use VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity
+			volumeByCapacity := &vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity{
 				Name:     dataVolume.Name,
 				Capacity: dataVolume.Capacity,
 				Profile:  dataVolume.Profile,
 			}
 
 			if dataVolume.Iops != nil {
-				volumeContext.Iops = dataVolume.Iops
+				volumeByCapacity.Iops = dataVolume.Iops
 			}
 			if dataVolume.Bandwidth != nil {
-				volumeContext.Bandwidth = dataVolume.Bandwidth
+				volumeByCapacity.Bandwidth = dataVolume.Bandwidth
 			}
 			if dataVolume.UserTags != nil {
-				volumeContext.UserTags = dataVolume.UserTags
+				volumeByCapacity.UserTags = dataVolume.UserTags
 			}
-			// Note: EncryptionKey and ResourceGroup would need special handling if supported
+			if dataVolume.EncryptionKey != nil {
+				volumeByCapacity.EncryptionKey = dataVolume.EncryptionKey
+			}
 
+			// The volumeByCapacity should implement VolumeAttachmentPrototypeVolumeIntf directly
 			volumeAttachment := vpcv1.VolumeAttachmentPrototype{
 				Name:                         &volumeName,
-				Volume:                       volumeContext,
+				Volume:                       volumeByCapacity,
 				DeleteVolumeOnInstanceDelete: &deleteOnTermination,
 			}
 
@@ -923,7 +927,7 @@ func (p *VPCInstanceProvider) buildVolumeAttachments(nodeClass *v1alpha1.IBMNode
 		bootVolumeAttachment = &vpcv1.VolumeAttachmentPrototypeInstanceByImageContext{
 			Volume: &vpcv1.VolumePrototypeInstanceByImageContext{
 				Name: &[]string{fmt.Sprintf("%s-boot", instanceName)}[0],
-				Profile: &vpcv1.VolumeProfileIdentity{
+				Profile: &vpcv1.VolumeProfileIdentityByName{
 					Name: &[]string{"general-purpose"}[0],
 				},
 				Capacity: &[]int64{100}[0],
