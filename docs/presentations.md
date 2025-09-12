@@ -21,7 +21,12 @@ This interactive demo showcases the Karpenter IBM Cloud Provider performing auto
 
 ## Community Talks
 
-*Community presentations and lightning talks will be listed here.*
+### SIG Autoscaling Weekly Meeting
+#### Provider Presentation and Demo
+- **Date**: September 11, 2025
+- **Meeting**: Kubernetes SIG Autoscaling Weekly
+- **Resources**: [Recording](https://youtu.be/2_0botmfIhY)
+- **Description**: Presentation and demonstration of the Karpenter IBM Cloud Provider at the Kubernetes SIG Autoscaling weekly meeting.
 
 ---
 
