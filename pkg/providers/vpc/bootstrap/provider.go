@@ -175,7 +175,7 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 	options := commonTypes.Options{
 		ClusterEndpoint:   clusterEndpoint,
 		BootstrapToken:    bootstrapToken,
-		CustomUserData:    nodeClass.Spec.UserData,
+		CustomUserData:    nodeClass.Spec.UserDataAppend,
 		ContainerRuntime:  containerRuntime,
 		CNIPlugin:         cniPlugin,
 		CNIVersion:        cniVersion,
