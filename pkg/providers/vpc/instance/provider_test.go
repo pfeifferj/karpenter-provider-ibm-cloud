@@ -2335,7 +2335,7 @@ func TestVPCInstanceProvider_BlockDeviceMappings(t *testing.T) {
 			}
 
 			// Call buildVolumeAttachments
-			bootVolume, dataVolumes, err := provider.buildVolumeAttachments(nodeClass, "test-instance")
+			bootVolume, dataVolumes, err := provider.buildVolumeAttachments(nodeClass, "test-instance", "us-south-1")
 
 			// Verify no error
 			assert.NoError(t, err)
@@ -2373,7 +2373,7 @@ func TestVPCInstanceProvider_BlockDeviceMappingValidation(t *testing.T) {
 			},
 		}
 
-		bootVolume, _, err := provider.buildVolumeAttachments(nodeClass, "test")
+		bootVolume, _, err := provider.buildVolumeAttachments(nodeClass, "test", "us-south-1")
 		assert.NoError(t, err)
 		assert.Equal(t, int64(100), *bootVolume.Volume.Capacity)
 		profileIdentity := bootVolume.Volume.Profile.(*vpcv1.VolumeProfileIdentityByName)
@@ -2398,7 +2398,7 @@ func TestVPCInstanceProvider_BlockDeviceMappingValidation(t *testing.T) {
 			},
 		}
 
-		_, dataVolumes, err := provider.buildVolumeAttachments(nodeClass, "test")
+		_, dataVolumes, err := provider.buildVolumeAttachments(nodeClass, "test", "us-south-1")
 		assert.NoError(t, err)
 		assert.Len(t, dataVolumes, 1) // Only one data volume should be created
 	})
