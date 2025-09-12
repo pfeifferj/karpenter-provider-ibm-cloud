@@ -60,10 +60,24 @@ rules:
 - apiGroups:
   - certificates.k8s.io
   resources:
+  - certificatesigningrequests/approval
+  verbs:
+  - update
+- apiGroups:
+  - certificates.k8s.io
+  resources:
   - certificatesigningrequests/nodeclient
   - certificatesigningrequests/selfnodeclient
   verbs:
   - create
+- apiGroups:
+  - certificates.k8s.io
+  resourceNames:
+  - kubernetes.io/kubelet-serving
+  resources:
+  - signers
+  verbs:
+  - approve
 - apiGroups:
   - coordination.k8s.io
   resources:
