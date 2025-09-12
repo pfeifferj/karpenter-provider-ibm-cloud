@@ -334,12 +334,12 @@ func TestCloudProvider_Create(t *testing.T) {
 
 			// Create CloudProvider
 			cp := &CloudProvider{
-				kubeClient:           fakeClient,
-				recorder:             &mockEventRecorder{},
-				ibmClient:            nil, // Tests expect this to cause proper error handling
-				instanceTypeProvider: &mockInstanceTypeProvider{instanceTypes: tt.instanceTypes},
-				providerFactory:      getTestProviderFactory(fakeClient),
-				circuitBreaker:       NewCircuitBreaker(DefaultCircuitBreakerConfig(), logr.Discard()),
+				kubeClient:            fakeClient,
+				recorder:              &mockEventRecorder{},
+				ibmClient:             nil, // Tests expect this to cause proper error handling
+				instanceTypeProvider:  &mockInstanceTypeProvider{instanceTypes: tt.instanceTypes},
+				providerFactory:       getTestProviderFactory(fakeClient),
+				circuitBreakerManager: NewNodeClassCircuitBreakerManager(DefaultCircuitBreakerConfig(), logr.Discard()),
 			}
 
 			// Test Create
@@ -389,12 +389,20 @@ func TestCloudProvider_Create_CircuitBreakerEventPublishing(t *testing.T) {
 	cb.state = CircuitBreakerOpen
 	cb.lastStateChange = time.Now()
 
+	circuitBreakerManager := NewNodeClassCircuitBreakerManager(DefaultCircuitBreakerConfig(), logr.Discard())
+
 	cp := &CloudProvider{
-		kubeClient:           kubeClient,
-		instanceTypeProvider: &mockInstanceTypeProvider{instanceTypes: []*cloudprovider.InstanceType{getTestInstanceType()}},
-		recorder:             eventRecorder,
-		circuitBreaker:       cb,
+		kubeClient:            kubeClient,
+		instanceTypeProvider:  &mockInstanceTypeProvider{instanceTypes: []*cloudprovider.InstanceType{getTestInstanceType()}},
+		providerFactory:       getTestProviderFactory(kubeClient),
+		recorder:              eventRecorder,
+		circuitBreakerManager: circuitBreakerManager,
 	}
+
+	// Open the circuit breaker for this specific NodeClass by recording enough failures
+	circuitBreakerManager.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("test failure 1"))
+	circuitBreakerManager.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("test failure 2"))
+	circuitBreakerManager.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("test failure 3"))
 
 	_, err := cp.Create(ctx, nodeClaim)
 
@@ -487,10 +495,12 @@ func TestCloudProvider_Create_EnhancedCircuitBreakerLogging(t *testing.T) {
 	cloudProvider := New(kubeClient, eventRecorder, nil, mockInstanceTypes, &mockSubnetProvider{}, cbConfig)
 
 	// Directly manipulate the circuit breaker to simulate previous failures
-	cloudProvider.circuitBreaker.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("subnet subnet-123 not found"))
+	cloudProvider.circuitBreakerManager.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("subnet subnet-123 not found"))
+	cloudProvider.circuitBreakerManager.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("subnet subnet-123 not found"))
+	cloudProvider.circuitBreakerManager.RecordFailure("test-nodeclass", "us-south", fmt.Errorf("subnet subnet-123 not found"))
 
 	// Verify the circuit breaker is actually open
-	status, _ := cloudProvider.circuitBreaker.GetState()
+	status, _ := cloudProvider.circuitBreakerManager.GetStateForNodeClass("test-nodeclass", "us-south")
 	assert.Equal(t, CircuitBreakerOpen, status.State, "Circuit breaker should be open after failure")
 
 	// Now try to create - the circuit breaker should be open and block with enhanced message
