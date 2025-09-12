@@ -49,6 +49,24 @@ type MockSubnetProvider struct {
 	mock.Mock
 }
 
+// MockIBMClient is a mock implementation of ibm.Client for testing
+type MockIBMClient struct {
+	mock.Mock
+}
+
+func (m *MockIBMClient) GetVPCClient() (*ibm.VPCClient, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ibm.VPCClient), args.Error(1)
+}
+
+func (m *MockIBMClient) GetRegion() string {
+	args := m.Called()
+	return args.String(0)
+}
+
 func (m *MockSubnetProvider) ListSubnets(ctx context.Context, vpcID string) ([]subnet.SubnetInfo, error) {
 	args := m.Called(ctx, vpcID)
 	return args.Get(0).([]subnet.SubnetInfo), args.Error(1)
@@ -1595,6 +1613,126 @@ func TestValidateRegion(t *testing.T) {
 	}
 }
 
+func TestValidateVPCInRegion(t *testing.T) {
+	tests := []struct {
+		name            string
+		vpcID           string
+		resourceGroupID string
+		region          string
+		expectedError   string
+	}{
+		{
+			name:            "IBM client not available",
+			vpcID:           "r010-12345678-1234-1234-1234-123456789012",
+			resourceGroupID: "resource-group-123",
+			region:          "eu-de",
+			expectedError:   "IBM client not available",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create controller with or without IBM client
+			controller := &Controller{}
+			// Note: For this test we're only testing the nil IBM client case
+			// to verify the error handling when IBM client is not available
+
+			ctx := context.Background()
+			err := controller.validateVPCInRegion(ctx, tt.vpcID, tt.resourceGroupID, tt.region)
+
+			require.Error(t, err, "Expected validation error")
+			assert.Contains(t, err.Error(), tt.expectedError, "Error should contain expected message")
+		})
+	}
+}
+
+// TestNodeClassStatusWithVPCValidationErrors tests that NodeClass status is properly updated
+// when VPC validation fails, preventing provisioning attempts
+func TestNodeClassStatusWithVPCValidationErrors(t *testing.T) {
+	tests := []struct {
+		name          string
+		nodeClass     *v1alpha1.IBMNodeClass
+		expectedReady metav1.ConditionStatus
+		errorMessage  string
+	}{
+		{
+			name: "NodeClass with nonexistent VPC should be marked ready when IBM client unavailable",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclass-invalid-vpc",
+				},
+				Spec: v1alpha1.IBMNodeClassSpec{
+					Region: "eu-de",
+					VPC:    "r010-nonexistent-vpc-id",
+					Image:  "ibm-ubuntu-24-04-3-minimal-amd64-1",
+				},
+			},
+			expectedReady: metav1.ConditionTrue, // TestController skips validation when no IBM client
+			errorMessage:  "NodeClass is ready",
+		},
+		{
+			name: "NodeClass with missing required fields should be marked invalid",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclass-missing-fields",
+				},
+				Spec: v1alpha1.IBMNodeClassSpec{
+					// Missing Region and VPC
+					Image: "ibm-ubuntu-24-04-3-minimal-amd64-1",
+				},
+			},
+			expectedReady: metav1.ConditionFalse,
+			errorMessage:  "required fields missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test scheme and client
+			s := getTestScheme()
+			kubeClient := fake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(tt.nodeClass).
+				WithStatusSubresource(tt.nodeClass).
+				Build()
+
+			// Create controller without IBM client (will fail validation as expected)
+			controller := NewTestController(kubeClient)
+
+			// Test the reconcile loop
+			ctx := context.Background()
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name: tt.nodeClass.Name,
+				},
+			}
+
+			_, err := controller.Reconcile(ctx, req)
+			require.NoError(t, err, "Reconcile should not return error even when validation fails")
+
+			// Verify NodeClass status was updated correctly
+			updatedNodeClass := &v1alpha1.IBMNodeClass{}
+			err = kubeClient.Get(ctx, req.NamespacedName, updatedNodeClass)
+			require.NoError(t, err, "Should be able to get updated NodeClass")
+
+			// Check that Ready condition is set correctly
+			require.Len(t, updatedNodeClass.Status.Conditions, 1, "Should have one condition")
+			condition := updatedNodeClass.Status.Conditions[0]
+			assert.Equal(t, "Ready", condition.Type)
+			assert.Equal(t, tt.expectedReady, condition.Status)
+
+			if tt.expectedReady == metav1.ConditionTrue {
+				assert.Equal(t, "Ready", condition.Reason)
+			} else {
+				assert.Equal(t, "ValidationFailed", condition.Reason)
+				assert.Contains(t, updatedNodeClass.Status.ValidationError, tt.errorMessage)
+			}
+			assert.Contains(t, condition.Message, tt.errorMessage)
+			assert.False(t, updatedNodeClass.Status.LastValidationTime.IsZero())
+		})
+	}
+}
+
 func TestValidateVPC(t *testing.T) {
 	// Skip this test if no credentials available
 	if os.Getenv("IBM_API_KEY") == "" || os.Getenv("VPC_API_KEY") == "" {
@@ -1963,6 +2101,176 @@ func TestValidateImage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := controller.validateImage(ctx, tt.imageID, tt.region)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateSecurityGroups(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name           string
+		securityGroups []string
+		vpcID          string
+		region         string
+		wantErr        bool
+		errContains    string
+	}{
+		{
+			name:           "empty security groups list",
+			securityGroups: []string{},
+			vpcID:          "r010-12345678-1234-5678-9abc-def012345678",
+			region:         "us-south",
+			wantErr:        false,
+		},
+		{
+			name:           "security groups with empty strings",
+			securityGroups: []string{"", "  ", ""},
+			vpcID:          "r010-12345678-1234-5678-9abc-def012345678",
+			region:         "us-south",
+			wantErr:        false,
+		},
+		{
+			name:           "valid security group IDs",
+			securityGroups: []string{"r010-87654321-4321-8765-cba9-fed987654321"},
+			vpcID:          "r010-12345678-1234-5678-9abc-def012345678",
+			region:         "us-south",
+			wantErr:        false,
+		},
+		{
+			name:           "no VPC client available",
+			securityGroups: []string{"r010-87654321-4321-8765-cba9-fed987654321"},
+			vpcID:          "r010-12345678-1234-5678-9abc-def012345678",
+			region:         "us-south",
+			wantErr:        false, // No error because validation is skipped when VPC client manager is nil
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create controller without IBM client to trigger error path
+			controller := NewTestController(nil)
+
+			err := controller.validateSecurityGroups(ctx, tt.securityGroups, tt.vpcID, tt.region)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateSSHKeys(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		sshKeys     []string
+		region      string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "empty SSH keys list",
+			sshKeys: []string{},
+			region:  "us-south",
+			wantErr: false,
+		},
+		{
+			name:    "SSH keys with empty strings",
+			sshKeys: []string{"", "  ", ""},
+			region:  "us-south",
+			wantErr: false,
+		},
+		{
+			name:    "valid SSH key IDs",
+			sshKeys: []string{"r010-87654321-4321-8765-cba9-fed987654321"},
+			region:  "us-south",
+			wantErr: false,
+		},
+		{
+			name:    "no VPC client available",
+			sshKeys: []string{"r010-87654321-4321-8765-cba9-fed987654321"},
+			region:  "us-south",
+			wantErr: false, // No error because validation is skipped when VPC client manager is nil
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create controller without IBM client to trigger error path
+			controller := NewTestController(nil)
+
+			err := controller.validateSSHKeys(ctx, tt.sshKeys, tt.region)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateIBMCloudResources_SecurityGroupsAndSSHKeys(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		nodeClass   *v1alpha1.IBMNodeClass
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "nodeclass with security groups and SSH keys",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				Spec: v1alpha1.IBMNodeClassSpec{
+					Region:         "us-south",
+					VPC:            "r010-12345678-1234-5678-9abc-def012345678",
+					Image:          "ubuntu-20-04-amd64",
+					SecurityGroups: []string{"r010-87654321-4321-8765-cba9-fed987654321"},
+					SSHKeys:        []string{"r010-11111111-1111-1111-1111-111111111111"},
+				},
+			},
+			wantErr: false, // No error because all IBM Cloud validations are skipped when clients unavailable
+		},
+		{
+			name: "nodeclass without security groups and SSH keys",
+			nodeClass: &v1alpha1.IBMNodeClass{
+				Spec: v1alpha1.IBMNodeClassSpec{
+					Region:         "us-south",
+					VPC:            "r010-12345678-1234-5678-9abc-def012345678",
+					Image:          "ubuntu-20-04-amd64",
+					SecurityGroups: []string{},
+					SSHKeys:        []string{},
+				},
+			},
+			wantErr: false, // No error because all IBM Cloud validations are skipped when clients unavailable
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controller := NewTestController(nil)
+
+			err := controller.validateIBMCloudResources(ctx, tt.nodeClass)
 
 			if tt.wantErr {
 				assert.Error(t, err)

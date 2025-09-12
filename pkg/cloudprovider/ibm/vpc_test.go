@@ -270,6 +270,20 @@ func (m *mockVPCClient) DeleteVirtualNetworkInterfacesWithContext(_ context.Cont
 	return &vpcv1.VirtualNetworkInterface{}, &core.DetailedResponse{}, nil
 }
 
+func (m *mockVPCClient) GetSecurityGroupWithContext(_ context.Context, _ *vpcv1.GetSecurityGroupOptions) (*vpcv1.SecurityGroup, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.SecurityGroup{}, &core.DetailedResponse{}, nil
+}
+
+func (m *mockVPCClient) GetKeyWithContext(_ context.Context, _ *vpcv1.GetKeyOptions) (*vpcv1.Key, *core.DetailedResponse, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return &vpcv1.Key{}, &core.DetailedResponse{}, nil
+}
+
 func TestNewVPCClient(t *testing.T) {
 	baseURL := "https://test.vpc.url"
 	authType := "iam"
