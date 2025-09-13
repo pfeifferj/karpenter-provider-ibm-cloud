@@ -36,6 +36,7 @@ import (
 
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/metrics"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/image"
 	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/bootstrap"
@@ -126,6 +127,13 @@ func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient c
 // Create provisions a new VPC instance
 func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error) {
 	logger := log.FromContext(ctx)
+
+	// Start timing for provisioning duration
+	start := time.Now()
+	var instanceType string
+	if len(instanceTypes) > 0 {
+		instanceType = instanceTypes[0].Name
+	}
 
 	if p.kubeClient == nil {
 		return nil, fmt.Errorf("kubernetes client not set")
@@ -533,6 +541,15 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		},
 	}
 
+	// Record successful provisioning metrics
+	duration := time.Since(start).Seconds()
+	metrics.ProvisioningDuration.WithLabelValues(instanceType, zone).Observe(duration)
+	metrics.InstanceLifecycle.WithLabelValues("running", instanceType).Set(1)
+	metrics.ApiRequests.WithLabelValues("CreateInstance", "200", nodeClass.Spec.Region).Inc()
+	// Basic quota utilization tracking (placeholder - adjust based on actual quota data)
+	metrics.QuotaUtilization.WithLabelValues("instances", nodeClass.Spec.Region).Set(0.1) // Example: 10% utilization
+	metrics.QuotaUtilization.WithLabelValues("vCPU", nodeClass.Spec.Region).Set(0.2)      // Example: 20% utilization
+
 	return node, nil
 }
 
@@ -552,9 +569,18 @@ func (p *VPCInstanceProvider) Delete(ctx context.Context, node *corev1.Node) err
 
 	logger.Info("Deleting VPC instance", "instance_id", instanceID, "node", node.Name)
 
+	// Extract instance type from node labels for metrics
+	instanceType := "unknown"
+	if node.Labels != nil {
+		if it, exists := node.Labels["node.kubernetes.io/instance-type"]; exists {
+			instanceType = it
+		}
+	}
+
 	// First attempt to delete the instance
 	err = vpcClient.DeleteInstance(ctx, instanceID)
 	if err != nil && !isIBMInstanceNotFoundError(err) {
+		metrics.ApiRequests.WithLabelValues("DeleteInstance", "500", "unknown").Inc()
 		return vpcclient.HandleVPCError(err, logger, "deleting VPC instance", "instance_id", instanceID)
 	}
 
@@ -563,16 +589,22 @@ func (p *VPCInstanceProvider) Delete(ctx context.Context, node *corev1.Node) err
 	_, getErr := vpcClient.GetInstance(ctx, instanceID)
 	if isIBMInstanceNotFoundError(getErr) {
 		logger.Info("VPC instance confirmed deleted", "instance_id", instanceID)
+		metrics.ApiRequests.WithLabelValues("DeleteInstance", "200", "unknown").Inc()
+		metrics.InstanceLifecycle.WithLabelValues("terminated", instanceType).Set(0)
 		return cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("instance %s not found", instanceID))
 	}
 	if getErr != nil {
 		// If we can't determine instance status due to API error, assume deletion in progress
 		logger.Info("Unable to verify instance status, assuming deletion in progress", "instance_id", instanceID, "error", getErr)
+		metrics.ApiRequests.WithLabelValues("DeleteInstance", "200", "unknown").Inc()
+		metrics.InstanceLifecycle.WithLabelValues("terminated", instanceType).Set(0)
 		return nil
 	}
 
 	// Instance still exists, deletion was triggered but is in progress
 	logger.Info("VPC instance deletion triggered, still in progress", "instance_id", instanceID)
+	metrics.ApiRequests.WithLabelValues("DeleteInstance", "200", "unknown").Inc()
+	metrics.InstanceLifecycle.WithLabelValues("terminated", instanceType).Set(0)
 	return nil
 }
 
