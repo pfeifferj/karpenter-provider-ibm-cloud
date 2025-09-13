@@ -67,6 +67,7 @@ func (c *Controller) Register(ctx context.Context, mgr manager.Manager) error {
 
 func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithName("startuptaint.lifecycle")
+	logger.Info("reconciling NodeClaim for startup taint lifecycle", "nodeclaim", req.NamespacedName)
 
 	// Get the NodeClaim
 	nodeClaim := &karpv1.NodeClaim{}
@@ -74,7 +75,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Handle deletion FIRST
+	// Handle deletion
 	if !nodeClaim.DeletionTimestamp.IsZero() {
 		return c.handleDeletion(ctx, nodeClaim)
 	}
