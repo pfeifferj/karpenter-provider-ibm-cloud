@@ -166,9 +166,13 @@ func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName 
 	return nodePool
 }
 
-// createTestNodePoolWithMultipleInstanceTypes creates a NodePool with customer's exact config
+// createTestNodePoolWithMultipleInstanceTypes creates a NodePool with known-good instance types
 func (s *E2ETestSuite) createTestNodePoolWithMultipleInstanceTypes(t *testing.T, testName string, nodeClassName string) *karpv1.NodePool {
 	expireAfter := karpv1.MustParseNillableDuration("5m")
+	// Use dynamically detected instance types instead of hardcoded ones
+	instanceTypes := s.GetMultipleInstanceTypes(t, 4)
+	t.Logf("Using multiple instance types: %v", instanceTypes)
+
 	nodePool := &karpv1.NodePool{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-nodepool", testName),
@@ -198,7 +202,7 @@ func (s *E2ETestSuite) createTestNodePoolWithMultipleInstanceTypes(t *testing.T,
 							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
 								Key:      corev1.LabelInstanceTypeStable,
 								Operator: corev1.NodeSelectorOpIn,
-								Values:   []string{"bx2-4x16", "mx2-2x16", "mx2d-2x16", "mx3d-2x20"},
+								Values:   instanceTypes,
 							},
 						},
 						{
