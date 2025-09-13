@@ -143,6 +143,16 @@ spec:
                   name: {{ include "karpenter.fullname" . }}-circuit-breaker
                   key: max-concurrent-instances
             {{- end }}
+            # Batch configuration for race condition prevention
+            - name: BATCH_IDLE_DURATION
+              value: {{ .Values.batchConfiguration.idleDuration | quote }}
+            - name: BATCH_MAX_DURATION
+              value: {{ .Values.batchConfiguration.maxDuration | quote }}
+            # Startup taint awareness configuration
+            - name: STARTUP_TAINT_AWARENESS_ENABLED
+              value: {{ .Values.startupTaintAwareness.enabled | quote }}
+            - name: STARTUP_TAINT_GRACE_PERIOD
+              value: {{ .Values.startupTaintAwareness.gracePeriod | quote }}
           {{- if .Values.additionalCAs.enabled }}
           envFrom:
             # Mount additional CA bundle for cross-VPC kubelet authentication
