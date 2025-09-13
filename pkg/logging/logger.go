@@ -52,7 +52,6 @@ func FromContext(ctx context.Context, component string) *Logger {
 
 // Info logs an info message with structured key-value pairs
 func (l *Logger) Info(msg string, keysAndValues ...interface{}) {
-	// Only log info messages if the logger level allows it
 	if l.shouldLog("info") {
 		l.logger.Info(msg, keysAndValues...)
 	}
@@ -65,7 +64,6 @@ func (l *Logger) Error(err error, msg string, keysAndValues ...interface{}) {
 
 // Debug logs a debug message (only shown if debug logging is enabled)
 func (l *Logger) Debug(msg string, keysAndValues ...interface{}) {
-	// Only log debug messages if the logger level allows it
 	if l.shouldLog("debug") {
 		l.logger.V(1).Info(msg, keysAndValues...)
 	}
@@ -73,7 +71,6 @@ func (l *Logger) Debug(msg string, keysAndValues ...interface{}) {
 
 // Warn logs a warning message
 func (l *Logger) Warn(msg string, keysAndValues ...interface{}) {
-	// Log warnings only if the logger level allows it
 	if l.shouldLog("warn") {
 		l.logger.Info("WARNING: "+msg, keysAndValues...)
 	}

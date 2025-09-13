@@ -552,17 +552,27 @@ func (p *VPCInstanceProvider) Delete(ctx context.Context, node *corev1.Node) err
 
 	logger.Info("Deleting VPC instance", "instance_id", instanceID, "node", node.Name)
 
+	// First attempt to delete the instance
 	err = vpcClient.DeleteInstance(ctx, instanceID)
-	if err != nil {
-		// Check if this is a "not found" error, which is acceptable
-		if isIBMInstanceNotFoundError(err) {
-			logger.Info("VPC instance already deleted", "instance_id", instanceID)
-			return nil
-		}
+	if err != nil && !isIBMInstanceNotFoundError(err) {
 		return vpcclient.HandleVPCError(err, logger, "deleting VPC instance", "instance_id", instanceID)
 	}
 
-	logger.Info("VPC instance deleted successfully", "instance_id", instanceID)
+	// Check if the instance actually exists to confirm deletion status
+	// This is critical for proper Karpenter finalizer management
+	_, getErr := vpcClient.GetInstance(ctx, instanceID)
+	if isIBMInstanceNotFoundError(getErr) {
+		logger.Info("VPC instance confirmed deleted", "instance_id", instanceID)
+		return cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("instance %s not found", instanceID))
+	}
+	if getErr != nil {
+		// If we can't determine instance status due to API error, assume deletion in progress
+		logger.Info("Unable to verify instance status, assuming deletion in progress", "instance_id", instanceID, "error", getErr)
+		return nil
+	}
+
+	// Instance still exists, deletion was triggered but is in progress
+	logger.Info("VPC instance deletion triggered, still in progress", "instance_id", instanceID)
 	return nil
 }
 
