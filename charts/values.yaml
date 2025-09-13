@@ -97,6 +97,23 @@ clusterName: ""
 # Bootstrap mode: auto, cloud-init, or iks-api
 bootstrapMode: "auto"
 
+# Batch configuration for provisioning timing
+batchConfiguration:
+  # Idle duration before processing batch (prevents race conditions)
+  idleDuration: "2s"
+  # Maximum batch window duration
+  maxDuration: "10s"
+
+# Startup taint awareness configuration
+# Prevents creating duplicate nodeclaims when nodes are initializing with startup taints
+startupTaintAwareness:
+  # Enable startup taint awareness in provisioning decisions
+  enabled: true
+  # Grace period to wait for startup-tainted nodes to become schedulable
+  # before provisioning new nodes
+  gracePeriod: "30s"
+
+
 # Custom Resource Configuration
 customResources:
   # Enable automatic creation of NodePools and IBMNodeClasses
