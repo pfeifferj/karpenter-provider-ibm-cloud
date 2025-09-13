@@ -108,3 +108,78 @@ func TestLogLevelFiltering(t *testing.T) {
 		})
 	}
 }
+
+func TestGetLogLevel(t *testing.T) {
+	// Save original LOG_LEVEL
+	originalLogLevel := os.Getenv("LOG_LEVEL")
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
+
+	tests := []struct {
+		envValue string
+		expected string
+	}{
+		{"debug", "debug"},
+		{"DEBUG", "debug"}, // should be lowercase
+		{"info", "info"},
+		{"INFO", "info"},
+		{"warn", "warn"},
+		{"WARN", "warn"},
+		{"error", "error"},
+		{"ERROR", "error"},
+		{"", "info"}, // default
+	}
+
+	for _, tt := range tests {
+		t.Run("env_"+tt.envValue, func(t *testing.T) {
+			_ = os.Setenv("LOG_LEVEL", tt.envValue)
+			assert.Equal(t, tt.expected, getLogLevel())
+		})
+	}
+}
+
+func TestShouldLogMethodBoundaries(t *testing.T) {
+	// Save original LOG_LEVEL
+	originalLogLevel := os.Getenv("LOG_LEVEL")
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
+
+	_ = os.Setenv("LOG_LEVEL", "warn")
+	logger := NewLogger("test")
+
+	// Test boundary conditions
+	assert.False(t, logger.shouldLog("debug"))
+	assert.False(t, logger.shouldLog("info"))
+	assert.True(t, logger.shouldLog("warn"))
+	assert.True(t, logger.shouldLog("error"))
+
+	// Test invalid message levels (should fallback to info)
+	assert.False(t, logger.shouldLog("invalid"))
+	assert.False(t, logger.shouldLog(""))
+}
+
+func TestLoggerPreservesLogLevelInChaining(t *testing.T) {
+	// Save original LOG_LEVEL
+	originalLogLevel := os.Getenv("LOG_LEVEL")
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
+
+	_ = os.Setenv("LOG_LEVEL", "error")
+	baseLogger := NewLogger("base")
+
+	// Verify base logger has correct log level
+	assert.Equal(t, "error", baseLogger.logLevel)
+
+	// Test WithName preserves log level
+	namedLogger := baseLogger.WithName("child")
+	assert.Equal(t, "error", namedLogger.logLevel)
+	assert.Equal(t, "base.child", namedLogger.GetComponent())
+
+	// Test WithValues preserves log level
+	valuedLogger := baseLogger.WithValues("key", "value")
+	assert.Equal(t, "error", valuedLogger.logLevel)
+	assert.Equal(t, "base", valuedLogger.GetComponent())
+}

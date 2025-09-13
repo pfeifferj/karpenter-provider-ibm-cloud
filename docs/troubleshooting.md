@@ -18,64 +18,6 @@ kubectl logs -n karpenter deployment/karpenter | grep "Starting Controller"
 
 ## Common Issues
 
-### Double Node Creation / CNI Race Conditions
-
-!!! warning "Multiple nodes created for single workload"
-    **Symptoms:**
-    - Multiple nodes provisioned within seconds of each other
-    - Excessive scaling during workload deployment
-    - NodeClaims created rapidly in succession
-
-    **Root Cause:**
-    Karpenter sees nodes with CNI initialization taints as "unavailable" and provisions additional nodes before CNI completes initialization.
-
-    **Recommended Solution:**
-    Configure workload pods to tolerate CNI startup taints. This allows pods to be scheduled immediately while CNI initializes:
-
-    ```yaml
-    # Add to your deployment/pod spec:
-    spec:
-      tolerations:
-        - key: "node.cilium.io/agent-not-ready"
-          operator: "Exists"
-          effect: "NoSchedule"
-        - key: "node.kubernetes.io/not-ready"
-          operator: "Exists"
-          effect: "NoSchedule"
-    ```
-
-    **Alternative Solution (Use with Caution):**
-    Configure startup taints in NodePool - but you MUST also add tolerations to workload pods:
-
-    ```bash
-    # Add startup taints to NodePool
-    kubectl patch nodepool vpc-nodepool --type='merge' -p='{
-      "spec": {
-        "template": {
-          "spec": {
-            "startupTaints": [
-              {"key": "node.cilium.io/agent-not-ready", "effect": "NoSchedule"}
-            ]
-          }
-        }
-      }
-    }'
-    ```
-
-    **Verification:**
-    ```bash
-    # Check if pods have tolerations
-    kubectl get pod <pod-name> -o jsonpath='{.spec.tolerations}'
-
-    # Monitor node creation patterns
-    kubectl get nodeclaims -w
-
-    # Check CNI pod status
-    kubectl get pods -n kube-system | grep cilium
-    ```
-
-    See [Startup Taint Configuration](startup-taint-configuration.md) for detailed guidance.
-
 ### Authentication Issues
 
 !!! failure "Failed to authenticate with IBM Cloud API"
