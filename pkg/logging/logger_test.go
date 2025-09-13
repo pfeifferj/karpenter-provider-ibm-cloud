@@ -77,26 +77,28 @@ func TestLoggingMethods(t *testing.T) {
 func TestLogLevelFiltering(t *testing.T) {
 	// Save original LOG_LEVEL
 	originalLogLevel := os.Getenv("LOG_LEVEL")
-	defer os.Setenv("LOG_LEVEL", originalLogLevel)
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
 
 	tests := []struct {
-		logLevel        string
-		shouldLogDebug  bool
-		shouldLogInfo   bool
-		shouldLogWarn   bool
-		shouldLogError  bool
+		logLevel       string
+		shouldLogDebug bool
+		shouldLogInfo  bool
+		shouldLogWarn  bool
+		shouldLogError bool
 	}{
 		{"debug", true, true, true, true},
 		{"info", false, true, true, true},
 		{"warn", false, false, true, true},
 		{"error", false, false, false, true},
-		{"", false, true, true, true}, // default to info
+		{"", false, true, true, true},        // default to info
 		{"invalid", false, true, true, true}, // fallback to info
 	}
 
 	for _, tt := range tests {
 		t.Run("log_level_"+tt.logLevel, func(t *testing.T) {
-			os.Setenv("LOG_LEVEL", tt.logLevel)
+			_ = os.Setenv("LOG_LEVEL", tt.logLevel)
 			logger := NewLogger("test")
 
 			assert.Equal(t, tt.shouldLogDebug, logger.shouldLog("debug"))
@@ -110,7 +112,9 @@ func TestLogLevelFiltering(t *testing.T) {
 func TestGetLogLevel(t *testing.T) {
 	// Save original LOG_LEVEL
 	originalLogLevel := os.Getenv("LOG_LEVEL")
-	defer os.Setenv("LOG_LEVEL", originalLogLevel)
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
 
 	tests := []struct {
 		envValue string
@@ -129,7 +133,7 @@ func TestGetLogLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run("env_"+tt.envValue, func(t *testing.T) {
-			os.Setenv("LOG_LEVEL", tt.envValue)
+			_ = os.Setenv("LOG_LEVEL", tt.envValue)
 			assert.Equal(t, tt.expected, getLogLevel())
 		})
 	}
@@ -138,9 +142,11 @@ func TestGetLogLevel(t *testing.T) {
 func TestShouldLogMethodBoundaries(t *testing.T) {
 	// Save original LOG_LEVEL
 	originalLogLevel := os.Getenv("LOG_LEVEL")
-	defer os.Setenv("LOG_LEVEL", originalLogLevel)
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
 
-	os.Setenv("LOG_LEVEL", "warn")
+	_ = os.Setenv("LOG_LEVEL", "warn")
 	logger := NewLogger("test")
 
 	// Test boundary conditions
@@ -148,7 +154,7 @@ func TestShouldLogMethodBoundaries(t *testing.T) {
 	assert.False(t, logger.shouldLog("info"))
 	assert.True(t, logger.shouldLog("warn"))
 	assert.True(t, logger.shouldLog("error"))
-	
+
 	// Test invalid message levels (should fallback to info)
 	assert.False(t, logger.shouldLog("invalid"))
 	assert.False(t, logger.shouldLog(""))
@@ -157,19 +163,21 @@ func TestShouldLogMethodBoundaries(t *testing.T) {
 func TestLoggerPreservesLogLevelInChaining(t *testing.T) {
 	// Save original LOG_LEVEL
 	originalLogLevel := os.Getenv("LOG_LEVEL")
-	defer os.Setenv("LOG_LEVEL", originalLogLevel)
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
 
-	os.Setenv("LOG_LEVEL", "error")
+	_ = os.Setenv("LOG_LEVEL", "error")
 	baseLogger := NewLogger("base")
-	
+
 	// Verify base logger has correct log level
 	assert.Equal(t, "error", baseLogger.logLevel)
-	
+
 	// Test WithName preserves log level
 	namedLogger := baseLogger.WithName("child")
 	assert.Equal(t, "error", namedLogger.logLevel)
 	assert.Equal(t, "base.child", namedLogger.GetComponent())
-	
+
 	// Test WithValues preserves log level
 	valuedLogger := baseLogger.WithValues("key", "value")
 	assert.Equal(t, "error", valuedLogger.logLevel)
