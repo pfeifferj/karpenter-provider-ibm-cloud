@@ -451,7 +451,14 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			}
 		}
 
-		return nil, vpcclient.HandleVPCError(err, logger, "creating VPC instance")
+		// Create detailed error message for better debugging in NodeClaim conditions
+		detailedErr := fmt.Errorf("creating VPC instance failed: %s (code: %s, status: %d, instance_profile: %s, zone: %s, image: %s)",
+			ibmErr.Message, ibmErr.Code, ibmErr.StatusCode, instanceProfile, zone, nodeClass.Spec.Image)
+
+		// Still use HandleVPCError for consistent logging but return our detailed error
+		_ = vpcclient.HandleVPCError(err, logger, "creating VPC instance",
+			"instance_profile", instanceProfile, "zone", zone, "image", nodeClass.Spec.Image)
+		return nil, detailedErr
 	}
 
 	// DETAILED RESPONSE LOGGING: Log the full VPC response details
