@@ -28,7 +28,7 @@ jobs:
       group: e2e-tests
       cancel-in-progress: false
 
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     container:
       # Run in a container with necessary tools
@@ -325,9 +325,9 @@ jobs:
 
         # Force cleanup any stuck resources
         echo "Force cleaning up any stuck resources..."
-        kubectl patch nodeclaims -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
-        kubectl patch nodepools -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
-        kubectl patch ibmnodeclasses -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+        kubectl patch nodeclaims --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+        kubectl patch nodepools --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+        kubectl patch ibmnodeclasses --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
 
         # Clean up IBM Cloud instances created by e2e tests
         echo "Cleaning up IBM Cloud instances..."
