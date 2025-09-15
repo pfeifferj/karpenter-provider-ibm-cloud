@@ -203,7 +203,7 @@ jobs:
     needs: [gate, build]
     if: ${{ needs.gate.outputs.approved == 'true' }}
     runs-on: [self-hosted, ibm-e2e]
-    timeout-minutes: 90
+    timeout-minutes: 180
     container:
       image: golang:1.24.4
       options: --user 0
@@ -452,9 +452,9 @@ jobs:
           kubectl delete nodepools -l test=e2e --timeout=10m || true
           kubectl delete ibmnodeclasses -l test=e2e --timeout=10m || true
 
-          kubectl patch nodeclaims -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
-          kubectl patch nodepools -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
-          kubectl patch ibmnodeclasses -l test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+          kubectl patch nodeclaims --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+          kubectl patch nodepools --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+          kubectl patch ibmnodeclasses --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
 
           ibmcloud is instances --output json | \
             jq -r '.[] | select(.tags | index("karpenter-e2e")) | .id' | \
