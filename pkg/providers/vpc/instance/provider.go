@@ -210,7 +210,8 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		AutoDelete: &[]bool{true}[0],
 	}
 
-	// Add resource group to VNI if specified (required for oneOf validation)
+	// Add resource group to VNI (required for oneOf validation)
+	// The VNI prototype requires a resource group to satisfy oneOf constraint
 	if nodeClass.Spec.ResourceGroup != "" {
 		resourceGroupID, rgErr := p.resolveResourceGroupID(ctx, nodeClass.Spec.ResourceGroup)
 		if rgErr != nil {
@@ -219,7 +220,11 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		vniPrototype.ResourceGroup = &vpcv1.ResourceGroupIdentityByID{
 			ID: &resourceGroupID,
 		}
-		logger.Info("Added resource group to VNI", "resource_group", resourceGroupID)
+		logger.Info("VNI resource group set", "input", nodeClass.Spec.ResourceGroup, "resolved_id", resourceGroupID)
+	} else {
+		// If no resource group specified, the VNI will use the account default
+		// This satisfies the oneOf constraint by explicitly not setting the ResourceGroup field
+		logger.Info("No resource group specified for VNI, using account default")
 	}
 
 	// Add security groups if specified, otherwise use default
@@ -424,21 +429,33 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		}
 	}
 
+	// Log the full instance prototype being sent to VPC API for debugging
+	logger.Info("FULL VPC CreateInstance request debug",
+		"instance_name", nodeClaim.Name,
+		"instance_prototype", fmt.Sprintf("%+v", instancePrototype),
+		"primary_network_attachment", fmt.Sprintf("%+v", instancePrototype.PrimaryNetworkAttachment),
+		"boot_volume_attachment", fmt.Sprintf("%+v", instancePrototype.BootVolumeAttachment),
+		"profile", fmt.Sprintf("%+v", instancePrototype.Profile),
+		"vpc", fmt.Sprintf("%+v", instancePrototype.VPC),
+		"resource_group", fmt.Sprintf("%+v", instancePrototype.ResourceGroup))
+
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
 		// Check if this is a partial failure that might have created resources
 		ibmErr := ibm.ParseError(err)
 
-		// Enhanced error logging with full error details
-		logger.Error(err, "VPC instance creation error",
+		// Enhanced error logging with FULL error details for oneOf debugging
+		logger.Error(err, "VPC instance creation error - FULL ERROR MESSAGE",
 			"status_code", ibmErr.StatusCode,
 			"error_code", ibmErr.Code,
 			"retryable", ibmErr.Retryable,
-			"error_message", err.Error(),
+			"full_error_string", fmt.Sprintf("%s", err),
+			"full_error_details", fmt.Sprintf("%+v", err),
 			"error_type", fmt.Sprintf("%T", err),
 			"instance_prototype_type", fmt.Sprintf("%T", instancePrototype),
 			"ibm_error_message", ibmErr.Message,
-			"ibm_error_more_info", ibmErr.MoreInfo)
+			"ibm_error_more_info", ibmErr.MoreInfo,
+			"raw_error", err.Error())
 
 		if p.isPartialFailure(ibmErr) {
 			logger.Info("Instance creation failed after partial resource creation, attempting cleanup",
@@ -454,8 +471,9 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		}
 
 		// Create detailed error message for better debugging in NodeClaim conditions
+		// Use the full error message to capture complete oneOf validation details
 		detailedErr := fmt.Errorf("creating VPC instance failed: %s (code: %s, status: %d, instance_profile: %s, zone: %s, image: %s)",
-			ibmErr.Message, ibmErr.Code, ibmErr.StatusCode, instanceProfile, zone, nodeClass.Spec.Image)
+			err.Error(), ibmErr.Code, ibmErr.StatusCode, instanceProfile, zone, nodeClass.Spec.Image)
 
 		// Still use HandleVPCError for consistent logging but return our detailed error
 		_ = vpcclient.HandleVPCError(err, logger, "creating VPC instance",
