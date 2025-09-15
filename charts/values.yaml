@@ -14,9 +14,7 @@ image:
   # Overrides the image tag whose default is the chart appVersion.
 
 # Logging configuration
-logLevel: "debug"           # Options: debug, info, warn, error
-verboseLogLevel: "5"        # Verbosity level (1-5)
-debug: "true"               # Enable debug mode
+logLevel: "debug"           # Options: debug, info, error
 controllerVerbosity: "4"    # Controller manager verbosity (0-5)
 controllerLogLevel: "debug" # Controller manager log level
 

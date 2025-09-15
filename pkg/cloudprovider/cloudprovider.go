@@ -520,8 +520,16 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 		return nil, err
 	}
 
-	log.Info("Successfully retrieved instance types", "count", len(instanceTypes))
-	return instanceTypes, nil
+	// Filter instance types based on NodePool requirements
+	reqs := scheduling.NewNodeSelectorRequirementsWithMinValues(nodePool.Spec.Template.Spec.Requirements...)
+	compatible := lo.Filter(instanceTypes, func(it *cloudprovider.InstanceType, _ int) bool {
+		return reqs.Compatible(it.Requirements, scheduling.AllowUndefinedWellKnownLabels) == nil
+	})
+
+	log.Info("Successfully retrieved and filtered instance types",
+		"total", len(instanceTypes),
+		"compatible", len(compatible))
+	return compatible, nil
 }
 
 func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeClaim) (cloudprovider.DriftReason, error) {
