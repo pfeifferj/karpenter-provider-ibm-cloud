@@ -445,7 +445,7 @@ func (s *E2ETestSuite) createTestWorkloadWithInstanceTypeRequirements(t *testing
 					Containers: []corev1.Container{
 						{
 							Name:  "test-container",
-							Image: "nginx:1.21",
+							Image: "quay.io/nginx/nginx-unprivileged:1.29.1-alpine",
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    resource.MustParse("1500m"),
