@@ -149,9 +149,11 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Use the first compatible instance type (Karpenter has already ranked them by preference)
 	selectedInstanceType := instanceTypes[0]
-	instanceProfile := selectedInstanceType.Name
+	if selectedInstanceType == nil {
+		return nil, fmt.Errorf("first instance type in slice is nil for nodeclaim %s, available types: %d", nodeClaim.Name, len(instanceTypes))
+	}
 
-	// Validate that instanceProfile is not empty
+	instanceProfile := selectedInstanceType.Name
 	if instanceProfile == "" {
 		return nil, fmt.Errorf("selected instance type has empty name: %+v, available types: %d", selectedInstanceType, len(instanceTypes))
 	}
