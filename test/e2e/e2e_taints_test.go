@@ -365,7 +365,7 @@ func TestE2EStartupTaintsRemoval(t *testing.T) {
 					Containers: []corev1.Container{
 						{
 							Name:  "taint-remover",
-							Image: "busybox:1.35",
+							Image: "quay.io/isovalent/busybox:1.37.0",
 							Command: []string{
 								"/bin/sh",
 								"-c",
@@ -1107,7 +1107,7 @@ func createResourceIntensiveWorkload(name, testLabel string, tolerations []corev
 					Containers: []corev1.Container{
 						{
 							Name:  "resource-intensive-container",
-							Image: "busybox:1.35",
+							Image: "quay.io/isovalent/busybox:1.37.0",
 							Command: []string{
 								"/bin/sh",
 								"-c",

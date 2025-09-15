@@ -163,38 +163,6 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		SelectedInstanceTypes.WithLabelValues(nodeClass.Name).Set(float64(len(nodeClass.Status.SelectedInstanceTypes)))
 	}
 
-	// Handle automatic subnet selection
-	if nodeClass.Spec.Subnet == "" && nodeClass.Spec.VPC != "" {
-		stored := nodeClass.DeepCopy()
-		start := time.Now()
-
-		c.log.Info("Starting subnet selection", "nodeclass", req.Name)
-
-		// Get available subnets using SelectSubnets method
-		subnets, err := c.subnets.SelectSubnets(ctx, nodeClass.Spec.VPC, nodeClass.Spec.PlacementStrategy)
-		if err != nil {
-			c.log.Error(err, "failed to select subnets", "nodeclass", req.Name)
-			SubnetSelections.WithLabelValues(nodeClass.Name, "failure").Inc()
-			return reconcile.Result{}, err
-		}
-
-		if len(subnets) > 0 {
-			var selectedSubnets []string
-			for _, s := range subnets {
-				selectedSubnets = append(selectedSubnets, s.ID)
-			}
-			nodeClass.Status.SelectedSubnets = selectedSubnets
-
-			SubnetSelections.WithLabelValues(nodeClass.Name, "success").Inc()
-			SubnetSelectionLatency.WithLabelValues(nodeClass.Name).Observe(time.Since(start).Seconds())
-			SelectedSubnets.WithLabelValues(nodeClass.Name).Set(float64(len(selectedSubnets)))
-		}
-
-		if err := c.patchNodeClassStatusWithStored(ctx, nodeClass, stored); err != nil {
-			return reconcile.Result{Requeue: true}, nil
-		}
-	}
-
 	return reconcile.Result{}, nil
 }
 

@@ -305,7 +305,7 @@ func (c *Controller) validateIBMCloudResources(ctx context.Context, nc *v1alpha1
 
 	// Validate subnet if specified
 	if nc.Spec.Subnet != "" {
-		if err := c.validateSubnet(ctx, nc.Spec.Subnet, nc.Spec.VPC); err != nil {
+		if err := c.validateSubnet(ctx, nc.Spec.Subnet, nc.Spec.VPC, nc.Spec.Region); err != nil {
 			return fmt.Errorf("subnet validation failed: %w", err)
 		}
 	} else {
@@ -538,18 +538,25 @@ func (c *Controller) validateVPC(ctx context.Context, vpcID, resourceGroupID str
 }
 
 // validateSubnet checks if the subnet exists and is in the correct VPC
-func (c *Controller) validateSubnet(ctx context.Context, subnetID, vpcID string) error {
+func (c *Controller) validateSubnet(ctx context.Context, subnetID, vpcID, expectedRegion string) error {
 	subnetInfo, err := c.subnetProvider.GetSubnet(ctx, subnetID)
 	if err != nil {
 		return fmt.Errorf("subnet %s not found or not accessible: %w", subnetID, err)
 	}
 
-	// Additional validation can be added here
-	// For example, checking if subnet has available IPs, correct state, etc.
+	// Extract region from subnet zone (e.g., "br-sao-1" -> "br-sao", "eu-de-2" -> "eu-de")
+	subnetRegion := extractRegionFromZone(subnetInfo.Zone)
+	if subnetRegion != expectedRegion {
+		return fmt.Errorf("subnet %s is in region %s but NodeClass expects region %s (subnet zone: %s). Cross-region subnet references are not supported",
+			subnetID, subnetRegion, expectedRegion, subnetInfo.Zone)
+	}
+
+	// Validate subnet state
 	if subnetInfo.State != "available" {
 		return fmt.Errorf("subnet %s is not in available state: %s", subnetID, subnetInfo.State)
 	}
 
+	// Validate sufficient available IPs
 	if subnetInfo.AvailableIPs < 10 {
 		return fmt.Errorf("subnet %s has insufficient available IPs (%d)", subnetID, subnetInfo.AvailableIPs)
 	}
@@ -785,6 +792,24 @@ func (c *Controller) validatePlacementStrategy(strategy *v1alpha1.PlacementStrat
 // patchNodeClassStatus patches the nodeclass status using optimistic locking
 func (c *Controller) patchNodeClassStatus(ctx context.Context, nc *v1alpha1.IBMNodeClass, stored *v1alpha1.IBMNodeClass) error {
 	return c.kubeClient.Status().Patch(ctx, nc, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))
+}
+
+// extractRegionFromZone extracts the region from an IBM Cloud zone name
+// Examples: "br-sao-1" -> "br-sao", "eu-de-2" -> "eu-de", "us-south-3" -> "us-south"
+func extractRegionFromZone(zone string) string {
+	if zone == "" {
+		return ""
+	}
+
+	// IBM Cloud zone format is typically "{region}-{zone-number}"
+	// Find the last hyphen and take everything before it
+	lastHyphen := strings.LastIndex(zone, "-")
+	if lastHyphen == -1 {
+		// If no hyphen found, return the zone as-is (shouldn't happen in normal cases)
+		return zone
+	}
+
+	return zone[:lastHyphen]
 }
 
 // Register registers the controller with the manager
