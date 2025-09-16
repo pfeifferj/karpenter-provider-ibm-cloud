@@ -53,11 +53,12 @@ type QuotaInfo struct {
 
 // VPCInstanceProvider implements VPC-specific instance provisioning
 type VPCInstanceProvider struct {
-	client            *ibm.Client
-	kubeClient        client.Client
-	k8sClient         kubernetes.Interface
-	bootstrapProvider *bootstrap.VPCBootstrapProvider
-	vpcClientManager  *vpcclient.Manager
+	client                 *ibm.Client
+	kubeClient             client.Client
+	k8sClient              kubernetes.Interface
+	bootstrapProvider      *bootstrap.VPCBootstrapProvider
+	vpcClientManager       *vpcclient.Manager
+	resourceManagerService *resourcemanagerv2.ResourceManagerV2
 }
 
 // Option configures the VPCInstanceProvider
@@ -109,11 +110,12 @@ func NewVPCInstanceProvider(client *ibm.Client, kubeClient client.Client, opts .
 
 	// Create base provider with defaults
 	provider := &VPCInstanceProvider{
-		client:            client,
-		kubeClient:        kubeClient,
-		k8sClient:         nil, // Will be set via options if provided
-		bootstrapProvider: nil, // Will be lazily initialized or set via options
-		vpcClientManager:  vpcclient.NewManager(client, 30*time.Minute),
+		client:                 client,
+		kubeClient:             kubeClient,
+		k8sClient:              nil, // Will be set via options if provided
+		bootstrapProvider:      nil, // Will be lazily initialized or set via options
+		vpcClientManager:       vpcclient.NewManager(client, 30*time.Minute),
+		resourceManagerService: nil, // Will be initialized after applying options
 	}
 
 	// Apply options
@@ -121,6 +123,26 @@ func NewVPCInstanceProvider(client *ibm.Client, kubeClient client.Client, opts .
 		if err := opt(provider); err != nil {
 			return nil, fmt.Errorf("applying option: %w", err)
 		}
+	}
+
+	// Create Resource Manager service if not provided via options
+	if provider.resourceManagerService == nil {
+		apiKey := os.Getenv("IBMCLOUD_API_KEY")
+		if apiKey == "" {
+			return nil, fmt.Errorf("IBMCLOUD_API_KEY environment variable is required")
+		}
+
+		authenticator := &core.IamAuthenticator{
+			ApiKey: apiKey,
+		}
+		resourceManagerServiceOptions := &resourcemanagerv2.ResourceManagerV2Options{
+			Authenticator: authenticator,
+		}
+		resourceManagerService, err := resourcemanagerv2.NewResourceManagerV2(resourceManagerServiceOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create resource manager service: %w", err)
+		}
+		provider.resourceManagerService = resourceManagerService
 	}
 
 	return provider, nil
@@ -594,24 +616,14 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 }
 
 func (p *VPCInstanceProvider) getQuotaInfo(ctx context.Context, region string) (*QuotaInfo, error) {
-	// Create authenticator
-	authenticator := &core.IamAuthenticator{
-		ApiKey: os.Getenv("IBMCLOUD_API_KEY"),
+	// Skip quota checks if resource manager service is not available
+	if p.resourceManagerService == nil {
+		return nil, fmt.Errorf("resource manager service not initialized")
 	}
 
-	// Create Resource Manager service with authenticator in options
-	resourceManagerServiceOptions := &resourcemanagerv2.ResourceManagerV2Options{
-		Authenticator: authenticator,
-	}
-
-	resourceManagerService, err := resourcemanagerv2.NewResourceManagerV2(resourceManagerServiceOptions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create resource manager service: %w", err)
-	}
-
-	// List quota definitions
-	listQuotaDefinitionsOptions := resourceManagerService.NewListQuotaDefinitionsOptions()
-	quotaDefinitionList, _, err := resourceManagerService.ListQuotaDefinitions(listQuotaDefinitionsOptions)
+	// List quota definitions using pre-instantiated client
+	listQuotaDefinitionsOptions := p.resourceManagerService.NewListQuotaDefinitionsOptions()
+	quotaDefinitionList, _, err := p.resourceManagerService.ListQuotaDefinitions(listQuotaDefinitionsOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list quota definitions: %w", err)
 	}
