@@ -344,14 +344,34 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Add resource group if specified
 	if nodeClass.Spec.ResourceGroup != "" {
+		logger.Info("Starting instance resource group resolution",
+			"resourceGroup", nodeClass.Spec.ResourceGroup,
+			"instanceProfile", instanceProfile,
+			"selectionType", "dynamic")
+
 		resourceGroupID, rgErr := p.resolveResourceGroupID(ctx, nodeClass.Spec.ResourceGroup)
 		if rgErr != nil {
+			logger.Error(rgErr, "Instance resource group resolution failed",
+				"resourceGroup", nodeClass.Spec.ResourceGroup,
+				"instanceProfile", instanceProfile)
 			return nil, fmt.Errorf("resolving resource group %s: %w", nodeClass.Spec.ResourceGroup, rgErr)
 		}
+
+		if resourceGroupID == "" {
+			logger.Error(nil, "Instance resource group resolved to empty string",
+				"resourceGroup", nodeClass.Spec.ResourceGroup,
+				"instanceProfile", instanceProfile)
+			return nil, fmt.Errorf("resource group %s resolved to empty ID", nodeClass.Spec.ResourceGroup)
+		}
+
 		instancePrototype.ResourceGroup = &vpcv1.ResourceGroupIdentityByID{
 			ID: &resourceGroupID,
 		}
-		logger.Info("Resource group resolved", "input", nodeClass.Spec.ResourceGroup, "resolved_id", resourceGroupID)
+		logger.Info("Instance resource group successfully set",
+			"input", nodeClass.Spec.ResourceGroup,
+			"resolved_id", resourceGroupID,
+			"instanceProfile", instanceProfile,
+			"instance_has_resource_group", instancePrototype.ResourceGroup != nil)
 	}
 
 	// Add SSH keys if specified
