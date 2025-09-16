@@ -65,10 +65,10 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 
 	// Refresh pricing information
 	if err := c.pricingProvider.Refresh(ctx); err != nil {
-		metrics.ApiRequests.WithLabelValues("RefreshPricing", "500", "unknown").Inc()
+		metrics.ApiRequests.WithLabelValues("RefreshPricing", "500", "global").Inc()
 		return reconcile.Result{}, fmt.Errorf("refreshing pricing information: %w", err)
 	}
-	metrics.ApiRequests.WithLabelValues("RefreshPricing", "200", "unknown").Inc()
+	metrics.ApiRequests.WithLabelValues("RefreshPricing", "200", "global").Inc()
 
 	// Requeue after 12 hours to refresh prices
 	return reconcile.Result{RequeueAfter: 12 * time.Hour}, nil
