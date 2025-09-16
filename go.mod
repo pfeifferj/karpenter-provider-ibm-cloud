@@ -25,7 +25,7 @@ require (
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
 	sigs.k8s.io/controller-runtime v0.21.0
-	sigs.k8s.io/controller-tools v0.18.0
+	sigs.k8s.io/controller-tools v0.19.0
 	sigs.k8s.io/karpenter v1.6.2
 )
 
@@ -96,17 +96,16 @@ require (
 	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.36.0 // indirect
-	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apiextensions-apiserver v0.34.0-beta.0 // indirect
+	k8s.io/apiextensions-apiserver v0.34.0 // indirect
 	k8s.io/cloud-provider v0.34.0-beta.0 // indirect
-	k8s.io/code-generator v0.34.0-beta.0 // indirect
-	k8s.io/component-base v0.34.0-beta.0 // indirect
+	k8s.io/code-generator v0.34.0 // indirect
+	k8s.io/component-base v0.34.0 // indirect
 	k8s.io/csi-translation-lib v0.34.0-beta.0 // indirect
 	k8s.io/gengo/v2 v2.0.0-20250604051438-85fd79dbfd9f // indirect
 	k8s.io/kube-openapi v0.0.0-20250710124328-f3f2b991d03b // indirect
