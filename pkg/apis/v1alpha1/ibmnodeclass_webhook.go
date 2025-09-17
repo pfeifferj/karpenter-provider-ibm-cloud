@@ -186,7 +186,7 @@ func (nc *IBMNodeClass) generateOneOfWarnings(nodeClass *IBMNodeClass) admission
 		warnings = append(warnings,
 			"Dynamic instance type selection detected (no instanceProfile specified). "+
 				"This configuration has been known to cause 'oneOf constraint' errors with IBM VPC API. "+
-				"If you encounter provisioning failures, consider specifying a static instanceProfile.")
+				"STRONG RECOMMENDATION: Specify a static instanceProfile (e.g., 'bx2-2x8') to prevent provisioning failures.")
 	}
 
 	// Warn about complex block device mapping combinations
@@ -298,11 +298,90 @@ func (nc *IBMNodeClass) validateVolumeSpec(volSpec *VolumeSpec, index int, isRoo
 	return errs
 }
 
+// validateInstanceProfile validates instance profile configuration for oneOf compliance
+func (nc *IBMNodeClass) validateInstanceProfile(nodeClass *IBMNodeClass) []string {
+	var errs []string
+
+	// IBM Cloud instance profile format validation
+	// Valid formats: bx2-2x8, cx2-4x8, mx2-8x64, etc.
+	instanceProfilePattern := regexp.MustCompile(`^[a-z0-9]+[0-9a-z]*-[0-9]+x[0-9]+$`)
+
+	if nodeClass.Spec.InstanceProfile != "" {
+		// Validate format
+		if !instanceProfilePattern.MatchString(nodeClass.Spec.InstanceProfile) {
+			errs = append(errs,
+				fmt.Sprintf("instanceProfile '%s' has invalid format: "+
+					"must match pattern 'family-vcpuxmemory' (e.g., 'bx2-2x8', 'cx2-4x16'). "+
+					"Invalid instance profiles cause IBM VPC oneOf constraint errors",
+					nodeClass.Spec.InstanceProfile))
+		}
+
+		// Check for common invalid patterns that cause oneOf errors
+		if strings.Contains(nodeClass.Spec.InstanceProfile, " ") {
+			errs = append(errs,
+				fmt.Sprintf("instanceProfile '%s' contains spaces: "+
+					"instance profiles cannot contain spaces and will cause IBM VPC oneOf constraint validation to fail",
+					nodeClass.Spec.InstanceProfile))
+		}
+
+		// Validate known instance families
+		parts := strings.Split(nodeClass.Spec.InstanceProfile, "-")
+		if len(parts) >= 2 {
+			validFamilies := []string{"bx2", "bx3d", "cx2", "cx3d", "mx2", "mx3d", "ux2d", "vx2d", "ox2", "gx2", "gx3"}
+			family := parts[0]
+			isValidFamily := false
+			for _, validFamily := range validFamilies {
+				if family == validFamily {
+					isValidFamily = true
+					break
+				}
+			}
+			if !isValidFamily {
+				errs = append(errs,
+					fmt.Sprintf("instanceProfile '%s' uses unknown instance family '%s': "+
+						"use one of %v to avoid potential IBM VPC API issues",
+						nodeClass.Spec.InstanceProfile, family, validFamilies))
+			}
+		}
+
+		// Validate specific configurations known to cause issues
+		if strings.HasPrefix(nodeClass.Spec.InstanceProfile, "cx2-") {
+			// CX2 instances have specific constraints
+			parts := strings.Split(nodeClass.Spec.InstanceProfile, "-")
+			if len(parts) == 2 {
+				vcpuMemPart := parts[1]
+				// Check for valid CX2 configurations
+				validCX2 := []string{"2x4", "4x8", "8x16", "16x32", "32x64", "48x96"}
+				isValidCX2 := false
+				for _, valid := range validCX2 {
+					if vcpuMemPart == valid {
+						isValidCX2 = true
+						break
+					}
+				}
+				if !isValidCX2 {
+					errs = append(errs,
+						fmt.Sprintf("instanceProfile '%s' uses invalid CX2 configuration '%s': "+
+							"valid CX2 configurations are %v",
+							nodeClass.Spec.InstanceProfile, vcpuMemPart, validCX2))
+				}
+			}
+		}
+	}
+
+	return errs
+}
+
 // validateInstanceConfiguration validates instance-level configurations for oneOf compliance
 func (nc *IBMNodeClass) validateInstanceConfiguration(nodeClass *IBMNodeClass) []string {
 	var errs []string
 
-	// Rule 1: Resource group must be specified for VNI oneOf constraint compliance
+	// Rule 1: Validate instance profile for oneOf constraint compliance
+	if instProfileErrs := nc.validateInstanceProfile(nodeClass); len(instProfileErrs) > 0 {
+		errs = append(errs, instProfileErrs...)
+	}
+
+	// Rule 2: Resource group must be specified for VNI oneOf constraint compliance
 	// This is critical based on our previous debugging
 	if nodeClass.Spec.ResourceGroup == "" {
 		errs = append(errs,
@@ -310,7 +389,7 @@ func (nc *IBMNodeClass) validateInstanceConfiguration(nodeClass *IBMNodeClass) [
 				"in Virtual Network Interface (VNI) prototype creation")
 	}
 
-	// Rule 2: Validate zone and region consistency
+	// Rule 3: Validate zone and region consistency
 	if nodeClass.Spec.Zone != "" && nodeClass.Spec.Region != "" {
 		// Basic zone format validation - zones should be region-based
 		expectedPrefix := nodeClass.Spec.Region + "-"
@@ -322,7 +401,7 @@ func (nc *IBMNodeClass) validateInstanceConfiguration(nodeClass *IBMNodeClass) [
 		}
 	}
 
-	// Rule 3: Validate security groups format for oneOf compliance
+	// Rule 4: Validate security groups format for oneOf compliance
 	for i, sgID := range nodeClass.Spec.SecurityGroups {
 		if !ibmResourceIDPattern.MatchString(sgID) {
 			errs = append(errs,

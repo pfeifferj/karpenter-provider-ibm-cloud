@@ -372,19 +372,48 @@ jobs:
                 ;;
             esac
 
-            if go test -tags=e2e -v -timeout $timeout ./test/e2e -run "^$test$" -count=1; then
+            # Create test-specific log file to capture all output
+            test_log="test-artifacts/${test}-$(date +%s).log"
+            mkdir -p test-artifacts
+
+            # Run test with enhanced logging and crash recovery
+            set +e  # Don't exit on failure
+            timeout $timeout go test -tags=e2e -v -timeout $timeout ./test/e2e -run "^$test$" -count=1 2>&1 | tee "$test_log"
+            test_exit_code=$?
+            set -e  # Re-enable exit on failure
+
+            if [ $test_exit_code -eq 0 ]; then
               echo "✅ Test $test passed"
               passed_tests=$((passed_tests + 1))
             else
-              echo "❌ Test $test failed"
+              echo "❌ Test $test failed (exit code: $test_exit_code)"
               failed_tests=$((failed_tests + 1))
 
-              # Collect debug information on failure
-              echo "📊 Debug information for failed test:"
+              # Enhanced debug information on failure
+              echo "📊 Debug information for failed test $test:"
+              echo "  Exit code: $test_exit_code"
+              echo "  Log file: $test_log"
+
+              # Collect system state
               kubectl get nodes --no-headers | wc -l | xargs echo "  Total nodes:"
-              kubectl get nodeclaims --no-headers | wc -l | xargs echo "  Total nodeclaims:"
-              kubectl get pods -l test=e2e --all-namespaces --no-headers | wc -l | xargs echo "  Total e2e pods:"
-              kubectl get events -A --field-selector type=Warning --sort-by='.lastTimestamp' | tail -10
+              kubectl get nodeclaims --no-headers 2>/dev/null | wc -l | xargs echo "  Total nodeclaims:" || echo "  Total nodeclaims: 0"
+              kubectl get pods -l test=e2e --all-namespaces --no-headers 2>/dev/null | wc -l | xargs echo "  Total e2e pods:" || echo "  Total e2e pods: 0"
+
+              # Collect Karpenter pod status
+              echo "  Karpenter pod status:"
+              kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter --no-headers 2>/dev/null || echo "    No Karpenter pods found"
+
+              # Collect recent events (errors and warnings)
+              echo "  Recent warning events:"
+              kubectl get events -A --field-selector type=Warning --sort-by='.lastTimestamp' 2>/dev/null | tail -5 || echo "    No warning events"
+
+              # Check for panic or crash indicators in test log
+              if grep -i "panic\|fatal\|segmentation\|killed" "$test_log" >/dev/null 2>&1; then
+                echo "  ⚠️  Test appears to have crashed (panic/fatal error detected)"
+              fi
+
+              # Collect Karpenter logs immediately after failure
+              kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100 > "test-artifacts/karpenter-logs-${test}-$(date +%s).txt" 2>/dev/null || echo "  Failed to collect Karpenter logs"
 
               test_failed="true"
             fi
@@ -425,13 +454,49 @@ jobs:
       - name: Collect test artifacts
         if: always()
         run: |
+          echo "📦 Collecting comprehensive test artifacts..."
           mkdir -p test-artifacts
-          kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=1000 > test-artifacts/karpenter-logs.txt || true
-          kubectl get events -A --sort-by='.lastTimestamp' > test-artifacts/events.txt || true
-          kubectl get nodes -o wide > test-artifacts/nodes.txt || true
-          kubectl get nodeclaims -o yaml > test-artifacts/nodeclaims.yaml || true
-          kubectl get nodepools -o yaml > test-artifacts/nodepools.yaml || true
-          kubectl get ibmnodeclasses -o yaml > test-artifacts/ibmnodeclasses.yaml || true
+
+          # Collect Karpenter logs with different tail sizes for completeness
+          echo "  Collecting Karpenter logs..."
+          kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=2000 > test-artifacts/karpenter-logs.txt 2>/dev/null || echo "Failed to collect current Karpenter logs" > test-artifacts/karpenter-logs.txt
+          kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --previous --tail=1000 > test-artifacts/karpenter-logs-previous.txt 2>/dev/null || echo "No previous Karpenter logs available" > test-artifacts/karpenter-logs-previous.txt
+
+          # Collect events with different filters
+          echo "  Collecting events..."
+          kubectl get events -A --sort-by='.lastTimestamp' > test-artifacts/events.txt 2>/dev/null || echo "Failed to collect events" > test-artifacts/events.txt
+          kubectl get events -A --field-selector type=Warning --sort-by='.lastTimestamp' > test-artifacts/events-warnings.txt 2>/dev/null || echo "No warning events" > test-artifacts/events-warnings.txt
+          kubectl get events -A --field-selector type=Normal --sort-by='.lastTimestamp' | tail -50 > test-artifacts/events-normal-recent.txt 2>/dev/null || echo "No normal events" > test-artifacts/events-normal-recent.txt
+
+          # Collect resource states
+          echo "  Collecting resource states..."
+          kubectl get nodes -o wide > test-artifacts/nodes.txt 2>/dev/null || echo "Failed to collect nodes" > test-artifacts/nodes.txt
+          kubectl get nodeclaims -o yaml > test-artifacts/nodeclaims.yaml 2>/dev/null || echo "apiVersion: v1\nitems: []\nkind: List" > test-artifacts/nodeclaims.yaml
+          kubectl get nodepools -o yaml > test-artifacts/nodepools.yaml 2>/dev/null || echo "apiVersion: v1\nitems: []\nkind: List" > test-artifacts/nodepools.yaml
+          kubectl get ibmnodeclasses -o yaml > test-artifacts/ibmnodeclasses.yaml 2>/dev/null || echo "apiVersion: v1\nitems: []\nkind: List" > test-artifacts/ibmnodeclasses.yaml
+
+          # Collect Karpenter deployment status
+          echo "  Collecting Karpenter deployment status..."
+          kubectl describe deployment -n karpenter karpenter-karpenter-ibm > test-artifacts/karpenter-deployment.txt 2>/dev/null || echo "Failed to describe Karpenter deployment" > test-artifacts/karpenter-deployment.txt
+          kubectl get pods -n karpenter -o wide > test-artifacts/karpenter-pods.txt 2>/dev/null || echo "Failed to get Karpenter pods" > test-artifacts/karpenter-pods.txt
+
+          # Collect any crash dumps or additional logs
+          echo "  Collecting additional diagnostics..."
+          kubectl get pods --all-namespaces --field-selector=status.phase!=Running,status.phase!=Succeeded > test-artifacts/problematic-pods.txt 2>/dev/null || echo "No problematic pods found" > test-artifacts/problematic-pods.txt
+
+          # Create summary of artifacts
+          echo "  Creating artifact summary..."
+          {
+            echo "E2E Test Artifacts Summary"
+            echo "========================="
+            echo "Generated: $(date)"
+            echo "Test run ID: ${{ github.run_id }}"
+            echo ""
+            echo "Files collected:"
+            ls -la test-artifacts/ 2>/dev/null || echo "No artifacts directory"
+          } > test-artifacts/README.txt
+
+          echo "✅ Test artifact collection completed"
 
       - uses: actions/upload-artifact@v4
         if: always()
