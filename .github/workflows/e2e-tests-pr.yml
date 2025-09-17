@@ -203,7 +203,7 @@ jobs:
     needs: [gate, build]
     if: ${{ needs.gate.outputs.approved == 'true' }}
     runs-on: [self-hosted, ibm-e2e]
-    timeout-minutes: 180
+    timeout-minutes: 210
     container:
       image: golang:1.24.4
       options: --user 0

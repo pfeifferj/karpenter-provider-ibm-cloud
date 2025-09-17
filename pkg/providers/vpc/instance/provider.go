@@ -18,6 +18,7 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -497,6 +498,26 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		"vpc", fmt.Sprintf("%+v", instancePrototype.VPC),
 		"resource_group", fmt.Sprintf("%+v", instancePrototype.ResourceGroup))
 
+	// ENHANCED DEBUGGING: Marshal to JSON to see exact API payload
+	if jsonBytes, jsonErr := json.MarshalIndent(instancePrototype, "", "  "); jsonErr == nil {
+		logger.Info("VPC CreateInstance JSON payload",
+			"instance_name", nodeClaim.Name,
+			"json_payload", string(jsonBytes))
+	} else {
+		logger.Error(jsonErr, "Failed to marshal instance prototype to JSON for debugging")
+	}
+
+	// Log oneOf discriminator fields specifically
+	logger.Info("OneOf discriminator field analysis",
+		"instance_name", nodeClaim.Name,
+		"prototype_type", fmt.Sprintf("%T", instancePrototype),
+		"image_field", instancePrototype.Image != nil,
+		"profile_field", instancePrototype.Profile != nil,
+		"vpc_field", instancePrototype.VPC != nil,
+		"zone_field", instancePrototype.Zone != nil,
+		"boot_volume_field", instancePrototype.BootVolumeAttachment != nil,
+		"primary_network_field", instancePrototype.PrimaryNetworkAttachment != nil)
+
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
 		// Check if this is a partial failure that might have created resources
@@ -514,6 +535,27 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			"ibm_error_message", ibmErr.Message,
 			"ibm_error_more_info", ibmErr.MoreInfo,
 			"raw_error", err.Error())
+
+		// ENHANCED DEBUGGING: Try to extract full HTTP response for oneOf errors
+		if detailedErr, ok := err.(*core.SDKProblem); ok {
+			logger.Error(err, "IBM VPC SDK detailed error response",
+				"instance_name", nodeClaim.Name,
+				"sdk_problem", fmt.Sprintf("%+v", detailedErr),
+				"problem_summary", detailedErr.Summary)
+		}
+
+		// Log specific oneOf error pattern analysis
+		errorString := err.Error()
+		isOneOfError := strings.Contains(errorString, "oneOf") || strings.Contains(errorString, "Expected only one")
+		logger.Info("OneOf error analysis",
+			"instance_name", nodeClaim.Name,
+			"is_oneof_error", isOneOfError,
+			"error_contains_oneof", strings.Contains(errorString, "oneOf"),
+			"error_contains_expected_only_one", strings.Contains(errorString, "Expected only one"),
+			"selected_instance_type", instanceProfile,
+			"zone", zone,
+			"nodeclass_instance_profile", nodeClass.Spec.InstanceProfile,
+			"is_dynamic_selection", nodeClass.Spec.InstanceProfile == "")
 
 		if p.isPartialFailure(ibmErr) {
 			logger.Info("Instance creation failed after partial resource creation, attempting cleanup",
