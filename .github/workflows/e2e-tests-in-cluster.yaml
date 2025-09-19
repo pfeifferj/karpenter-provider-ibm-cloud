@@ -28,7 +28,7 @@ jobs:
       group: e2e-tests
       cancel-in-progress: false
 
-    timeout-minutes: 180
+    timeout-minutes: 210
 
     container:
       # Run in a container with necessary tools

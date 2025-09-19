@@ -379,8 +379,16 @@ type IBMNodeClassSpec struct {
 	SecurityGroups []string `json:"securityGroups"`
 
 	// UserData contains user data script to run on instance initialization
+	// When specified, this completely overrides the default bootstrap script
+	// Use UserDataAppend if you want to add custom commands without replacing the bootstrap process
 	// +optional
 	UserData string `json:"userData,omitempty"`
+
+	// UserDataAppend contains additional user data script to append to the default bootstrap script
+	// Unlike UserData, this field adds your custom commands after the standard bootstrap process
+	// This is useful for running additional configuration without disrupting node bootstrapping
+	// +optional
+	UserDataAppend string `json:"userDataAppend,omitempty"`
 
 	// SSHKeys is a list of SSH key IDs to add to the instance.
 	// Must be valid IBM Cloud SSH key IDs in the format "r###-########-####-####-####-############".
