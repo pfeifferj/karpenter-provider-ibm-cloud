@@ -62,6 +62,22 @@ var (
 		},
 		[]string{"state", "instance_type"},
 	)
+
+	ErrorsByType = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "karpenter_ibm_errors_total",
+			Help: "Total number of errors by type, component, and region",
+		},
+		[]string{"error_type", "component", "region"},
+	)
+
+	TimeoutErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "karpenter_ibm_timeout_errors_total",
+			Help: "Total number of timeout errors by operation and region",
+		},
+		[]string{"operation", "region"},
+	)
 )
 
 func init() {
@@ -71,5 +87,7 @@ func init() {
 		CostPerHour,
 		QuotaUtilization,
 		InstanceLifecycle,
+		ErrorsByType,
+		TimeoutErrors,
 	)
 }
