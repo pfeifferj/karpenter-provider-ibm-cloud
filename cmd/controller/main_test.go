@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	ibmcloud "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/operator/options"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 )
 
@@ -364,4 +366,108 @@ func TestNodeClassAndNodeClaimCreation(t *testing.T) {
 	assert.Len(t, retrievedNodeClaim.Spec.Requirements, 1)
 	assert.Equal(t, corev1.LabelInstanceTypeStable, retrievedNodeClaim.Spec.Requirements[0].Key)
 	assert.Contains(t, retrievedNodeClaim.Spec.Requirements[0].Values, "test-instance-type")
+}
+
+func TestCircuitBreakerConfigHandling(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("WithValidCircuitBreakerConfig", func(t *testing.T) {
+		// Create options with circuit breaker config
+		opts := &options.Options{
+			CircuitBreakerEnabled:                true,
+			CircuitBreakerFailureThreshold:       5,
+			CircuitBreakerFailureWindow:          time.Minute * 3,
+			CircuitBreakerRecoveryTimeout:        time.Minute * 10,
+			CircuitBreakerHalfOpenMaxRequests:    3,
+			CircuitBreakerRateLimitPerMinute:     15,
+			CircuitBreakerMaxConcurrentInstances: 8,
+		}
+
+		// Add options to context
+		ctxWithOptions := options.ToContext(ctx, opts)
+
+		// Test that we can extract circuit breaker config
+		extractedOpts := options.FromContext(ctxWithOptions)
+		assert.NotNil(t, extractedOpts)
+
+		cbConfig := extractedOpts.GetCircuitBreakerConfig()
+		assert.NotNil(t, cbConfig)
+		assert.Equal(t, 5, cbConfig.FailureThreshold)
+		assert.Equal(t, time.Minute*3, cbConfig.FailureWindow)
+		assert.Equal(t, time.Minute*10, cbConfig.RecoveryTimeout)
+		assert.Equal(t, 3, cbConfig.HalfOpenMaxRequests)
+		assert.Equal(t, 15, cbConfig.RateLimitPerMinute)
+		assert.Equal(t, 8, cbConfig.MaxConcurrentInstances)
+	})
+
+	t.Run("WithDisabledCircuitBreaker", func(t *testing.T) {
+		opts := &options.Options{
+			CircuitBreakerEnabled: false,
+		}
+
+		ctxWithOptions := options.ToContext(ctx, opts)
+		extractedOpts := options.FromContext(ctxWithOptions)
+
+		cbConfig := extractedOpts.GetCircuitBreakerConfig()
+		assert.Nil(t, cbConfig)
+	})
+
+	t.Run("WithNilOptions", func(t *testing.T) {
+		// Test that FromContext returns empty options when no options in context
+		extractedOpts := options.FromContext(ctx)
+		assert.NotNil(t, extractedOpts)
+
+		cbConfig := extractedOpts.GetCircuitBreakerConfig()
+		assert.Nil(t, cbConfig) // Empty options should return nil config
+	})
+}
+
+func TestControllerRegistration(t *testing.T) {
+	// Create a new scheme and register types
+	s := runtime.NewScheme()
+	require.NoError(t, scheme.AddToScheme(s))
+	require.NoError(t, v1alpha1.AddToScheme(s))
+
+	// Register NodeClaim types
+	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
+	s.AddKnownTypes(gv,
+		&v1.NodeClaim{},
+		&v1.NodeClaimList{},
+		&v1.NodePool{},
+		&v1.NodePoolList{},
+	)
+	metav1.AddToGroupVersion(s, gv)
+
+	// Create fake client
+	client := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&v1.NodeClaim{}).
+		Build()
+
+	// Test that controllers can be created without error
+	mockIBMClient := &ibm.Client{}
+	mockInstanceTypeProvider := &mockInstanceTypeProvider{}
+	mockEventRecorder := &mockEventRecorder{}
+
+	assert.NotPanics(t, func() {
+		cloudProvider := ibmcloud.New(
+			client,
+			mockEventRecorder,
+			mockIBMClient,
+			mockInstanceTypeProvider,
+			&mockSubnetProvider{},
+			&ibmcloud.CircuitBreakerConfig{
+				FailureThreshold:       3,
+				FailureWindow:          time.Minute * 5,
+				RecoveryTimeout:        time.Minute * 15,
+				HalfOpenMaxRequests:    2,
+				RateLimitPerMinute:     10,
+				MaxConcurrentInstances: 5,
+			},
+		)
+
+		// Verify cloud provider was created successfully
+		assert.NotNil(t, cloudProvider)
+		assert.Implements(t, (*cloudprovider.CloudProvider)(nil), cloudProvider)
+	})
 }
