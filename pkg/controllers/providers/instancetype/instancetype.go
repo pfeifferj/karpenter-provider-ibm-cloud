@@ -77,7 +77,7 @@ func (c *Controller) getRegion() string {
 	if regionProvider, ok := c.instanceTypeProvider.(interface{ GetRegion() string }); ok {
 		return regionProvider.GetRegion()
 	}
-	return "us-south" // fallback
+	return "unknown"
 }
 
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {
