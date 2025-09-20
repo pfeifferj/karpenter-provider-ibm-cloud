@@ -634,7 +634,7 @@ func (p *IBMInstanceTypeProvider) GetRegion() string {
 	if p.client != nil {
 		return p.client.GetRegion()
 	}
-	return "us-south" // fallback
+	return "unknown"
 }
 
 // convertVPCProfileToInstanceType converts VPC instance profile to Karpenter instance type
