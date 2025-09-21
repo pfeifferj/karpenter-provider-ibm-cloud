@@ -178,6 +178,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	vpcClient, err := p.vpcClientManager.GetVPCClient(ctx)
 	if err != nil {
+		metrics.ErrorsByType.WithLabelValues("vpc_client_error", "instance_provider", nodeClass.Spec.Region).Inc()
 		return nil, err
 	}
 
@@ -541,6 +542,22 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		// Check if this is a partial failure that might have created resources
 		ibmErr := ibm.ParseError(err)
 
+		// Track error metrics BEFORE existing logging
+		if isTimeoutError(err) {
+			metrics.TimeoutErrors.WithLabelValues("CreateInstance", nodeClass.Spec.Region).Inc()
+			metrics.ErrorsByType.WithLabelValues("timeout", "instance_provider", nodeClass.Spec.Region).Inc()
+		} else if isQuotaError(err) {
+			metrics.ErrorsByType.WithLabelValues("quota_exceeded", "instance_provider", nodeClass.Spec.Region).Inc()
+		} else if isAuthError(err) {
+			metrics.ErrorsByType.WithLabelValues("authentication", "instance_provider", nodeClass.Spec.Region).Inc()
+		} else if ibmErr.StatusCode >= 400 && ibmErr.StatusCode < 500 {
+			metrics.ErrorsByType.WithLabelValues("client_error", "instance_provider", nodeClass.Spec.Region).Inc()
+		} else if ibmErr.StatusCode >= 500 {
+			metrics.ErrorsByType.WithLabelValues("server_error", "instance_provider", nodeClass.Spec.Region).Inc()
+		} else {
+			metrics.ErrorsByType.WithLabelValues("api_error", "instance_provider", nodeClass.Spec.Region).Inc()
+		}
+
 		// Enhanced error logging with FULL error details for oneOf debugging
 		logger.Error(err, "VPC instance creation error - FULL ERROR MESSAGE",
 			"status_code", ibmErr.StatusCode,
@@ -589,7 +606,6 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 		}
 
 		// Create detailed error message for better debugging in NodeClaim conditions
-		// Use the full error message to capture complete oneOf validation details
 		detailedErr := fmt.Errorf("creating VPC instance failed: %s (code: %s, status: %d, instance_profile: %s, zone: %s, image: %s)",
 			err.Error(), ibmErr.Code, ibmErr.StatusCode, instanceProfile, zone, nodeClass.Spec.Image)
 
@@ -696,21 +712,41 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 }
 
 func (p *VPCInstanceProvider) getQuotaInfo(ctx context.Context, region string) (*QuotaInfo, error) {
-	// Skip quota checks if resource manager service is not available
-	if p.resourceManagerService == nil {
-		return nil, fmt.Errorf("resource manager service not initialized")
+	// Create authenticator
+	authenticator := &core.IamAuthenticator{
+		ApiKey: os.Getenv("IBMCLOUD_API_KEY"),
 	}
 
-	// List quota definitions using pre-instantiated client
-	listQuotaDefinitionsOptions := p.resourceManagerService.NewListQuotaDefinitionsOptions()
-	quotaDefinitionList, _, err := p.resourceManagerService.ListQuotaDefinitions(listQuotaDefinitionsOptions)
+	// Create Resource Manager service with authenticator in options
+	resourceManagerServiceOptions := &resourcemanagerv2.ResourceManagerV2Options{
+		Authenticator: authenticator,
+	}
+
+	resourceManagerService, err := resourcemanagerv2.NewResourceManagerV2(resourceManagerServiceOptions)
 	if err != nil {
+		metrics.ErrorsByType.WithLabelValues("service_init", "quota_provider", region).Inc()
+		return nil, fmt.Errorf("failed to create resource manager service: %w", err)
+	}
+
+	// List quota definitions
+	listQuotaDefinitionsOptions := resourceManagerService.NewListQuotaDefinitionsOptions()
+	quotaDefinitionList, _, err := resourceManagerService.ListQuotaDefinitions(listQuotaDefinitionsOptions)
+	if err != nil {
+		if isTimeoutError(err) {
+			metrics.TimeoutErrors.WithLabelValues("ListQuotaDefinitions", region).Inc()
+			metrics.ErrorsByType.WithLabelValues("timeout", "quota_provider", region).Inc()
+		} else if isAuthError(err) {
+			metrics.ErrorsByType.WithLabelValues("authentication", "quota_provider", region).Inc()
+		} else {
+			metrics.ErrorsByType.WithLabelValues("api_error", "quota_provider", region).Inc()
+		}
 		return nil, fmt.Errorf("failed to list quota definitions: %w", err)
 	}
 
 	// Get current VPC usage
 	currentInstances, currentVCPUs, err := p.getCurrentVPCUsage(ctx)
 	if err != nil {
+		metrics.ErrorsByType.WithLabelValues("vpc_usage", "quota_provider", region).Inc()
 		return nil, fmt.Errorf("failed to get current VPC usage: %w", err)
 	}
 
@@ -794,6 +830,16 @@ func (p *VPCInstanceProvider) Delete(ctx context.Context, node *corev1.Node) err
 	// First attempt to delete the instance
 	err = vpcClient.DeleteInstance(ctx, instanceID)
 	if err != nil && !isIBMInstanceNotFoundError(err) {
+		// Track specific error types
+		if isTimeoutError(err) {
+			metrics.TimeoutErrors.WithLabelValues("DeleteInstance", region).Inc()
+			metrics.ErrorsByType.WithLabelValues("timeout", "instance_provider", region).Inc()
+		} else if isAuthError(err) {
+			metrics.ErrorsByType.WithLabelValues("authentication", "instance_provider", region).Inc()
+		} else {
+			metrics.ErrorsByType.WithLabelValues("api_error", "instance_provider", region).Inc()
+		}
+
 		metrics.ApiRequests.WithLabelValues("DeleteInstance", "500", region).Inc()
 		return vpcclient.HandleVPCError(err, logger, "deleting VPC instance", "instance_id", instanceID)
 	}
@@ -1350,4 +1396,37 @@ func isHexString(s string) bool {
 		}
 	}
 	return true
+}
+
+// Helper functions to classify errors
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "context deadline exceeded") ||
+		strings.Contains(errStr, "i/o timeout")
+}
+
+func isQuotaError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "quota") ||
+		strings.Contains(errStr, "limit exceeded") ||
+		strings.Contains(errStr, "insufficient capacity")
+}
+
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "unauthorized") ||
+		strings.Contains(errStr, "forbidden") ||
+		strings.Contains(errStr, "authentication failed") ||
+		strings.Contains(errStr, "401") ||
+		strings.Contains(errStr, "403")
 }
