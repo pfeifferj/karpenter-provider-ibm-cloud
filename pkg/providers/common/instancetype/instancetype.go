@@ -629,6 +629,14 @@ func (p *IBMInstanceTypeProvider) getZonesForRegion(ctx context.Context, region 
 	return zones, nil
 }
 
+// GetRegion returns the region this provider is configured for
+func (p *IBMInstanceTypeProvider) GetRegion() string {
+	if p.client != nil {
+		return p.client.GetRegion()
+	}
+	return "unknown"
+}
+
 // convertVPCProfileToInstanceType converts VPC instance profile to Karpenter instance type
 func (p *IBMInstanceTypeProvider) convertVPCProfileToInstanceType(ctx context.Context, profile vpcv1.InstanceProfile) (*cloudprovider.InstanceType, error) {
 	if profile.Name == nil {
