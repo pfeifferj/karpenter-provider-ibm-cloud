@@ -69,6 +69,10 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceID(ctx context.Context, no
 
 // GetUserDataWithInstanceIDAndType generates VPC-specific user data with a known instance ID and type
 func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Context, nodeClass *v1alpha1.IBMNodeClass, nodeClaim types.NamespacedName, instanceID, selectedInstanceType string) (string, error) {
+	if nodeClass == nil {
+		return "", fmt.Errorf("nodeClass cannot be nil")
+	}
+
 	logger := log.FromContext(ctx)
 	logger.Info("Generating VPC cloud-init user data for direct kubelet bootstrap")
 
