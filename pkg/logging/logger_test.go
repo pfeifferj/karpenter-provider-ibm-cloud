@@ -65,13 +65,35 @@ func TestComponentLoggers(t *testing.T) {
 }
 
 func TestLoggingMethods(t *testing.T) {
+	// Save original LOG_LEVEL
+	originalLogLevel := os.Getenv("LOG_LEVEL")
+	defer func() {
+		_ = os.Setenv("LOG_LEVEL", originalLogLevel)
+	}()
+
+	// Test with debug level (should log everything)
+	_ = os.Setenv("LOG_LEVEL", "debug")
 	logger := NewLogger("test")
 
-	// These should not panic
+	// These should not panic and should execute the logging branch
 	logger.Info("test info message", "key", "value")
-	logger.Debug("test debug message", "key", "value")
+	logger.Debug("test debug message", "key", "value") // This tests the shouldLog("debug") == true branch
 	logger.Warn("test warning message", "key", "value")
 	logger.Error(nil, "test error message", "key", "value")
+
+	// Test with error level (should not log debug)
+	_ = os.Setenv("LOG_LEVEL", "error")
+	errorLogger := NewLogger("test-error")
+	errorLogger.Debug("test debug message", "key", "value") // This tests the shouldLog("debug") == false branch
+
+	// Test Warn with different log levels
+	_ = os.Setenv("LOG_LEVEL", "warn")
+	warnLogger := NewLogger("test-warn")
+	warnLogger.Warn("test warning message", "key", "value") // shouldLog("warn") == true
+
+	_ = os.Setenv("LOG_LEVEL", "error")
+	errorLogger2 := NewLogger("test-error2")
+	errorLogger2.Warn("test warning message", "key", "value") // shouldLog("warn") == false
 }
 
 func TestLogLevelFiltering(t *testing.T) {

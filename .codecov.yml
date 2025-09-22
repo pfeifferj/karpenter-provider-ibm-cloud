@@ -24,6 +24,8 @@ coverage:
     - "*.md"
     - "aws-provider-reference/"
     - "karpenter/"
+    - "cmd/controller/main.go"  # Main functions typically have 0% coverage
+    - "main.go"  # Root main file if it exists
 
 comment:
   layout: "reach,diff,flags,tree"
