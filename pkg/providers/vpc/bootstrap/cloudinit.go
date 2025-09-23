@@ -459,7 +459,7 @@ cgroupDriver: systemd
 registerWithTaints:
 {{ range .Taints }}
 - key: {{ .Key }}
-  value: {{ .Value }}
+  value: "{{ .Value }}"
   effect: {{ .Effect }}
 {{ end }}
 {{ if eq .CNIPlugin "cilium" }}
