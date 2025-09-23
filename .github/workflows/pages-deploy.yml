@@ -57,14 +57,24 @@ jobs:
         run: |
           mkdir -p _helm-repo
 
-          # Package the chart from charts/ directory
+          # Download existing index if it exists
+          echo "Downloading existing index.yaml..."
+          curl -s https://karpenter-ibm.sh/index.yaml > _helm-repo/old-index.yaml || echo "No existing index found"
+
+          # Package the current chart
           if [ -f "charts/Chart.yaml" ]; then
             echo "Packaging chart: charts/"
             helm package charts/ --destination _helm-repo
           fi
 
-          # Generate index
-          helm repo index _helm-repo --url https://karpenter-ibm.sh
+          # Merge with existing index (preserves all versions)
+          if [ -f "_helm-repo/old-index.yaml" ] && [ -s "_helm-repo/old-index.yaml" ]; then
+            echo "Merging with existing index..."
+            helm repo index _helm-repo --url https://karpenter-ibm.sh --merge _helm-repo/old-index.yaml
+          else
+            echo "Creating new index..."
+            helm repo index _helm-repo --url https://karpenter-ibm.sh
+          fi
 
       - name: Combine site content
         run: |
@@ -86,6 +96,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: .
           publish_branch: gh-pages
-          force_orphan: true
+          force_orphan: false
           user_name: 'github-actions[bot]'
           user_email: 'github-actions[bot]@users.noreply.github.com'
