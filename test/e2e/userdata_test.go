@@ -39,43 +39,61 @@ func TestE2EUserDataAppend(t *testing.T) {
 	t.Logf("Starting userDataAppend test: %s", testName)
 	ctx := context.Background()
 
-	// Create NodeClass with userDataAppend
+	// Create NodeClass with userDataAppend using the same pattern as createTestNodeClass
+	instanceType := suite.GetAvailableInstanceType(t)
+	bootstrapMode := "cloud-init"
+
 	nodeClass := &v1alpha1.IBMNodeClass{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "karpenter.ibm.sh/v1alpha1",
+			Kind:       "IBMNodeClass",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: testName + "-nodeclass",
 		},
-		Spec: suite.CreateDefaultNodeClassSpec(),
+		Spec: v1alpha1.IBMNodeClassSpec{
+			Region:            suite.testRegion,
+			Zone:              suite.testZone,
+			InstanceProfile:   instanceType,
+			Image:             suite.testImage,
+			VPC:               suite.testVPC,
+			Subnet:            suite.testSubnet,
+			SecurityGroups:    []string{suite.testSecurityGroup},
+			APIServerEndpoint: suite.APIServerEndpoint,
+			BootstrapMode:     &bootstrapMode,
+			ResourceGroup:     suite.testResourceGroup,
+			SSHKeys:           []string{suite.testSshKeyId},
+			Tags: map[string]string{
+				"test":       "e2e",
+				"test-name":  testName,
+				"created-by": "karpenter-e2e",
+				"purpose":    "userdata-append-test",
+			},
+		},
 	}
 
 	// Add userDataAppend to the spec
-	nodeClass.Spec.UserDataAppend = &[]string{`
+	userDataAppend := `
 echo "USERDATA_APPEND_E2E_TEST_START" | tee /var/log/userdata-append-e2e.log
 touch /tmp/userdata-append-e2e-marker
 echo "E2E test userDataAppend executed at $(date)" >> /tmp/userdata-append-e2e-marker
 apt-get update && apt-get install -y jq curl
 echo "USERDATA_APPEND_E2E_TEST_END" | tee -a /var/log/userdata-append-e2e.log
-`}[0]
-
-	// Add test-specific tags
-	nodeClass.Spec.Tags = map[string]string{
-		"test-name":    testName,
-		"test-type":    "userdata-append",
-		"created-by":   "e2e-test",
-		"feature-test": "userdata-append",
-	}
+`
+	nodeClass.Spec.UserDataAppend = userDataAppend
 
 	// Create the NodeClass
-	err := suite.Client.Create(ctx, nodeClass)
+	err := suite.kubeClient.Create(ctx, nodeClass)
 	require.NoError(t, err, "Failed to create NodeClass")
-	suite.AddCleanupResource(nodeClass)
+	// Resource cleanup handled by suite.cleanupTestResources
 
 	// Wait for NodeClass to be ready
 	suite.waitForNodeClassReady(t, nodeClass.Name)
 
-	// Create NodePool
-	nodePool := suite.createTestNodePool(t, testName, nodeClass.Name)
+	// Create NodePool (don't save yet, need to modify it first)
+	nodePool := suite.createTestNodePoolObject(t, testName, nodeClass.Name)
 
-	// Add specific node selector and taint for this test
+	// Add specific node selector and taint for this test BEFORE creating it
 	nodePool.Spec.Template.ObjectMeta.Labels = map[string]string{
 		"test-type": "userdata-append-e2e",
 	}
@@ -87,9 +105,9 @@ echo "USERDATA_APPEND_E2E_TEST_END" | tee -a /var/log/userdata-append-e2e.log
 		},
 	}
 
-	// Update the NodePool
-	err = suite.Client.Update(ctx, nodePool)
-	require.NoError(t, err, "Failed to update NodePool")
+	// Now create the NodePool with the modifications already applied
+	err = suite.kubeClient.Create(ctx, nodePool)
+	require.NoError(t, err, "Failed to create NodePool")
 
 	// Create a test pod that will trigger node provisioning
 	pod := &corev1.Pod{
@@ -130,17 +148,17 @@ echo "USERDATA_APPEND_E2E_TEST_END" | tee -a /var/log/userdata-append-e2e.log
 	}
 
 	// Create the test pod
-	err = suite.Client.Create(ctx, pod)
+	err = suite.kubeClient.Create(ctx, pod)
 	require.NoError(t, err, "Failed to create test pod")
-	suite.AddCleanupResource(pod)
+	// Resource cleanup handled by suite.cleanupTestResources
 
 	t.Logf("Waiting for pod %s to be scheduled and running", pod.Name)
 
 	// Wait for pod to be scheduled and running
-	suite.waitForPodRunning(t, pod.Name, "default", 10*time.Minute)
+	suite.waitForPodToBeRunning(t, pod.Name, "default")
 
 	// Get the node that was created
-	err = suite.Client.Get(ctx, client.ObjectKeyFromObject(pod), pod)
+	err = suite.kubeClient.Get(ctx, client.ObjectKeyFromObject(pod), pod)
 	require.NoError(t, err, "Failed to get pod")
 	require.NotEmpty(t, pod.Spec.NodeName, "Pod should be scheduled to a node")
 
@@ -149,7 +167,7 @@ echo "USERDATA_APPEND_E2E_TEST_END" | tee -a /var/log/userdata-append-e2e.log
 
 	// Verify the node has the correct labels
 	node := &corev1.Node{}
-	err = suite.Client.Get(ctx, client.ObjectKey{Name: nodeName}, node)
+	err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: nodeName}, node)
 	require.NoError(t, err, "Failed to get node")
 
 	require.Equal(t, "userdata-append-e2e", node.Labels["test-type"], "Node should have correct test-type label")
@@ -245,17 +263,17 @@ echo "USERDATA_APPEND_E2E_TEST_END" | tee -a /var/log/userdata-append-e2e.log
 	}
 
 	// Create verification pod
-	err = suite.Client.Create(ctx, verificationPod)
+	err = suite.kubeClient.Create(ctx, verificationPod)
 	require.NoError(t, err, "Failed to create verification pod")
-	suite.AddCleanupResource(verificationPod)
+	// Resource cleanup handled by suite.cleanupTestResources
 
 	t.Logf("Waiting for verification pod %s to complete", verificationPod.Name)
 
 	// Wait for verification pod to complete successfully
-	suite.waitForPodCompletion(t, verificationPod.Name, "default", 5*time.Minute)
+	suite.waitForPodCompletion(t, verificationPod.Name, "default")
 
 	// Verify that the verification pod succeeded
-	err = suite.Client.Get(ctx, client.ObjectKeyFromObject(verificationPod), verificationPod)
+	err = suite.kubeClient.Get(ctx, client.ObjectKeyFromObject(verificationPod), verificationPod)
 	require.NoError(t, err, "Failed to get verification pod")
 	require.Equal(t, corev1.PodSucceeded, verificationPod.Status.Phase, "Verification pod should have succeeded")
 
@@ -272,9 +290,9 @@ func TestE2EStandardBootstrap(t *testing.T) {
 	// Create standard NodeClass without any custom user data
 	nodeClass := suite.createTestNodeClass(t, testName)
 
-	// Ensure no userData or userDataAppend is set
-	require.Nil(t, nodeClass.Spec.UserData, "UserData should be nil for standard bootstrap")
-	require.Nil(t, nodeClass.Spec.UserDataAppend, "UserDataAppend should be nil for standard bootstrap")
+	// Ensure no userData or userDataAppend is set (empty strings for non-pointer fields)
+	require.Empty(t, nodeClass.Spec.UserData, "UserData should be empty for standard bootstrap")
+	require.Empty(t, nodeClass.Spec.UserDataAppend, "UserDataAppend should be empty for standard bootstrap")
 
 	// Wait for NodeClass to be ready
 	suite.waitForNodeClassReady(t, nodeClass.Name)
@@ -288,7 +306,7 @@ func TestE2EStandardBootstrap(t *testing.T) {
 	}
 
 	// Update the NodePool
-	err := suite.Client.Update(ctx, nodePool)
+	err := suite.kubeClient.Update(ctx, nodePool)
 	require.NoError(t, err, "Failed to update NodePool")
 
 	// Create test pod
@@ -322,22 +340,22 @@ func TestE2EStandardBootstrap(t *testing.T) {
 	}
 
 	// Create the test pod
-	err = suite.Client.Create(ctx, pod)
+	err = suite.kubeClient.Create(ctx, pod)
 	require.NoError(t, err, "Failed to create test pod")
-	suite.AddCleanupResource(pod)
+	// Resource cleanup handled by suite.cleanupTestResources
 
 	t.Logf("Waiting for pod %s to be scheduled and running", pod.Name)
 
 	// Wait for pod to be running
-	suite.waitForPodRunning(t, pod.Name, "default", 10*time.Minute)
+	suite.waitForPodToBeRunning(t, pod.Name, "default")
 
 	// Get the node and verify it joined successfully
-	err = suite.Client.Get(ctx, client.ObjectKeyFromObject(pod), pod)
+	err = suite.kubeClient.Get(ctx, client.ObjectKeyFromObject(pod), pod)
 	require.NoError(t, err, "Failed to get pod")
 	require.NotEmpty(t, pod.Spec.NodeName, "Pod should be scheduled to a node")
 
 	node := &corev1.Node{}
-	err = suite.Client.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, node)
+	err = suite.kubeClient.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, node)
 	require.NoError(t, err, "Failed to get node")
 
 	// Verify node has correct labels indicating successful bootstrap
