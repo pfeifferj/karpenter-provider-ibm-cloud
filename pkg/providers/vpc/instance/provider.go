@@ -44,6 +44,7 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/image"
 	commonTypes "github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/bootstrap"
+	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/utils/vpcclient"
 )
 
@@ -58,6 +59,7 @@ type VPCInstanceProvider struct {
 	kubeClient             client.Client
 	k8sClient              kubernetes.Interface
 	bootstrapProvider      *bootstrap.VPCBootstrapProvider
+	subnetProvider         subnet.Provider
 	vpcClientManager       *vpcclient.Manager
 	resourceManagerService *resourcemanagerv2.ResourceManagerV2
 }
@@ -74,6 +76,8 @@ func WithKubernetesClient(k8sClient kubernetes.Interface) Option {
 		p.k8sClient = k8sClient
 		// Create bootstrap provider immediately with proper dependency injection
 		p.bootstrapProvider = bootstrap.NewVPCBootstrapProvider(p.client, k8sClient, p.kubeClient)
+		// Set Kubernetes client on subnet provider for cluster awareness
+		p.subnetProvider.SetKubernetesClient(k8sClient)
 		return nil
 	}
 }
@@ -115,6 +119,7 @@ func NewVPCInstanceProvider(client *ibm.Client, kubeClient client.Client, opts .
 		kubeClient:             kubeClient,
 		k8sClient:              nil, // Will be set via options if provided
 		bootstrapProvider:      nil, // Will be lazily initialized or set via options
+		subnetProvider:         subnet.NewProvider(client),
 		vpcClientManager:       vpcclient.NewManager(client, 30*time.Minute),
 		resourceManagerService: nil, // Will be initialized after applying options
 	}
@@ -222,16 +227,77 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 			return nil, fmt.Errorf("zone selection requires either explicit zone/subnet or placement strategy")
 		}
 
-		// Use subnet provider to select optimal subnet based on placement strategy
-		// Note: This would require access to subnet provider - for now return error
-		return nil, fmt.Errorf("dynamic zone/subnet selection not yet implemented - specify zone and subnet explicitly")
+		// First, check if the controller has already selected subnets for us
+		if len(nodeClass.Status.SelectedSubnets) > 0 {
+			// Use pre-selected subnets from the autoplacement controller
+			selectedSubnetID := p.selectSubnetFromStatusList(nodeClass.Status.SelectedSubnets)
+
+			// Get subnet info to retrieve zone
+			subnetInfo, subnetErr := p.subnetProvider.GetSubnet(ctx, selectedSubnetID)
+			if subnetErr != nil {
+				return nil, fmt.Errorf("getting subnet info for selected subnet %s: %w", selectedSubnetID, subnetErr)
+			}
+
+			zone = subnetInfo.Zone
+			subnet = selectedSubnetID
+
+			logger.Info("Using pre-selected subnet from status",
+				"zone", zone, "subnet", subnet, "selectedSubnets", nodeClass.Status.SelectedSubnets)
+		} else {
+			// Fallback: Select subnets directly if status not populated
+			// This handles backward compatibility and cases where autoplacement controller hasn't run yet
+			selectedSubnets, selectErr := p.subnetProvider.SelectSubnets(ctx, nodeClass.Spec.VPC, nodeClass.Spec.PlacementStrategy)
+			if selectErr != nil {
+				return nil, fmt.Errorf("selecting subnets with placement strategy: %w", selectErr)
+			}
+
+			if len(selectedSubnets) == 0 {
+				return nil, fmt.Errorf("no subnets selected by placement strategy")
+			}
+
+			// Select subnet using round-robin across zones for balanced distribution
+			selectedSubnet := p.selectSubnetFromMultiZoneList(selectedSubnets)
+			zone = selectedSubnet.Zone
+			subnet = selectedSubnet.ID
+
+			logger.Info("Selected zone and subnet using placement strategy (fallback)",
+				"zone", zone, "subnet", subnet, "strategy", nodeClass.Spec.PlacementStrategy.ZoneBalance)
+		}
+
 	} else if zone == "" && subnet != "" {
 		// Subnet specified but no zone - derive zone from subnet
-		// Note: This would require subnet lookup - for now return error
-		return nil, fmt.Errorf("zone derivation from subnet not yet implemented - specify zone explicitly")
+		subnetInfo, subnetErr := p.subnetProvider.GetSubnet(ctx, subnet)
+		if subnetErr != nil {
+			return nil, fmt.Errorf("getting subnet info for zone derivation: %w", subnetErr)
+		}
+		zone = subnetInfo.Zone
+		logger.Info("Derived zone from subnet", "zone", zone, "subnet", subnet)
+
 	} else if zone != "" && subnet == "" {
-		// Zone specified but no subnet - need subnet selection
-		return nil, fmt.Errorf("subnet selection within zone not yet implemented - specify subnet explicitly")
+		// Zone specified but no subnet - select subnet within zone
+		allSubnets, listErr := p.subnetProvider.ListSubnets(ctx, nodeClass.Spec.VPC)
+		if listErr != nil {
+			return nil, fmt.Errorf("listing subnets for zone-based selection: %w", listErr)
+		}
+
+		// Find best subnet in the specified zone
+		var bestSubnetID string
+		var bestSubnetAvailableIPs int32 = -1
+		for _, s := range allSubnets {
+			if s.Zone == zone && s.State == "available" {
+				if s.AvailableIPs > bestSubnetAvailableIPs {
+					bestSubnetID = s.ID
+					bestSubnetAvailableIPs = s.AvailableIPs
+				}
+			}
+		}
+
+		if bestSubnetID == "" {
+			return nil, fmt.Errorf("no available subnet found in zone %s", zone)
+		}
+
+		subnet = bestSubnetID
+		logger.Info("Selected subnet within specified zone", "zone", zone, "subnet", subnet)
 	}
 
 	// Both zone and subnet specified - use them directly (existing behavior)
@@ -1447,4 +1513,58 @@ func isAuthError(err error) bool {
 		strings.Contains(errStr, "authentication failed") ||
 		strings.Contains(errStr, "401") ||
 		strings.Contains(errStr, "403")
+}
+
+// selectSubnetFromStatusList selects a subnet from the pre-selected list in status using round-robin
+func (p *VPCInstanceProvider) selectSubnetFromStatusList(subnetIDs []string) string {
+	if len(subnetIDs) == 0 {
+		return ""
+	}
+
+	if len(subnetIDs) == 1 {
+		return subnetIDs[0]
+	}
+
+	// Simple round-robin based on current time for stateless distribution
+	index := int(time.Now().UnixNano()) % len(subnetIDs)
+	return subnetIDs[index]
+}
+
+// selectSubnetFromMultiZoneList selects a subnet from a list using round-robin across zones
+// to ensure balanced distribution when multiple subnets are available across zones
+func (p *VPCInstanceProvider) selectSubnetFromMultiZoneList(subnets []subnet.SubnetInfo) subnet.SubnetInfo {
+	if len(subnets) == 0 {
+		// This should not happen as caller checks length, but return empty for safety
+		return subnet.SubnetInfo{}
+	}
+
+	if len(subnets) == 1 {
+		return subnets[0]
+	}
+
+	// Group subnets by zone
+	zoneSubnets := make(map[string][]subnet.SubnetInfo)
+	var zones []string
+	for _, s := range subnets {
+		if _, exists := zoneSubnets[s.Zone]; !exists {
+			zones = append(zones, s.Zone)
+		}
+		zoneSubnets[s.Zone] = append(zoneSubnets[s.Zone], s)
+	}
+
+	// Simple round-robin based on current time for stateless distribution
+	// This ensures different instances get distributed across zones
+	zoneIndex := int(time.Now().UnixNano()) % len(zones)
+	selectedZone := zones[zoneIndex]
+
+	// Select the best subnet in the chosen zone (highest available IPs)
+	zoneSubnetList := zoneSubnets[selectedZone]
+	bestSubnet := zoneSubnetList[0]
+	for _, s := range zoneSubnetList {
+		if s.AvailableIPs > bestSubnet.AvailableIPs {
+			bestSubnet = s
+		}
+	}
+
+	return bestSubnet
 }
