@@ -19,7 +19,7 @@ concurrency:
 
 env:
   E2E_APPROVAL_COMMENT: "/ok-to-e2e"
-  GO_VERSION: "1.21"
+  GO_VERSION: "1.24"
   KO_VERSION: "0.15.4"
   KUBECTL_VERSION: "1.28.0"
 
@@ -205,7 +205,7 @@ jobs:
     runs-on: [self-hosted, ibm-e2e]
     timeout-minutes: 210
     container:
-      image: golang:1.24.4
+      image: golang:1.24.6
       options: --user 0
     env:
       KUBECONFIG: /tmp/kubeconfig

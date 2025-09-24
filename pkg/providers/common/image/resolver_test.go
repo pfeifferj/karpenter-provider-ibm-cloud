@@ -776,7 +776,20 @@ func TestResolver_parseImageName(t *testing.T) {
 		shouldBeNil bool
 	}{
 		{
-			name:      "full IBM format",
+			name:      "newer IBM format with patch version",
+			imageName: "ibm-ubuntu-22-04-5-minimal-amd64-7",
+			expected: map[string]string{
+				"os":           "ubuntu",
+				"majorVersion": "22",
+				"minorVersion": "04",
+				"patchVersion": "5",
+				"variant":      "minimal",
+				"architecture": "amd64",
+				"build":        "7",
+			},
+		},
+		{
+			name:      "standard IBM format",
 			imageName: "ibm-ubuntu-22-04-minimal-amd64-1",
 			expected: map[string]string{
 				"os":           "ubuntu",

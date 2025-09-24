@@ -216,8 +216,7 @@ func (r *Resolver) filterImagesBySelector(images []ImageInfo, selector *v1alpha1
 // imageMatchesSelector checks if an image matches the selector criteria
 func (r *Resolver) imageMatchesSelector(img ImageInfo, selector *v1alpha1.ImageSelector) bool {
 	// Parse image name to extract components
-	// Expected format: ibm-{os}-{major}-{minor}-{variant}-{arch}-{build}
-	// Example: "ibm-ubuntu-22-04-minimal-amd64-1"
+	// Supports multiple IBM Cloud image naming formats
 	components := r.parseImageName(img.Name)
 	if components == nil {
 		return false
@@ -260,14 +259,33 @@ func (r *Resolver) imageMatchesSelector(img ImageInfo, selector *v1alpha1.ImageS
 }
 
 // parseImageName extracts components from IBM Cloud image names
-// Expected format: ibm-{os}-{major}-{minor}-{variant}-{arch}-{build}
-// Alternative format: {os}-{major}-{minor} (for older images)
+// Expected formats:
+// - ibm-{os}-{major}-{minor}-{patch}-{variant}-{arch}-{build} (newer format)
+// - ibm-{os}-{major}-{minor}-{variant}-{arch}-{build} (standard format)
+// - ibm-{os}-{major}-{minor}-{arch}-{build} (alternative format)
+// - {os}-{major}-{minor} (legacy format)
 func (r *Resolver) parseImageName(imageName string) map[string]string {
 	components := make(map[string]string)
 
-	// Try IBM format first: ibm-{os}-{major}-{minor}-{variant}-{arch}-{build}
+	// Try newer IBM format first: ibm-{os}-{major}-{minor}-{patch}-{variant}-{arch}-{build}
+	// Example: ibm-ubuntu-22-04-5-minimal-amd64-7
+	ibmNewPattern := regexp.MustCompile(`^ibm-([a-z]+)-([0-9]+)-([0-9]+)-([0-9]+)-([a-z]+)-([a-z0-9]+)-([0-9]+)$`)
+	matches := ibmNewPattern.FindStringSubmatch(imageName)
+	if len(matches) == 8 {
+		components["os"] = matches[1]
+		components["majorVersion"] = matches[2]
+		components["minorVersion"] = matches[3]
+		components["patchVersion"] = matches[4]
+		components["variant"] = matches[5]
+		components["architecture"] = matches[6]
+		components["build"] = matches[7]
+		return components
+	}
+
+	// Try standard IBM format: ibm-{os}-{major}-{minor}-{variant}-{arch}-{build}
+	// Example: ibm-ubuntu-22-04-minimal-amd64-1
 	ibmPattern := regexp.MustCompile(`^ibm-([a-z]+)-([0-9]+)-([0-9]+)-([a-z]+)-([a-z0-9]+)-([0-9]+)$`)
-	matches := ibmPattern.FindStringSubmatch(imageName)
+	matches = ibmPattern.FindStringSubmatch(imageName)
 	if len(matches) == 7 {
 		components["os"] = matches[1]
 		components["majorVersion"] = matches[2]
