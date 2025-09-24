@@ -34,7 +34,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
 	"github.com/IBM/platform-services-go-sdk/resourcemanagerv2"
@@ -161,7 +161,7 @@ func NewVPCInstanceProviderWithKubernetesClient(client *ibm.Client, kubeClient c
 }
 
 // Create provisions a new VPC instance
-func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error) {
+func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error) {
 	logger := log.FromContext(ctx)
 
 	// Start timing for provisioning duration
@@ -368,18 +368,33 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 	}
 
 	// Resolve image identifier to image ID
-	imageResolver := image.NewResolver(vpcClient, nodeClass.Spec.Region)
+	imageResolver := image.NewResolver(vpcClient, nodeClass.Spec.Region, logger)
 	var imageID string
 
 	// Use explicit image if specified, otherwise use imageSelector
 	if nodeClass.Spec.Image != "" {
+		logger.Info("Resolving explicit image", "image", nodeClass.Spec.Image)
 		imageID, err = imageResolver.ResolveImage(ctx, nodeClass.Spec.Image)
 		if err != nil {
+			logger.Error(err, "Failed to resolve explicit image", "image", nodeClass.Spec.Image)
 			return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
 		}
+		logger.Info("Successfully resolved explicit image", "image", nodeClass.Spec.Image, "imageID", imageID)
 	} else if nodeClass.Spec.ImageSelector != nil {
+		logger.Info("Resolving image using selector",
+			"os", nodeClass.Spec.ImageSelector.OS,
+			"majorVersion", nodeClass.Spec.ImageSelector.MajorVersion,
+			"minorVersion", nodeClass.Spec.ImageSelector.MinorVersion,
+			"architecture", nodeClass.Spec.ImageSelector.Architecture,
+			"variant", nodeClass.Spec.ImageSelector.Variant)
 		imageID, err = imageResolver.ResolveImageBySelector(ctx, nodeClass.Spec.ImageSelector)
 		if err != nil {
+			logger.Error(err, "Failed to resolve image using selector",
+				"os", nodeClass.Spec.ImageSelector.OS,
+				"majorVersion", nodeClass.Spec.ImageSelector.MajorVersion,
+				"minorVersion", nodeClass.Spec.ImageSelector.MinorVersion,
+				"architecture", nodeClass.Spec.ImageSelector.Architecture,
+				"variant", nodeClass.Spec.ImageSelector.Variant)
 			return nil, fmt.Errorf("resolving image using selector (os=%s, majorVersion=%s, minorVersion=%s, architecture=%s, variant=%s): %w",
 				nodeClass.Spec.ImageSelector.OS,
 				nodeClass.Spec.ImageSelector.MajorVersion,
@@ -388,8 +403,25 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 				nodeClass.Spec.ImageSelector.Variant,
 				err)
 		}
+		logger.Info("Successfully resolved image using selector",
+			"os", nodeClass.Spec.ImageSelector.OS,
+			"majorVersion", nodeClass.Spec.ImageSelector.MajorVersion,
+			"minorVersion", nodeClass.Spec.ImageSelector.MinorVersion,
+			"architecture", nodeClass.Spec.ImageSelector.Architecture,
+			"variant", nodeClass.Spec.ImageSelector.Variant,
+			"resolvedImageID", imageID)
 	} else {
+		logger.Error(nil, "Neither image nor imageSelector specified in NodeClass")
 		return nil, fmt.Errorf("neither image nor imageSelector specified in NodeClass")
+	}
+
+	// Validate the resolved imageID is not empty
+	if imageID == "" {
+		logger.Error(nil, "Image resolution returned empty imageID",
+			"hasImage", nodeClass.Spec.Image != "",
+			"hasImageSelector", nodeClass.Spec.ImageSelector != nil,
+			"explicitImage", nodeClass.Spec.Image)
+		return nil, fmt.Errorf("image resolution returned empty imageID")
 	}
 
 	// Create boot volume attachment based on block device mappings or use default
@@ -776,6 +808,12 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 				},
 			},
 		},
+	}
+
+	// Add Karpenter-specific tags to the instance for orphan cleanup identification
+	if err := p.addKarpenterTags(ctx, vpcClient, *instance.ID, nodeClass, nodeClaim); err != nil {
+		logger.Error(err, "failed to add Karpenter tags to instance, continuing anyway", "instance-id", *instance.ID)
+		// Don't fail instance creation due to tagging issues
 	}
 
 	// Record successful provisioning metrics
@@ -1567,4 +1605,50 @@ func (p *VPCInstanceProvider) selectSubnetFromMultiZoneList(subnets []subnet.Sub
 	}
 
 	return bestSubnet
+}
+
+// addKarpenterTags adds Karpenter-specific tags to an instance for identification during orphan cleanup
+func (p *VPCInstanceProvider) addKarpenterTags(ctx context.Context, vpcClient *ibm.VPCClient, instanceID string, nodeClass *v1alpha1.IBMNodeClass, nodeClaim *karpv1.NodeClaim) error {
+	logger := log.FromContext(ctx)
+
+	// Get cluster identifier (use cluster name from environment or nodeclass)
+	clusterName := os.Getenv("CLUSTER_NAME")
+	if clusterName == "" {
+		clusterName = "default"
+	}
+
+	// Create Karpenter-specific tags with cluster identifier
+	karpenterTags := map[string]string{
+		"karpenter.sh/managed":    "true",
+		"karpenter.sh/cluster":    clusterName,
+		"karpenter.sh/nodepool":   nodeClaim.Labels["karpenter.sh/nodepool"],
+		"karpenter.sh/provider":   "ibm-cloud",
+		"karpenter.sh/version":    "v0.3.69", // TODO: Get this from build info
+		"karpenter.sh/node-claim": nodeClaim.Name,
+		"managed-by":              fmt.Sprintf("karpenter-%s", clusterName),
+	}
+
+	// Add nodeclass-specific tags if available
+	if nodeClass.Spec.Tags != nil {
+		for key, value := range nodeClass.Spec.Tags {
+			// Don't override Karpenter system tags
+			if !strings.HasPrefix(key, "karpenter.sh/") && key != "managed-by" {
+				karpenterTags[key] = value
+			}
+		}
+	}
+
+	logger.Info("Adding Karpenter tags to instance",
+		"instance-id", instanceID,
+		"cluster", clusterName,
+		"nodepool", nodeClaim.Labels["karpenter.sh/nodepool"],
+		"nodeclaim", nodeClaim.Name)
+
+	// Add tags to the instance
+	if err := vpcClient.UpdateInstanceTags(ctx, instanceID, karpenterTags); err != nil {
+		return fmt.Errorf("updating instance tags: %w", err)
+	}
+
+	logger.V(1).Info("Successfully added Karpenter tags to instance", "instance-id", instanceID, "tags", len(karpenterTags))
+	return nil
 }
