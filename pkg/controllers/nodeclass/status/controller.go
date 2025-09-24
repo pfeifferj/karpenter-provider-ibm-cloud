@@ -199,8 +199,9 @@ func (c *Controller) validateRequiredFields(nc *v1alpha1.IBMNodeClass) error {
 	if strings.TrimSpace(nc.Spec.Region) == "" {
 		missingFields = append(missingFields, "region")
 	}
-	if strings.TrimSpace(nc.Spec.Image) == "" {
-		missingFields = append(missingFields, "image")
+	// Either image or imageSelector must be specified (but not both - validated elsewhere)
+	if strings.TrimSpace(nc.Spec.Image) == "" && nc.Spec.ImageSelector == nil {
+		missingFields = append(missingFields, "image or imageSelector")
 	}
 	if strings.TrimSpace(nc.Spec.VPC) == "" {
 		missingFields = append(missingFields, "vpc")
@@ -315,8 +316,8 @@ func (c *Controller) validateIBMCloudResources(ctx context.Context, nc *v1alpha1
 		}
 	}
 
-	// Validate image exists and is accessible
-	if err := c.validateImage(ctx, nc.Spec.Image, nc.Spec.Region); err != nil {
+	// Validate image configuration - either explicit image or imageSelector
+	if err := c.validateImageConfiguration(ctx, nc); err != nil {
 		return fmt.Errorf("image validation failed: %w", err)
 	}
 
@@ -631,7 +632,45 @@ func (c *Controller) validateZoneSubnetCompatibility(ctx context.Context, zone, 
 	return nil
 }
 
-// validateImage checks if the image exists and is accessible
+// validateImageConfiguration validates image configuration (either explicit image or imageSelector)
+func (c *Controller) validateImageConfiguration(ctx context.Context, nc *v1alpha1.IBMNodeClass) error {
+	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
+	if err != nil {
+		return err
+	}
+
+	imageResolver := image.NewResolver(vpcClient, nc.Spec.Region)
+
+	// Validate explicit image if specified
+	if nc.Spec.Image != "" {
+		_, err = imageResolver.ResolveImage(ctx, nc.Spec.Image)
+		if err != nil {
+			return fmt.Errorf("image %s not found or not accessible in region %s: %w", nc.Spec.Image, nc.Spec.Region, err)
+		}
+		return nil
+	}
+
+	// Validate imageSelector if specified
+	if nc.Spec.ImageSelector != nil {
+		_, err = imageResolver.ResolveImageBySelector(ctx, nc.Spec.ImageSelector)
+		if err != nil {
+			return fmt.Errorf("no images found matching selector (os=%s, majorVersion=%s, minorVersion=%s, architecture=%s, variant=%s) in region %s: %w",
+				nc.Spec.ImageSelector.OS,
+				nc.Spec.ImageSelector.MajorVersion,
+				nc.Spec.ImageSelector.MinorVersion,
+				nc.Spec.ImageSelector.Architecture,
+				nc.Spec.ImageSelector.Variant,
+				nc.Spec.Region,
+				err)
+		}
+		return nil
+	}
+
+	// This should not happen due to CRD validation, but handle gracefully
+	return fmt.Errorf("either image or imageSelector must be specified")
+}
+
+// validateImage checks if the image exists and is accessible (legacy method)
 func (c *Controller) validateImage(ctx context.Context, imageIdentifier, region string) error {
 	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
 	if err != nil {

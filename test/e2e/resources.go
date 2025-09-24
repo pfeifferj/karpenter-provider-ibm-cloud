@@ -166,6 +166,47 @@ func (s *E2ETestSuite) createTestNodePool(t *testing.T, testName, nodeClassName 
 	return nodePool
 }
 
+// createTestNodePoolObject creates a NodePool object without persisting it to the cluster
+// This allows for modifications before creation to avoid update conflicts
+func (s *E2ETestSuite) createTestNodePoolObject(t *testing.T, testName, nodeClassName string) *karpv1.NodePool {
+	expireAfter := karpv1.MustParseNillableDuration("5m")
+	instanceTypes := s.GetMultipleInstanceTypes(t, 3)
+
+	nodePool := &karpv1.NodePool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-nodepool", testName),
+			Labels: map[string]string{
+				"test":      "e2e",
+				"test-name": testName,
+			},
+		},
+		Spec: karpv1.NodePoolSpec{
+			Template: karpv1.NodeClaimTemplate{
+				Spec: karpv1.NodeClaimTemplateSpec{
+					NodeClassRef: &karpv1.NodeClassReference{
+						Group: "karpenter.ibm.sh",
+						Kind:  "IBMNodeClass",
+						Name:  nodeClassName,
+					},
+					Requirements: []karpv1.NodeSelectorRequirementWithMinValues{
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      "node.kubernetes.io/instance-type",
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   instanceTypes,
+							},
+						},
+					},
+					ExpireAfter: expireAfter,
+				},
+			},
+		},
+	}
+
+	// Return the object without creating it in the cluster
+	return nodePool
+}
+
 // createTestNodePoolWithMultipleInstanceTypes creates a NodePool with known-good instance types
 func (s *E2ETestSuite) createTestNodePoolWithMultipleInstanceTypes(t *testing.T, testName string, nodeClassName string) *karpv1.NodePool {
 	expireAfter := karpv1.MustParseNillableDuration("5m")
