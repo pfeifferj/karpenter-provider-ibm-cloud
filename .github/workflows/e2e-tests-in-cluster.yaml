@@ -174,11 +174,14 @@ jobs:
         # UserData feature tests from userdata_test.go
         userdata_tests="TestE2EUserDataAppend TestE2EStandardBootstrap"
 
+        # Image selector tests from image_selector_test.go
+        image_selector_tests="TestE2EImageSelector"
+
         # Cleanup tests from cleanup_test.go
         cleanup_tests="TestE2ECleanupNodePoolDeletion TestE2ECleanupNodeClassDeletion TestE2ECleanupOrphanedResources TestE2ECleanupIBMCloudResources"
 
         # Combine all tests
-        all_tests="$core_tests $validation_tests $block_device_tests $scheduling_tests $userdata_tests $cleanup_tests"
+        all_tests="$core_tests $validation_tests $block_device_tests $scheduling_tests $userdata_tests $image_selector_tests $cleanup_tests"
 
         test_failed="false"
         passed_tests=0
@@ -191,6 +194,7 @@ jobs:
         echo "  Block Device Tests: $(echo $block_device_tests | wc -w)"
         echo "  Scheduling Tests: $(echo $scheduling_tests | wc -w)"
         echo "  UserData Tests: $(echo $userdata_tests | wc -w)"
+        echo "  Image Selector Tests: $(echo $image_selector_tests | wc -w)"
         echo "  Cleanup Tests: $(echo $cleanup_tests | wc -w)"
         echo "  Total Tests: $total_tests"
         echo ""

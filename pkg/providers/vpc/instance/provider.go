@@ -303,9 +303,27 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *v1.NodeClai
 
 	// Resolve image identifier to image ID
 	imageResolver := image.NewResolver(vpcClient, nodeClass.Spec.Region)
-	imageID, err := imageResolver.ResolveImage(ctx, nodeClass.Spec.Image)
-	if err != nil {
-		return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
+	var imageID string
+
+	// Use explicit image if specified, otherwise use imageSelector
+	if nodeClass.Spec.Image != "" {
+		imageID, err = imageResolver.ResolveImage(ctx, nodeClass.Spec.Image)
+		if err != nil {
+			return nil, fmt.Errorf("resolving image %s: %w", nodeClass.Spec.Image, err)
+		}
+	} else if nodeClass.Spec.ImageSelector != nil {
+		imageID, err = imageResolver.ResolveImageBySelector(ctx, nodeClass.Spec.ImageSelector)
+		if err != nil {
+			return nil, fmt.Errorf("resolving image using selector (os=%s, majorVersion=%s, minorVersion=%s, architecture=%s, variant=%s): %w",
+				nodeClass.Spec.ImageSelector.OS,
+				nodeClass.Spec.ImageSelector.MajorVersion,
+				nodeClass.Spec.ImageSelector.MinorVersion,
+				nodeClass.Spec.ImageSelector.Architecture,
+				nodeClass.Spec.ImageSelector.Variant,
+				err)
+		}
+	} else {
+		return nil, fmt.Errorf("neither image nor imageSelector specified in NodeClass")
 	}
 
 	// Create boot volume attachment based on block device mappings or use default
