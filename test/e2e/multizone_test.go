@@ -21,6 +21,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
@@ -43,7 +43,11 @@ func TestE2EMultiZoneDistribution(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
 	testName := fmt.Sprintf("multizone-distribution-%d", time.Now().Unix())
 	t.Logf("Starting multi-zone distribution test: %s", testName)
-	ctx := context.Background()
+
+	// Skip test if multi-zone infrastructure not available
+	if os.Getenv("E2E_SKIP_MULTIZONE") == "true" {
+		t.Skip("Skipping multi-zone test: E2E_SKIP_MULTIZONE is set")
+	}
 
 	// Create NodeClass with placement strategy (no specific zone)
 	nodeClass := suite.createMultiZoneNodeClass(t, testName)
@@ -73,9 +77,9 @@ func TestE2EMultiZoneDistribution(t *testing.T) {
 // TestE2EZoneAntiAffinity tests that pod anti-affinity works correctly with zone constraints
 func TestE2EZoneAntiAffinity(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
+	ctx := context.Background()
 	testName := fmt.Sprintf("zone-anti-affinity-%d", time.Now().Unix())
 	t.Logf("Starting zone anti-affinity test: %s", testName)
-	ctx := context.Background()
 
 	// Create infrastructure
 	nodeClass := suite.createMultiZoneNodeClass(t, testName)
@@ -173,9 +177,9 @@ func TestE2EZoneAntiAffinity(t *testing.T) {
 // TestE2ETopologySpreadConstraints tests topology spread constraints across zones
 func TestE2ETopologySpreadConstraints(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
+	ctx := context.Background()
 	testName := fmt.Sprintf("topology-spread-%d", time.Now().Unix())
 	t.Logf("Starting topology spread constraints test: %s", testName)
-	ctx := context.Background()
 
 	// Create infrastructure
 	nodeClass := suite.createMultiZoneNodeClass(t, testName)
@@ -285,9 +289,9 @@ func TestE2ETopologySpreadConstraints(t *testing.T) {
 // TestE2EPlacementStrategyValidation tests PlacementStrategy validation and behavior
 func TestE2EPlacementStrategyValidation(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
+	ctx := context.Background()
 	testName := fmt.Sprintf("placement-strategy-validation-%d", time.Now().Unix())
 	t.Logf("Starting placement strategy validation test: %s", testName)
-	ctx := context.Background()
 
 	// Test 1: NodeClass without zone/subnet but with placement strategy should be accepted
 	t.Run("ValidPlacementStrategy", func(t *testing.T) {
@@ -337,7 +341,7 @@ func TestE2EPlacementStrategyValidation(t *testing.T) {
 		} else {
 			// If creation succeeds, wait and check if controller marks it as invalid
 			t.Logf("NodeClass created, checking if validation fails...")
-			time.Sleep(30 * time.Second)
+			time.Sleep(5 * time.Second)
 
 			var updatedNodeClass v1alpha1.IBMNodeClass
 			err = suite.kubeClient.Get(ctx, client.ObjectKeyFromObject(invalidNodeClass), &updatedNodeClass)
@@ -398,8 +402,7 @@ func TestE2EZoneFailover(t *testing.T) {
 	err := suite.kubeClient.Update(context.Background(), deployment)
 	require.NoError(t, err)
 
-	// Wait for scale-up
-	time.Sleep(60 * time.Second)
+	// Wait for scale-up (use existing waiting function)
 	suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
 
 	finalZones := suite.getPodZoneDistribution(t, fmt.Sprintf("%s-app", testName), "default")
@@ -708,9 +711,4 @@ func (s *E2ETestSuite) getPodZoneDistribution(t *testing.T, appLabel, namespace 
 	}
 
 	return zoneDistribution
-}
-
-// Helper function for string pointers
-func stringPtr(s string) *string {
-	return &s
 }
