@@ -177,11 +177,14 @@ jobs:
         # Image selector tests from image_selector_test.go
         image_selector_tests="TestE2EImageSelector"
 
+        # Multi-zone tests from multizone_test.go
+        multizone_tests="TestE2EMultiZoneDistribution TestE2EZoneAntiAffinity TestE2ETopologySpreadConstraints TestE2EPlacementStrategyValidation TestE2EZoneFailover"
+
         # Cleanup tests from cleanup_test.go
         cleanup_tests="TestE2ECleanupNodePoolDeletion TestE2ECleanupNodeClassDeletion TestE2ECleanupOrphanedResources TestE2ECleanupIBMCloudResources"
 
         # Combine all tests
-        all_tests="$core_tests $validation_tests $block_device_tests $scheduling_tests $userdata_tests $image_selector_tests $cleanup_tests"
+        all_tests="$core_tests $validation_tests $block_device_tests $scheduling_tests $userdata_tests $image_selector_tests $multizone_tests $cleanup_tests"
 
         test_failed="false"
         passed_tests=0
@@ -195,6 +198,7 @@ jobs:
         echo "  Scheduling Tests: $(echo $scheduling_tests | wc -w)"
         echo "  UserData Tests: $(echo $userdata_tests | wc -w)"
         echo "  Image Selector Tests: $(echo $image_selector_tests | wc -w)"
+        echo "  Multi-Zone Tests: $(echo $multizone_tests | wc -w)"
         echo "  Cleanup Tests: $(echo $cleanup_tests | wc -w)"
         echo "  Total Tests: $total_tests"
         echo ""
@@ -211,6 +215,9 @@ jobs:
           case "$test" in
             "TestE2EDriftStability")
               timeout="30m"  # Drift test needs more time for monitoring
+              ;;
+            "TestE2EMultiZone"*|"TestE2EZone"*|"TestE2ETopology"*|"TestE2EPlacementStrategy"*)
+              timeout="25m"  # Multi-zone tests need extra time for cross-zone provisioning
               ;;
             "TestE2ECleanup"*)
               timeout="15m"  # Cleanup tests are typically faster
