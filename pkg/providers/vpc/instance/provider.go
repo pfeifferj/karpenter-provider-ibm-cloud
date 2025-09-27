@@ -439,15 +439,15 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		"selectedInstanceType-ptr", &selectedInstanceType.Name,
 		"availableTypes", len(instanceTypes))
 
-	// Create instance prototype with VNI
-	instancePrototype := &vpcv1.InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment{
+	// Create instance prototype with VNI using the standard base type
+	instancePrototype := &vpcv1.InstancePrototype{
 		Image: &vpcv1.ImageIdentityByID{
 			ID: &imageID,
 		},
 		Zone: &vpcv1.ZoneIdentityByName{
 			Name: &zone,
 		},
-		PrimaryNetworkAttachment: primaryNetworkAttachment,
+		NetworkAttachments: []vpcv1.InstanceNetworkAttachmentPrototype{*primaryNetworkAttachment},
 		VPC: &vpcv1.VPCIdentityByID{
 			ID: &nodeClass.Spec.VPC,
 		},
@@ -546,7 +546,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		"hasImage", instancePrototype.Image != nil,
 		"hasZone", instancePrototype.Zone != nil,
 		"hasProfile", instancePrototype.Profile != nil,
-		"hasPrimaryNetworkAttachment", instancePrototype.PrimaryNetworkAttachment != nil,
+		"hasNetworkAttachments", len(instancePrototype.NetworkAttachments) > 0,
 		"hasVPC", instancePrototype.VPC != nil,
 		"hasBootVolumeAttachment", instancePrototype.BootVolumeAttachment != nil,
 		"hasPlacementTarget", instancePrototype.PlacementTarget != nil,
@@ -587,7 +587,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		"zone", instancePrototype.Zone,
 		"profile", instancePrototype.Profile,
 		"vpc", instancePrototype.VPC,
-		"primary_network_attachment", instancePrototype.PrimaryNetworkAttachment != nil,
+		"network_attachments", len(instancePrototype.NetworkAttachments),
 		"boot_volume_attachment", instancePrototype.BootVolumeAttachment != nil,
 		"volume_attachments_count", len(instancePrototype.VolumeAttachments),
 		"availability_policy", instancePrototype.AvailabilityPolicy != nil,
@@ -627,7 +627,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	logger.Info("FULL VPC CreateInstance request debug",
 		"instance_name", nodeClaim.Name,
 		"instance_prototype", fmt.Sprintf("%+v", instancePrototype),
-		"primary_network_attachment", fmt.Sprintf("%+v", instancePrototype.PrimaryNetworkAttachment),
+		"network_attachments", fmt.Sprintf("%+v", instancePrototype.NetworkAttachments),
 		"boot_volume_attachment", fmt.Sprintf("%+v", instancePrototype.BootVolumeAttachment),
 		"profile", fmt.Sprintf("%+v", instancePrototype.Profile),
 		"vpc", fmt.Sprintf("%+v", instancePrototype.VPC),
@@ -651,7 +651,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		"vpc_field", instancePrototype.VPC != nil,
 		"zone_field", instancePrototype.Zone != nil,
 		"boot_volume_field", instancePrototype.BootVolumeAttachment != nil,
-		"primary_network_field", instancePrototype.PrimaryNetworkAttachment != nil)
+		"network_attachments_field", len(instancePrototype.NetworkAttachments) > 0)
 
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
 	if err != nil {
