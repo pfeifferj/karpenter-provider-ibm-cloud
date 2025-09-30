@@ -203,7 +203,7 @@ jobs:
     needs: [gate, build]
     if: ${{ needs.gate.outputs.approved == 'true' }}
     runs-on: [self-hosted, ibm-e2e]
-    timeout-minutes: 180
+    timeout-minutes: 210
     container:
       image: golang:1.24.6
       options: --user 0
@@ -272,17 +272,17 @@ jobs:
           kubectl delete ibmnodeclasses -l test=e2e --timeout=300s || true
 
           echo "⏳ Waiting for cluster stabilization..."
-          for i in {1..20}; do
+          for i in {1..30}; do
             pending_pods=$(kubectl get pods -l test=e2e --all-namespaces --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l)
             if [ "$pending_pods" -eq 0 ]; then
               echo "✅ No pending e2e pods found"
               break
             fi
             echo "⏳ Still have $pending_pods pending e2e pods, waiting..."
-            sleep 5
+            sleep 10
           done
 
-          for i in {1..20}; do
+          for i in {1..30}; do
             disrupted_nodes=$(kubectl get nodes --no-headers -o custom-columns="NAME:.metadata.name,TAINTS:.spec.taints[*].key" | grep -c "karpenter.sh/disrupted" 2>/dev/null || echo "0")
             disrupted_nodes=$(echo "$disrupted_nodes" | tr -d '\n' | grep -o '[0-9]*' || echo "0")
             if [ "$disrupted_nodes" -eq 0 ]; then
@@ -290,10 +290,10 @@ jobs:
               break
             fi
             echo "⏳ Still have $disrupted_nodes disrupted nodes, waiting..."
-            sleep 5
+            sleep 10
           done
 
-          sleep 15
+          sleep 30
           echo "✅ Pre-test cleanup completed"
 
       - name: Run E2E tests
@@ -317,45 +317,49 @@ jobs:
         run: |
           echo "🚀 Starting E2E test suite..."
 
-          # Define test groups - optimized for faster execution
-          # Critical path tests (must run)
-          critical_tests="TestE2EFullWorkflow TestE2EImageSelector TestE2EDriftStability"
+          # Define test groups
+          # Core functionality tests from basic_workflow_test.go
+          core_tests="TestE2EFullWorkflow TestE2ENodePoolInstanceTypeSelection TestE2EInstanceTypeSelection TestE2EDriftStability"
 
-          # Validation tests (combine similar tests)
-          validation_tests="TestE2ENodeClassValidation TestE2ENodeClassWithMissingFields"
+          # NodeClass validation tests from validation_test.go
+          validation_tests="TestE2ENodeClassValidation TestE2EValidNodeClassCreation TestE2ENodeClassWithMissingFields"
 
-          # Block device tests (keep both for coverage)
+          # Block device mapping tests from block_device_test.go
           block_device_tests="TestE2EBlockDeviceMapping TestE2EBlockDeviceMappingValidation"
 
-          # Essential scheduling tests (reduce redundant taint tests)
-          scheduling_tests="TestE2EPodDisruptionBudget TestE2EPodAntiAffinity TestE2ENodeAffinity TestE2ETaintsBasicScheduling TestE2ETaintSync"
+          # Scheduling constraint tests from scheduling_test.go and e2e_taints_test.go
+          scheduling_tests="TestE2EPodDisruptionBudget TestE2EConsolidationWithPDB TestE2EPodAntiAffinity TestE2ENodeAffinity TestE2EStartupTaints TestE2EStartupTaintsRemoval TestE2ETaintsBasicScheduling TestE2ETaintValues TestE2ETaintSync TestE2EUnregisteredTaintHandling"
 
-          # UserData tests (keep both variants)
+          # UserData feature tests from userdata_test.go
           userdata_tests="TestE2EUserDataAppend TestE2EStandardBootstrap"
 
-          # Multi-zone tests (reduce to essential tests)
-          multizone_tests="TestE2EMultiZoneDistribution TestE2ETopologySpreadConstraints TestE2EZoneFailover"
+          # Image selector tests from image_selector_test.go
+          image_selector_tests="TestE2EImageSelector"
 
-          # Cleanup tests (combine related cleanup)
-          cleanup_tests="TestE2ECleanupNodePoolDeletion TestE2ECleanupOrphanedResources"
+          # Multi-zone tests from multizone_test.go
+          multizone_tests="TestE2EMultiZoneDistribution TestE2EZoneAntiAffinity TestE2ETopologySpreadConstraints TestE2EPlacementStrategyValidation TestE2EZoneFailover"
+
+          # Cleanup tests from cleanup_test.go
+          cleanup_tests="TestE2ECleanupNodePoolDeletion TestE2ECleanupNodeClassDeletion TestE2ECleanupOrphanedResources TestE2ECleanupIBMCloudResources"
 
           # Combine all tests
-          all_tests="$critical_tests $validation_tests $block_device_tests $scheduling_tests $userdata_tests $multizone_tests $cleanup_tests"
+          all_tests="$core_tests $validation_tests $block_device_tests $scheduling_tests $userdata_tests $image_selector_tests $multizone_tests $cleanup_tests"
 
           test_failed="false"
           passed_tests=0
           failed_tests=0
           total_tests=$(echo $all_tests | wc -w)
 
-          echo "📋 Test Suite Summary (Optimized):"
-          echo "  Critical Tests: $(echo $critical_tests | wc -w)"
+          echo "📋 Test Suite Summary:"
+          echo "  Core Tests: $(echo $core_tests | wc -w)"
           echo "  Validation Tests: $(echo $validation_tests | wc -w)"
           echo "  Block Device Tests: $(echo $block_device_tests | wc -w)"
           echo "  Scheduling Tests: $(echo $scheduling_tests | wc -w)"
           echo "  UserData Tests: $(echo $userdata_tests | wc -w)"
+          echo "  Image Selector Tests: $(echo $image_selector_tests | wc -w)"
           echo "  Multi-Zone Tests: $(echo $multizone_tests | wc -w)"
           echo "  Cleanup Tests: $(echo $cleanup_tests | wc -w)"
-          echo "  Total Tests: $total_tests (reduced from 31)"
+          echo "  Total Tests: $total_tests"
           echo ""
 
           for test in $all_tests; do
@@ -365,41 +369,28 @@ jobs:
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
             # Set appropriate timeout based on test type
-            timeout="15m"
+            timeout="20m"
             case "$test" in
               "TestE2EDriftStability")
-                timeout="25m"  # Drift test needs more time for monitoring
+                timeout="30m"  # Drift test needs more time for monitoring
                 ;;
               "TestE2EMultiZone"*|"TestE2EZone"*|"TestE2ETopology"*|"TestE2EPlacementStrategy"*)
-                timeout="20m"  # Multi-zone tests need extra time for cross-zone provisioning
+                timeout="25m"  # Multi-zone tests need extra time for cross-zone provisioning
                 ;;
               "TestE2ECleanup"*)
-                timeout="12m"  # Cleanup tests are typically faster
+                timeout="15m"  # Cleanup tests are typically faster
                 ;;
               "TestE2EValidation"*|"TestE2ENodeClass"*)
-                timeout="8m"  # Validation tests are quick
-                ;;
-              "TestE2EImageSelector")
-                timeout="12m"  # Image selector test optimized
+                timeout="10m"  # Validation tests are quick
                 ;;
               *)
-                timeout="15m"  # Default timeout for other tests
+                timeout="20m"  # Default timeout for other tests
                 ;;
             esac
 
             # Create test-specific log file to capture all output
             test_log="test-artifacts/${test}-$(date +%s).log"
             mkdir -p test-artifacts
-
-            # Check circuit breaker status before running test
-            circuit_breaker_check=$(kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100 2>/dev/null | grep -c "circuit breaker is OPEN" || echo "0")
-            if [ "$circuit_breaker_check" -gt 0 ]; then
-              echo "⚠️  Circuit breaker detected as OPEN, attempting reset..."
-              # Restart Karpenter to reset circuit breaker
-              kubectl rollout restart deployment/karpenter-karpenter-ibm -n karpenter
-              kubectl rollout status deployment/karpenter-karpenter-ibm -n karpenter --timeout=60s
-              sleep 10
-            fi
 
             # Run test with enhanced logging and crash recovery
             set +e  # Don't exit on failure
@@ -451,7 +442,7 @@ jobs:
             kubectl delete ibmnodeclasses -l test=e2e --timeout=300s || true
 
             echo "⏳ Waiting for cleanup to complete..."
-            sleep 15
+            sleep 30
 
             kubectl get nodes --no-headers | grep -c Ready | xargs echo "Ready nodes:"
             kubectl get nodeclaims --no-headers | grep -c True | xargs echo "Ready nodeclaims:" || echo "Ready nodeclaims: 0"
