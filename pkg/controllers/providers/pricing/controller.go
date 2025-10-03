@@ -30,7 +30,6 @@ import (
 	"github.com/pfeifferj/karpenter-provider-ibm-cloud/pkg/providers/common/pricing"
 )
 
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;update;patch;create
 type Controller struct {
 	pricingProvider pricing.Provider
 }
