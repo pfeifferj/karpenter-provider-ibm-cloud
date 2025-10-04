@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -274,4 +275,108 @@ func TestIsSystemStartupTaint(t *testing.T) {
 			assert.Equal(t, tc.expected, result, "Taint key: %s", tc.taintKey)
 		})
 	}
+}
+
+// TestFinalizerRaceCondition tests that the controller doesn't add finalizers
+// to NodeClaims that are being deleted, preventing the race condition error:
+// "metadata.finalizers: Forbidden: no new finalizers can be added if the object is being deleted"
+func TestFinalizerRaceCondition(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
+	scheme.AddKnownTypes(gv,
+		&karpv1.NodeClaim{},
+		&karpv1.NodeClaimList{},
+	)
+
+	t.Run("should NOT add finalizer to NodeClaim with deletion timestamp", func(t *testing.T) {
+		now := metav1.Now()
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "deleting-nodeclaim",
+				DeletionTimestamp: &now,
+				Finalizers:        []string{"some-other-finalizer"},
+			},
+		}
+
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(nodeClaim).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		// Reconcile should handle deletion path
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "deleting-nodeclaim"}})
+		assert.NoError(t, err)
+		assert.Equal(t, time.Duration(0), result.RequeueAfter)
+
+		// Verify our finalizer was NOT added
+		updatedNodeClaim := &karpv1.NodeClaim{}
+		err = kubeClient.Get(ctx, client.ObjectKey{Name: "deleting-nodeclaim"}, updatedNodeClaim)
+		assert.NoError(t, err)
+		assert.NotContains(t, updatedNodeClaim.Finalizers, StartupTaintLifecycleFinalizer)
+	})
+
+	t.Run("should remove finalizer when NodeClaim is being deleted", func(t *testing.T) {
+		now := metav1.Now()
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "nodeclaim-with-finalizer",
+				DeletionTimestamp: &now,
+				Finalizers: []string{
+					StartupTaintLifecycleFinalizer,
+					"other-finalizer",
+				},
+			},
+		}
+
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(nodeClaim).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		// Reconcile should remove our finalizer
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "nodeclaim-with-finalizer"}})
+		assert.NoError(t, err)
+		assert.Equal(t, time.Duration(0), result.RequeueAfter)
+
+		// Verify our finalizer was removed but other finalizer remains
+		updatedNodeClaim := &karpv1.NodeClaim{}
+		err = kubeClient.Get(ctx, client.ObjectKey{Name: "nodeclaim-with-finalizer"}, updatedNodeClaim)
+		assert.NoError(t, err)
+		assert.NotContains(t, updatedNodeClaim.Finalizers, StartupTaintLifecycleFinalizer)
+		assert.Contains(t, updatedNodeClaim.Finalizers, "other-finalizer")
+	})
+
+	t.Run("should add finalizer to NodeClaim without deletion timestamp", func(t *testing.T) {
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "normal-nodeclaim",
+			},
+		}
+
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(nodeClaim).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		// Reconcile should add finalizer
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "normal-nodeclaim"}})
+		assert.NoError(t, err)
+		// Should not error and should process successfully
+		_ = result // Controller returns Requeue: true but we don't check deprecated field
+
+		// Verify finalizer was added
+		updatedNodeClaim := &karpv1.NodeClaim{}
+		err = kubeClient.Get(ctx, client.ObjectKey{Name: "normal-nodeclaim"}, updatedNodeClaim)
+		assert.NoError(t, err)
+		assert.Contains(t, updatedNodeClaim.Finalizers, StartupTaintLifecycleFinalizer)
+	})
 }

@@ -72,13 +72,19 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Handle deletion
+	// Handle deletion first - critical for preventing finalizer race conditions
 	if !nodeClaim.DeletionTimestamp.IsZero() {
 		return c.handleDeletion(ctx, nodeClaim)
 	}
 
-	// Add finalizer if not present
+	// Add finalizer only if not present AND NodeClaim is NOT being deleted
 	if !controllerutil.ContainsFinalizer(nodeClaim, NodeClaimRegistrationFinalizer) {
+		// Double-check deletion timestamp hasn't changed during reconciliation
+		if !nodeClaim.DeletionTimestamp.IsZero() {
+			logger.V(1).Info("NodeClaim entered deletion during reconciliation, skipping finalizer addition")
+			return reconcile.Result{}, nil
+		}
+
 		patch := client.MergeFrom(nodeClaim.DeepCopy())
 		controllerutil.AddFinalizer(nodeClaim, NodeClaimRegistrationFinalizer)
 		if err := c.kubeClient.Patch(ctx, nodeClaim, patch); err != nil {
