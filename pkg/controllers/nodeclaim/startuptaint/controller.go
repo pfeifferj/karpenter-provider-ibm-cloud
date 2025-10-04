@@ -67,7 +67,7 @@ func (c *Controller) Register(ctx context.Context, mgr manager.Manager) error {
 
 func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithName("startuptaint.lifecycle")
-	logger.Info("reconciling NodeClaim for startup taint lifecycle", "nodeclaim", req.NamespacedName)
+	logger.V(1).Info("reconciling NodeClaim for startup taint lifecycle", "nodeclaim", req.NamespacedName)
 
 	// Get the NodeClaim
 	nodeClaim := &karpv1.NodeClaim{}
@@ -75,16 +75,19 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Handle deletion
+	// Handle deletion first - critical for preventing finalizer race conditions
 	if !nodeClaim.DeletionTimestamp.IsZero() {
 		return c.handleDeletion(ctx, nodeClaim)
 	}
 
-	// ONLY add finalizer if NodeClaim is NOT being deleted - prevent race conditions
-	if controllerutil.ContainsFinalizer(nodeClaim, StartupTaintLifecycleFinalizer) {
-		// Finalizer already present, continue with normal processing
-		logger.V(1).Info("startup taint finalizer already present, continuing with lifecycle management")
-	} else {
+	// Add finalizer only if not present AND NodeClaim is NOT being deleted
+	if !controllerutil.ContainsFinalizer(nodeClaim, StartupTaintLifecycleFinalizer) {
+		// Double-check deletion timestamp hasn't changed during reconciliation
+		if !nodeClaim.DeletionTimestamp.IsZero() {
+			logger.V(1).Info("NodeClaim entered deletion during reconciliation, skipping finalizer addition")
+			return reconcile.Result{}, nil
+		}
+
 		// Add finalizer and label in a single atomic update
 		patch := client.MergeFrom(nodeClaim.DeepCopy())
 		controllerutil.AddFinalizer(nodeClaim, StartupTaintLifecycleFinalizer)
@@ -101,6 +104,9 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		logger.V(1).Info("added startup taint finalizer to nodeclaim")
 		return reconcile.Result{Requeue: true}, nil
 	}
+
+	// Finalizer already present, continue with normal processing
+	logger.V(1).Info("startup taint finalizer already present, continuing with lifecycle management")
 
 	// Skip if NodeClaim doesn't have an associated Node yet
 	if nodeClaim.Status.NodeName == "" {
@@ -270,22 +276,25 @@ func (c *Controller) hasTaint(node *corev1.Node, targetTaint corev1.Taint) bool 
 func (c *Controller) handleDeletion(ctx context.Context, nodeClaim *karpv1.NodeClaim) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithValues("nodeclaim", nodeClaim.Name)
 
-	// Only remove finalizer if present to avoid race conditions
+	// Only remove finalizer if present
 	if !controllerutil.ContainsFinalizer(nodeClaim, StartupTaintLifecycleFinalizer) {
-		logger.V(1).Info("startup taint finalizer not present, skipping removal")
+		logger.V(1).Info("startup taint finalizer not present, nothing to clean up")
 		return reconcile.Result{}, nil
 	}
 
-	logger.V(1).Info("handling NodeClaim deletion, removing startup taint finalizer")
+	logger.V(1).Info("NodeClaim is being deleted, removing startup taint finalizer")
 
-	// Use patch for atomic finalizer removal to prevent race conditions
+	// Remove our finalizer using strategic merge patch to avoid conflicts
+	// This allows other controllers to manage their own finalizers independently
 	patch := client.MergeFrom(nodeClaim.DeepCopy())
 	controllerutil.RemoveFinalizer(nodeClaim, StartupTaintLifecycleFinalizer)
+
 	if err := c.kubeClient.Patch(ctx, nodeClaim, patch); err != nil {
+		logger.Error(err, "failed to remove startup taint finalizer, will retry")
 		return reconcile.Result{}, fmt.Errorf("removing startup taint finalizer: %w", err)
 	}
 
-	logger.V(1).Info("successfully removed startup taint finalizer")
+	logger.Info("successfully removed startup taint finalizer, cleanup complete")
 	return reconcile.Result{}, nil
 }
 
