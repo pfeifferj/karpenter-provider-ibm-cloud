@@ -23,6 +23,7 @@ import (
 
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -284,12 +285,31 @@ func (c *Controller) handleDeletion(ctx context.Context, nodeClaim *karpv1.NodeC
 
 	logger.V(1).Info("NodeClaim is being deleted, removing startup taint finalizer")
 
-	// Remove our finalizer using strategic merge patch to avoid conflicts
-	// This allows other controllers to manage their own finalizers independently
-	patch := client.MergeFrom(nodeClaim.DeepCopy())
-	controllerutil.RemoveFinalizer(nodeClaim, StartupTaintLifecycleFinalizer)
+	// Get fresh copy to avoid conflicts
+	fresh := &karpv1.NodeClaim{}
+	if err := c.kubeClient.Get(ctx, client.ObjectKeyFromObject(nodeClaim), fresh); err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.V(1).Info("NodeClaim already deleted, nothing to do")
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, fmt.Errorf("getting fresh NodeClaim: %w", err)
+	}
 
-	if err := c.kubeClient.Patch(ctx, nodeClaim, patch); err != nil {
+	// Check again if finalizer is present in fresh copy
+	if !controllerutil.ContainsFinalizer(fresh, StartupTaintLifecycleFinalizer) {
+		logger.V(1).Info("startup taint finalizer already removed by another reconciliation")
+		return reconcile.Result{}, nil
+	}
+
+	// Remove our finalizer using update with retry
+	patch := client.MergeFrom(fresh.DeepCopy())
+	controllerutil.RemoveFinalizer(fresh, StartupTaintLifecycleFinalizer)
+
+	if err := c.kubeClient.Patch(ctx, fresh, patch); err != nil {
+		if apierrors.IsConflict(err) {
+			logger.V(1).Info("conflict removing finalizer, will retry")
+			return reconcile.Result{Requeue: true}, nil
+		}
 		logger.Error(err, "failed to remove startup taint finalizer, will retry")
 		return reconcile.Result{}, fmt.Errorf("removing startup taint finalizer: %w", err)
 	}
