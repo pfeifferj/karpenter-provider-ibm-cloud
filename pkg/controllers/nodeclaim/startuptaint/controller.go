@@ -24,6 +24,7 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -193,21 +194,47 @@ func (c *Controller) applyStartupTaints(ctx context.Context, nodeClaim *karpv1.N
 		}
 	}
 
-	// Update node if modified
+	// Update node if modified with retry on conflict
 	if modified {
-		if err := c.kubeClient.Update(ctx, node); err != nil {
+		err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			// Get fresh copy of node
+			fresh := &corev1.Node{}
+			if err := c.kubeClient.Get(ctx, client.ObjectKeyFromObject(node), fresh); err != nil {
+				return err
+			}
+
+			// Reapply changes to fresh copy
+			for _, startupTaint := range nodeClaim.Spec.StartupTaints {
+				if !c.hasTaint(fresh, startupTaint) {
+					fresh.Spec.Taints = append(fresh.Spec.Taints, startupTaint)
+				}
+			}
+
+			return c.kubeClient.Update(ctx, fresh)
+		})
+
+		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("updating node with startup taints: %w", err)
 		}
 		logger.Info("successfully applied startup taints to node")
 	}
 
-	// Mark startup taints as applied
-	if nodeClaim.Labels == nil {
-		nodeClaim.Labels = make(map[string]string)
-	}
-	nodeClaim.Labels[StartupTaintsAppliedLabel] = "true"
+	// Mark startup taints as applied with retry on conflict
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		fresh := &karpv1.NodeClaim{}
+		if err := c.kubeClient.Get(ctx, client.ObjectKeyFromObject(nodeClaim), fresh); err != nil {
+			return err
+		}
 
-	if err := c.kubeClient.Update(ctx, nodeClaim); err != nil {
+		if fresh.Labels == nil {
+			fresh.Labels = make(map[string]string)
+		}
+		fresh.Labels[StartupTaintsAppliedLabel] = "true"
+
+		return c.kubeClient.Update(ctx, fresh)
+	})
+
+	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("updating NodeClaim labels: %w", err)
 	}
 
@@ -231,21 +258,47 @@ func (c *Controller) applyRegularTaints(ctx context.Context, nodeClaim *karpv1.N
 		}
 	}
 
-	// Update node if modified
+	// Update node if modified with retry on conflict
 	if modified {
-		if err := c.kubeClient.Update(ctx, node); err != nil {
+		err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			// Get fresh copy of node
+			fresh := &corev1.Node{}
+			if err := c.kubeClient.Get(ctx, client.ObjectKeyFromObject(node), fresh); err != nil {
+				return err
+			}
+
+			// Reapply changes to fresh copy
+			for _, regularTaint := range nodeClaim.Spec.Taints {
+				if !c.hasTaint(fresh, regularTaint) {
+					fresh.Spec.Taints = append(fresh.Spec.Taints, regularTaint)
+				}
+			}
+
+			return c.kubeClient.Update(ctx, fresh)
+		})
+
+		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("updating node with regular taints: %w", err)
 		}
 		logger.Info("successfully applied regular taints to node")
 	}
 
-	// Mark regular taints as applied
-	if nodeClaim.Labels == nil {
-		nodeClaim.Labels = make(map[string]string)
-	}
-	nodeClaim.Labels[RegularTaintsAppliedLabel] = "true"
+	// Mark regular taints as applied with retry on conflict
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		fresh := &karpv1.NodeClaim{}
+		if err := c.kubeClient.Get(ctx, client.ObjectKeyFromObject(nodeClaim), fresh); err != nil {
+			return err
+		}
 
-	if err := c.kubeClient.Update(ctx, nodeClaim); err != nil {
+		if fresh.Labels == nil {
+			fresh.Labels = make(map[string]string)
+		}
+		fresh.Labels[RegularTaintsAppliedLabel] = "true"
+
+		return c.kubeClient.Update(ctx, fresh)
+	})
+
+	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("updating NodeClaim labels: %w", err)
 	}
 

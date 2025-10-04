@@ -430,3 +430,242 @@ func TestFinalizerRaceCondition(t *testing.T) {
 		assert.Equal(t, time.Duration(0), result.RequeueAfter)
 	})
 }
+
+// TestNodeUpdateRetryLogic tests that node updates retry on conflict
+func TestNodeUpdateRetryLogic(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
+	scheme.AddKnownTypes(gv,
+		&karpv1.NodeClaim{},
+		&karpv1.NodeClaimList{},
+	)
+
+	t.Run("should retry node update on conflict and succeed", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{},
+			},
+		}
+
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-nodeclaim",
+				Finalizers: []string{
+					StartupTaintLifecycleFinalizer,
+				},
+			},
+			Spec: karpv1.NodeClaimSpec{
+				StartupTaints: []corev1.Taint{
+					{
+						Key:    "test-startup-taint",
+						Value:  "true",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+			Status: karpv1.NodeClaimStatus{
+				NodeName: "test-node",
+			},
+		}
+
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(node, nodeClaim).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		// Apply startup taints - should succeed even with potential conflicts
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "test-nodeclaim"}})
+		assert.NoError(t, err)
+		assert.Equal(t, 5*time.Second, result.RequeueAfter)
+
+		// Verify taint was added
+		updatedNode := &corev1.Node{}
+		err = kubeClient.Get(ctx, client.ObjectKey{Name: "test-node"}, updatedNode)
+		assert.NoError(t, err)
+		assert.Len(t, updatedNode.Spec.Taints, 1)
+		assert.Equal(t, "test-startup-taint", updatedNode.Spec.Taints[0].Key)
+	})
+
+	t.Run("should retry NodeClaim label update on conflict", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node-2",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{},
+			},
+		}
+
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-nodeclaim-2",
+				Finalizers: []string{
+					StartupTaintLifecycleFinalizer,
+				},
+			},
+			Spec: karpv1.NodeClaimSpec{
+				StartupTaints: []corev1.Taint{
+					{
+						Key:    "startup",
+						Value:  "true",
+						Effect: corev1.TaintEffectNoExecute,
+					},
+				},
+			},
+			Status: karpv1.NodeClaimStatus{
+				NodeName: "test-node-2",
+			},
+		}
+
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(node, nodeClaim).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		// First reconcile - should add finalizer and apply taints
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "test-nodeclaim-2"}})
+		assert.NoError(t, err)
+		assert.Equal(t, 5*time.Second, result.RequeueAfter)
+
+		// Verify labels were updated despite potential conflicts
+		updatedNodeClaim := &karpv1.NodeClaim{}
+		err = kubeClient.Get(ctx, client.ObjectKey{Name: "test-nodeclaim-2"}, updatedNodeClaim)
+		assert.NoError(t, err)
+		assert.Equal(t, "true", updatedNodeClaim.Labels[StartupTaintsAppliedLabel])
+	})
+
+	t.Run("should handle multiple concurrent taint applications", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "concurrent-node",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{},
+			},
+		}
+
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "concurrent-nodeclaim",
+				Finalizers: []string{
+					StartupTaintLifecycleFinalizer,
+				},
+			},
+			Spec: karpv1.NodeClaimSpec{
+				StartupTaints: []corev1.Taint{
+					{
+						Key:    "taint1",
+						Value:  "val1",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+					{
+						Key:    "taint2",
+						Value:  "val2",
+						Effect: corev1.TaintEffectNoExecute,
+					},
+				},
+			},
+			Status: karpv1.NodeClaimStatus{
+				NodeName: "concurrent-node",
+			},
+		}
+
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(node, nodeClaim).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		// Reconcile should handle multiple taints successfully
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "concurrent-nodeclaim"}})
+		assert.NoError(t, err)
+		assert.Equal(t, 5*time.Second, result.RequeueAfter)
+
+		// Verify all taints were added
+		updatedNode := &corev1.Node{}
+		err = kubeClient.Get(ctx, client.ObjectKey{Name: "concurrent-node"}, updatedNode)
+		assert.NoError(t, err)
+		assert.Len(t, updatedNode.Spec.Taints, 2)
+
+		// Verify both taints are present
+		taintKeys := []string{}
+		for _, taint := range updatedNode.Spec.Taints {
+			taintKeys = append(taintKeys, taint.Key)
+		}
+		assert.Contains(t, taintKeys, "taint1")
+		assert.Contains(t, taintKeys, "taint2")
+	})
+
+	t.Run("should succeed when node already has taints", func(t *testing.T) {
+		existingTaint := corev1.Taint{
+			Key:    "existing",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "existing-taint-node",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{existingTaint},
+			},
+		}
+
+		newTaint := corev1.Taint{
+			Key:    "new-taint",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoExecute,
+		}
+
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "existing-taint-nodeclaim",
+				Finalizers: []string{
+					StartupTaintLifecycleFinalizer,
+				},
+			},
+			Spec: karpv1.NodeClaimSpec{
+				StartupTaints: []corev1.Taint{newTaint},
+			},
+			Status: karpv1.NodeClaimStatus{
+				NodeName: "existing-taint-node",
+			},
+		}
+
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(node, nodeClaim).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "existing-taint-nodeclaim"}})
+		assert.NoError(t, err)
+		assert.Equal(t, 5*time.Second, result.RequeueAfter)
+
+		// Verify both old and new taints are present
+		updatedNode := &corev1.Node{}
+		err = kubeClient.Get(ctx, client.ObjectKey{Name: "existing-taint-node"}, updatedNode)
+		assert.NoError(t, err)
+		assert.Len(t, updatedNode.Spec.Taints, 2)
+
+		taintKeys := []string{}
+		for _, taint := range updatedNode.Spec.Taints {
+			taintKeys = append(taintKeys, taint.Key)
+		}
+		assert.Contains(t, taintKeys, "existing")
+		assert.Contains(t, taintKeys, "new-taint")
+	})
+}
