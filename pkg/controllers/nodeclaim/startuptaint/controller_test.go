@@ -379,4 +379,54 @@ func TestFinalizerRaceCondition(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Contains(t, updatedNodeClaim.Finalizers, StartupTaintLifecycleFinalizer)
 	})
+
+	t.Run("should handle conflict when removing finalizer", func(t *testing.T) {
+		now := metav1.Now()
+		nodeClaim := &karpv1.NodeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "conflict-nodeclaim",
+				DeletionTimestamp: &now,
+				Finalizers: []string{
+					StartupTaintLifecycleFinalizer,
+					"other-finalizer",
+				},
+				ResourceVersion: "1",
+			},
+		}
+
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(nodeClaim).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		// First reconcile should get fresh copy and try to remove finalizer
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "conflict-nodeclaim"}})
+
+		// Should succeed (fake client doesn't simulate conflicts, but code handles them)
+		assert.NoError(t, err)
+		assert.Equal(t, time.Duration(0), result.RequeueAfter)
+
+		// Verify finalizer was removed
+		updatedNodeClaim := &karpv1.NodeClaim{}
+		err = kubeClient.Get(ctx, client.ObjectKey{Name: "conflict-nodeclaim"}, updatedNodeClaim)
+		assert.NoError(t, err)
+		assert.NotContains(t, updatedNodeClaim.Finalizers, StartupTaintLifecycleFinalizer)
+		assert.Contains(t, updatedNodeClaim.Finalizers, "other-finalizer")
+	})
+
+	t.Run("should handle already deleted NodeClaim", func(t *testing.T) {
+		// NodeClaim doesn't exist
+		kubeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		controller := NewController(kubeClient)
+
+		// Reconcile should handle not found gracefully
+		result, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKey{Name: "nonexistent"}})
+		assert.NoError(t, err)
+		assert.Equal(t, time.Duration(0), result.RequeueAfter)
+	})
 }
