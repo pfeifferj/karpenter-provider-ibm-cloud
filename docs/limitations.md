@@ -113,7 +113,7 @@ spec:
 ### Report New Limitations
 If you encounter limitations not documented here:
 
-1. **Check existing issues**: [GitHub Issues](https://github.com/pfeifferj/karpenter-provider-ibm-cloud/issues)
+1. **Check existing issues**: [GitHub Issues](https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/issues)
 2. **Create new issue**
 3. **Provide context**
 
