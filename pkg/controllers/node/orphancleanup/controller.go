@@ -529,7 +529,7 @@ func (c *Controller) isNodeManagedByKarpenter(node corev1.Node) bool {
 			return true
 		}
 		// Additional check for IBM-specific Karpenter labels
-		if _, hasIBMNodeClass := nodeLabels["karpenter.ibm.sh/ibmnodeclass"]; hasIBMNodeClass {
+		if _, hasIBMNodeClass := nodeLabels["karpenter-ibm.sh/ibmnodeclass"]; hasIBMNodeClass {
 			return true
 		}
 	}

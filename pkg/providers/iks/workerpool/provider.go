@@ -124,11 +124,11 @@ func (p *IKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *v1.NodeCl
 			Name: nodeClaim.Name,
 			Labels: map[string]string{
 				"karpenter.sh/managed":             "true",
-				"karpenter.ibm.sh/cluster-id":      clusterID,
-				"karpenter.ibm.sh/worker-pool-id":  poolID,
-				"karpenter.ibm.sh/zone":            nodeClass.Spec.Zone,
-				"karpenter.ibm.sh/region":          nodeClass.Spec.Region,
-				"karpenter.ibm.sh/instance-type":   selectedInstanceType,
+				"karpenter-ibm.sh/cluster-id":      clusterID,
+				"karpenter-ibm.sh/worker-pool-id":  poolID,
+				"karpenter-ibm.sh/zone":            nodeClass.Spec.Zone,
+				"karpenter-ibm.sh/region":          nodeClass.Spec.Region,
+				"karpenter-ibm.sh/instance-type":   selectedInstanceType,
 				"node.kubernetes.io/instance-type": selectedInstanceType,
 				"topology.kubernetes.io/zone":      nodeClass.Spec.Zone,
 				"topology.kubernetes.io/region":    nodeClass.Spec.Region,
@@ -163,8 +163,8 @@ func (p *IKSWorkerPoolProvider) Delete(ctx context.Context, node *corev1.Node) e
 	logger := log.FromContext(ctx)
 
 	// Extract cluster and pool information from node labels
-	clusterID := node.Labels["karpenter.ibm.sh/cluster-id"]
-	poolID := node.Labels["karpenter.ibm.sh/worker-pool-id"]
+	clusterID := node.Labels["karpenter-ibm.sh/cluster-id"]
+	poolID := node.Labels["karpenter-ibm.sh/worker-pool-id"]
 
 	if clusterID == "" || poolID == "" {
 		return fmt.Errorf("cluster ID or pool ID not found in node labels")

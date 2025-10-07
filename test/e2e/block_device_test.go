@@ -136,7 +136,7 @@ func TestE2EBlockDeviceMapping(t *testing.T) {
 						},
 					},
 					NodeClassRef: &karpv1.NodeClassReference{
-						Group: "karpenter.ibm.sh",
+						Group: "karpenter-ibm.sh",
 						Kind:  "IBMNodeClass",
 						Name:  nodeClass.Name,
 					},
@@ -281,7 +281,7 @@ func TestE2EBlockDeviceMapping(t *testing.T) {
 			},
 			Tolerations: []corev1.Toleration{
 				{
-					Key:      "karpenter.ibm.sh/unschedulable",
+					Key:      "karpenter-ibm.sh/unschedulable",
 					Operator: corev1.TolerationOpExists,
 				},
 			},

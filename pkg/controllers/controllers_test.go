@@ -242,7 +242,7 @@ func TestControllerRegistrationComponents(t *testing.T) {
 
 		// Verify scheme has our types
 		gvk := schema.GroupVersionKind{
-			Group:   "karpenter.ibm.sh",
+			Group:   "karpenter-ibm.sh",
 			Version: "v1alpha1",
 			Kind:    "IBMNodeClass",
 		}

@@ -155,11 +155,11 @@ func TestIsNodeManagedByKarpenter(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "node with karpenter.ibm.sh/ibmnodeclass label",
+			name: "node with karpenter-ibm.sh/ibmnodeclass label",
 			node: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"karpenter.ibm.sh/ibmnodeclass": "test-nodeclass",
+						"karpenter-ibm.sh/ibmnodeclass": "test-nodeclass",
 					},
 				},
 			},

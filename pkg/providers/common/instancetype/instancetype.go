@@ -703,8 +703,8 @@ func (p *IBMInstanceTypeProvider) convertVPCProfileToInstanceType(ctx context.Co
 	requirements := scheduling.NewRequirements(
 		scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, *profile.Name),
 		scheduling.NewRequirement(corev1.LabelArchStable, corev1.NodeSelectorOpIn, arch),
-		scheduling.NewRequirement("karpenter.ibm.sh/instance-family", corev1.NodeSelectorOpIn, getInstanceFamily(*profile.Name)),
-		scheduling.NewRequirement("karpenter.ibm.sh/instance-size", corev1.NodeSelectorOpIn, getInstanceSize(*profile.Name)),
+		scheduling.NewRequirement("karpenter-ibm.sh/instance-family", corev1.NodeSelectorOpIn, getInstanceFamily(*profile.Name)),
+		scheduling.NewRequirement("karpenter-ibm.sh/instance-size", corev1.NodeSelectorOpIn, getInstanceSize(*profile.Name)),
 	)
 
 	// Get zones dynamically for the current region

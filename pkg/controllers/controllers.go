@@ -19,8 +19,8 @@ package controllers
 //+kubebuilder:rbac:groups=karpenter.sh,resources=nodepools/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims,verbs=get;list;watch;create;delete;update;patch
 //+kubebuilder:rbac:groups=karpenter.sh,resources=nodeclaims/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch;patch;update
-//+kubebuilder:rbac:groups=karpenter.ibm.sh,resources=ibmnodeclasses/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=karpenter-ibm.sh,resources=ibmnodeclasses,verbs=get;list;watch;patch;update
+//+kubebuilder:rbac:groups=karpenter-ibm.sh,resources=ibmnodeclasses/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;create;delete;update;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create

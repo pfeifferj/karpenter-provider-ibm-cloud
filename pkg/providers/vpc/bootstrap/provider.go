@@ -213,8 +213,8 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 		if nodePool, exists := nodeClaimObj.Labels["karpenter.sh/nodepool"]; exists {
 			options.Labels["karpenter.sh/nodepool"] = nodePool
 		}
-		if nodeClass, exists := nodeClaimObj.Labels["karpenter.ibm.sh/ibmnodeclass"]; exists {
-			options.Labels["karpenter.ibm.sh/ibmnodeclass"] = nodeClass
+		if nodeClass, exists := nodeClaimObj.Labels["karpenter-ibm.sh/ibmnodeclass"]; exists {
+			options.Labels["karpenter-ibm.sh/ibmnodeclass"] = nodeClass
 		}
 
 		// Add taints from NodeClaim (including startup taints)

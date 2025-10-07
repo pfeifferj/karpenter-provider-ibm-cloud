@@ -63,7 +63,7 @@ func getTestNodeClaim(name, providerID string) *karpv1.NodeClaim {
 		},
 		Spec: karpv1.NodeClaimSpec{
 			NodeClassRef: &karpv1.NodeClassReference{
-				Group: "karpenter.ibm.sh",
+				Group: "karpenter-ibm.sh",
 				Kind:  "IBMNodeClass",
 				Name:  "test-nodeclass",
 			},

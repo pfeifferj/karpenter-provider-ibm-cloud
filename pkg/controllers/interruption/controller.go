@@ -93,9 +93,9 @@ const (
 	StorageFailure       InterruptionReason = "storage-failure"
 
 	// Node annotations for IBM Cloud interruption info
-	InterruptionAnnotation       = "karpenter.ibm.sh/interruption-detected"
-	InterruptionReasonAnnotation = "karpenter.ibm.sh/interruption-reason"
-	InterruptionTimeAnnotation   = "karpenter.ibm.sh/interruption-time"
+	InterruptionAnnotation       = "karpenter-ibm.sh/interruption-detected"
+	InterruptionReasonAnnotation = "karpenter-ibm.sh/interruption-reason"
+	InterruptionTimeAnnotation   = "karpenter-ibm.sh/interruption-time"
 )
 
 // NewController constructs a controller instance
@@ -530,7 +530,7 @@ func (c *Controller) handleIKSInterruption(ctx context.Context, node *v1.Node, r
 // getNodeClassForNode retrieves the IBMNodeClass associated with a node
 func (c *Controller) getNodeClassForNode(ctx context.Context, node *v1.Node) (*v1alpha1.IBMNodeClass, error) {
 	// Try to get node class name from node labels
-	nodeClassName, exists := node.Labels["karpenter.ibm.sh/nodeclass"]
+	nodeClassName, exists := node.Labels["karpenter-ibm.sh/nodeclass"]
 	if !exists {
 		// Fallback: try standard Karpenter label
 		nodeClassName, exists = node.Labels["karpenter.sh/nodepool"]

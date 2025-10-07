@@ -141,7 +141,7 @@ func testScheme() *runtime.Scheme {
 	metav1.AddToGroupVersion(s, gv)
 
 	// Register IBM v1alpha1 types
-	ibmGV := schema.GroupVersion{Group: "karpenter.ibm.sh", Version: "v1alpha1"}
+	ibmGV := schema.GroupVersion{Group: "karpenter-ibm.sh", Version: "v1alpha1"}
 	s.AddKnownTypes(ibmGV,
 		&v1alpha1.IBMNodeClass{},
 		&v1alpha1.IBMNodeClassList{},
@@ -160,7 +160,7 @@ func testNodeClaim(name, providerID string, creationTime time.Time) *karpv1.Node
 		},
 		Spec: karpv1.NodeClaimSpec{
 			NodeClassRef: &karpv1.NodeClassReference{
-				Group: "karpenter.ibm.sh",
+				Group: "karpenter-ibm.sh",
 				Kind:  "IBMNodeClass",
 				Name:  "test-nodeclass",
 			},
@@ -515,7 +515,7 @@ func TestReconcile_HandleStuckTerminatingNodeClaims(t *testing.T) {
 		},
 		Spec: karpv1.NodeClaimSpec{
 			NodeClassRef: &karpv1.NodeClassReference{
-				Group: "karpenter.ibm.sh",
+				Group: "karpenter-ibm.sh",
 				Kind:  "IBMNodeClass",
 				Name:  "test-nodeclass",
 			},
@@ -580,7 +580,7 @@ func TestReconcile_SkipRecentTerminatingNodeClaims(t *testing.T) {
 		},
 		Spec: karpv1.NodeClaimSpec{
 			NodeClassRef: &karpv1.NodeClassReference{
-				Group: "karpenter.ibm.sh",
+				Group: "karpenter-ibm.sh",
 				Kind:  "IBMNodeClass",
 				Name:  "test-nodeclass",
 			},

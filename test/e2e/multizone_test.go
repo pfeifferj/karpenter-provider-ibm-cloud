@@ -498,7 +498,7 @@ func (s *E2ETestSuite) createMultiZoneNodePool(t *testing.T, testName, nodeClass
 						},
 					},
 					NodeClassRef: &karpv1.NodeClassReference{
-						Group: "karpenter.ibm.sh",
+						Group: "karpenter-ibm.sh",
 						Kind:  "IBMNodeClass",
 						Name:  nodeClassName,
 					},

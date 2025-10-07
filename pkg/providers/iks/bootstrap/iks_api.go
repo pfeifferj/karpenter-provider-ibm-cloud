@@ -67,8 +67,8 @@ func (p *IKSBootstrapProvider) AddWorkerToIKSCluster(ctx context.Context, option
 		Zone:          options.Zone,
 		Labels: map[string]string{
 			"karpenter.sh/managed":         "true",
-			"karpenter.ibm.sh/zone":        options.Zone,
-			"karpenter.ibm.sh/provisioner": "karpenter-ibm",
+			"karpenter-ibm.sh/zone":        options.Zone,
+			"karpenter-ibm.sh/provisioner": "karpenter-ibm",
 		},
 	}
 

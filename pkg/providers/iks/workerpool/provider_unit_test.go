@@ -206,12 +206,12 @@ func TestIKSWorkerPoolProvider_Delete_ErrorCases(t *testing.T) {
 	}{
 		{
 			name:          "missing cluster ID label",
-			nodeLabels:    map[string]string{"karpenter.ibm.sh/worker-pool-id": "pool-123"},
+			nodeLabels:    map[string]string{"karpenter-ibm.sh/worker-pool-id": "pool-123"},
 			expectedError: "cluster ID or pool ID not found in node labels",
 		},
 		{
 			name:          "missing pool ID label",
-			nodeLabels:    map[string]string{"karpenter.ibm.sh/cluster-id": "cluster-123"},
+			nodeLabels:    map[string]string{"karpenter-ibm.sh/cluster-id": "cluster-123"},
 			expectedError: "cluster ID or pool ID not found in node labels",
 		},
 		{
@@ -318,21 +318,21 @@ func TestIKSWorkerPoolProvider_NodeLabelDeletion(t *testing.T) {
 		{
 			name: "valid node labels",
 			nodeLabels: map[string]string{
-				"karpenter.ibm.sh/cluster-id":     "cluster-123",
-				"karpenter.ibm.sh/worker-pool-id": "pool-456",
+				"karpenter-ibm.sh/cluster-id":     "cluster-123",
+				"karpenter-ibm.sh/worker-pool-id": "pool-456",
 			},
 			expectsError:  true, // Will error due to nil client
 			expectedError: "IBM client is not initialized",
 		},
 		{
 			name:          "missing cluster label",
-			nodeLabels:    map[string]string{"karpenter.ibm.sh/worker-pool-id": "pool-456"},
+			nodeLabels:    map[string]string{"karpenter-ibm.sh/worker-pool-id": "pool-456"},
 			expectsError:  true,
 			expectedError: "cluster ID or pool ID not found in node labels",
 		},
 		{
 			name:          "missing pool label",
-			nodeLabels:    map[string]string{"karpenter.ibm.sh/cluster-id": "cluster-123"},
+			nodeLabels:    map[string]string{"karpenter-ibm.sh/cluster-id": "cluster-123"},
 			expectsError:  true,
 			expectedError: "cluster ID or pool ID not found in node labels",
 		},

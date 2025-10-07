@@ -201,7 +201,7 @@ func (s *E2ETestSuite) createImageSelectorNodeClass(t *testing.T, testName strin
 
 	nodeClass := &v1alpha1.IBMNodeClass{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "karpenter.ibm.sh/v1alpha1",
+			APIVersion: "karpenter-ibm.sh/v1alpha1",
 			Kind:       "IBMNodeClass",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -245,7 +245,7 @@ func (s *E2ETestSuite) createImageSelectorNodeClassWithPlacementStrategy(t *test
 
 	nodeClass := &v1alpha1.IBMNodeClass{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "karpenter.ibm.sh/v1alpha1",
+			APIVersion: "karpenter-ibm.sh/v1alpha1",
 			Kind:       "IBMNodeClass",
 		},
 		ObjectMeta: metav1.ObjectMeta{
