@@ -18,15 +18,17 @@ package instance
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/go-logr/logr"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	mock_ibm "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm/mock"
 )
 
 func TestIsPartialFailure(t *testing.T) {
@@ -166,74 +168,86 @@ func TestCleanupOrphanedResources(t *testing.T) {
 
 	instanceName := "test-instance"
 	vpcID := "test-vpc-id"
-	logger := logr.Discard() // Use discard logger for tests
+	logger := logr.Discard()
 
 	t.Run("successful cleanup with no orphaned resources", func(t *testing.T) {
-		// Create mock VPC client that returns empty results
-		mockVPCSDKClient := &MockVPCSDKClient{}
-		mockVPCClient := ibm.NewVPCClientWithMock(mockVPCSDKClient)
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
 
 		// Mock VNI listing - no orphaned VNIs found
 		emptyVNICollection := &vpcv1.VirtualNetworkInterfaceCollection{
 			VirtualNetworkInterfaces: []vpcv1.VirtualNetworkInterface{},
 		}
-		mockVPCSDKClient.On("ListVirtualNetworkInterfacesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListVirtualNetworkInterfacesOptions")).
+		mockVPC.EXPECT().
+			ListVirtualNetworkInterfacesWithContext(gomock.Any(), gomock.Any()).
 			Return(emptyVNICollection, &core.DetailedResponse{}, nil)
 
 		// Mock volume listing - no orphaned volumes found
 		emptyVolumeCollection := &vpcv1.VolumeCollection{
 			Volumes: []vpcv1.Volume{},
 		}
-		mockVPCSDKClient.On("ListVolumesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListVolumesOptions")).
+		mockVPC.EXPECT().
+			ListVolumesWithContext(gomock.Any(), gomock.Any()).
 			Return(emptyVolumeCollection, &core.DetailedResponse{}, nil)
 
-		err := provider.cleanupOrphanedResources(ctx, mockVPCClient, instanceName, vpcID, logger)
+		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
 
-		// Should not error when no orphaned resources are found
+		err := provider.cleanupOrphanedResources(ctx, vpcClient, instanceName, vpcID, logger)
+
 		assert.NoError(t, err)
-		mockVPCSDKClient.AssertExpectations(t)
 	})
 
 	t.Run("cleanup with orphaned resources found and deleted", func(t *testing.T) {
-		// Create mock VPC client
-		mockVPCSDKClient := &MockVPCSDKClient{}
-		mockVPCClient := ibm.NewVPCClientWithMock(mockVPCSDKClient)
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
 
 		// Mock VNI listing - orphaned VNI found
+		vniID := "vni-12345"
+		vniName := "test-instance-vni"
 		orphanedVNI := vpcv1.VirtualNetworkInterface{
-			ID:   &[]string{"vni-12345"}[0],
-			Name: &[]string{"test-instance-vni"}[0],
+			ID:   &vniID,
+			Name: &vniName,
 		}
 		vniCollection := &vpcv1.VirtualNetworkInterfaceCollection{
 			VirtualNetworkInterfaces: []vpcv1.VirtualNetworkInterface{orphanedVNI},
 		}
-		mockVPCSDKClient.On("ListVirtualNetworkInterfacesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListVirtualNetworkInterfacesOptions")).
+		mockVPC.EXPECT().
+			ListVirtualNetworkInterfacesWithContext(gomock.Any(), gomock.Any()).
 			Return(vniCollection, &core.DetailedResponse{}, nil)
 
 		// Mock VNI deletion
-		mockVPCSDKClient.On("DeleteVirtualNetworkInterfacesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.DeleteVirtualNetworkInterfacesOptions")).
+		mockVPC.EXPECT().
+			DeleteVirtualNetworkInterfacesWithContext(gomock.Any(), gomock.Any()).
 			Return(&vpcv1.VirtualNetworkInterface{}, &core.DetailedResponse{}, nil)
 
 		// Mock volume listing - orphaned volume found
+		volumeID := "vol-67890"
+		volumeName := "test-instance-boot"
 		orphanedVolume := vpcv1.Volume{
-			ID:   &[]string{"vol-67890"}[0],
-			Name: &[]string{"test-instance-boot"}[0],
+			ID:   &volumeID,
+			Name: &volumeName,
 		}
 		volumeCollection := &vpcv1.VolumeCollection{
 			Volumes: []vpcv1.Volume{orphanedVolume},
 		}
-		mockVPCSDKClient.On("ListVolumesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListVolumesOptions")).
+		mockVPC.EXPECT().
+			ListVolumesWithContext(gomock.Any(), gomock.Any()).
 			Return(volumeCollection, &core.DetailedResponse{}, nil)
 
 		// Mock volume deletion
-		mockVPCSDKClient.On("DeleteVolumeWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.DeleteVolumeOptions")).
+		mockVPC.EXPECT().
+			DeleteVolumeWithContext(gomock.Any(), gomock.Any()).
 			Return(&core.DetailedResponse{}, nil)
 
-		err := provider.cleanupOrphanedResources(ctx, mockVPCClient, instanceName, vpcID, logger)
+		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
 
-		// Should not error when cleanup succeeds
+		err := provider.cleanupOrphanedResources(ctx, vpcClient, instanceName, vpcID, logger)
+
 		assert.NoError(t, err)
-		mockVPCSDKClient.AssertExpectations(t)
 	})
 }
 
@@ -246,47 +260,87 @@ func TestCleanupOrphanedVNI(t *testing.T) {
 	logger := logr.Discard()
 
 	t.Run("no orphaned VNI found", func(t *testing.T) {
-		mockVPCSDKClient := &MockVPCSDKClient{}
-		mockVPCClient := ibm.NewVPCClientWithMock(mockVPCSDKClient)
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
 
 		// Mock VNI listing - no matching VNI found
 		emptyVNICollection := &vpcv1.VirtualNetworkInterfaceCollection{
 			VirtualNetworkInterfaces: []vpcv1.VirtualNetworkInterface{},
 		}
-		mockVPCSDKClient.On("ListVirtualNetworkInterfacesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListVirtualNetworkInterfacesOptions")).
+		mockVPC.EXPECT().
+			ListVirtualNetworkInterfacesWithContext(gomock.Any(), gomock.Any()).
 			Return(emptyVNICollection, &core.DetailedResponse{}, nil)
 
-		err := provider.cleanupOrphanedVNI(ctx, mockVPCClient, vniName, vpcID, logger)
+		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
 
-		// Should not error when no matching VNI is found
+		err := provider.cleanupOrphanedVNI(ctx, vpcClient, vniName, vpcID, logger)
+
 		assert.NoError(t, err)
-		mockVPCSDKClient.AssertExpectations(t)
 	})
 
 	t.Run("orphaned VNI found and deleted", func(t *testing.T) {
-		mockVPCSDKClient := &MockVPCSDKClient{}
-		mockVPCClient := ibm.NewVPCClientWithMock(mockVPCSDKClient)
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
 
 		// Mock VNI listing - matching VNI found
+		vniID := "vni-12345"
 		orphanedVNI := vpcv1.VirtualNetworkInterface{
-			ID:   &[]string{"vni-12345"}[0],
-			Name: &[]string{vniName}[0],
+			ID:   &vniID,
+			Name: &vniName,
 		}
 		vniCollection := &vpcv1.VirtualNetworkInterfaceCollection{
 			VirtualNetworkInterfaces: []vpcv1.VirtualNetworkInterface{orphanedVNI},
 		}
-		mockVPCSDKClient.On("ListVirtualNetworkInterfacesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListVirtualNetworkInterfacesOptions")).
+		mockVPC.EXPECT().
+			ListVirtualNetworkInterfacesWithContext(gomock.Any(), gomock.Any()).
 			Return(vniCollection, &core.DetailedResponse{}, nil)
 
 		// Mock VNI deletion
-		mockVPCSDKClient.On("DeleteVirtualNetworkInterfacesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.DeleteVirtualNetworkInterfacesOptions")).
+		mockVPC.EXPECT().
+			DeleteVirtualNetworkInterfacesWithContext(gomock.Any(), gomock.Any()).
 			Return(&vpcv1.VirtualNetworkInterface{}, &core.DetailedResponse{}, nil)
 
-		err := provider.cleanupOrphanedVNI(ctx, mockVPCClient, vniName, vpcID, logger)
+		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
 
-		// Should not error when VNI is successfully deleted
+		err := provider.cleanupOrphanedVNI(ctx, vpcClient, vniName, vpcID, logger)
+
 		assert.NoError(t, err)
-		mockVPCSDKClient.AssertExpectations(t)
+	})
+
+	t.Run("VNI deletion fails - already deleted", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
+
+		// Mock VNI listing - matching VNI found
+		vniID := "vni-12345"
+		orphanedVNI := vpcv1.VirtualNetworkInterface{
+			ID:   &vniID,
+			Name: &vniName,
+		}
+		vniCollection := &vpcv1.VirtualNetworkInterfaceCollection{
+			VirtualNetworkInterfaces: []vpcv1.VirtualNetworkInterface{orphanedVNI},
+		}
+		mockVPC.EXPECT().
+			ListVirtualNetworkInterfacesWithContext(gomock.Any(), gomock.Any()).
+			Return(vniCollection, &core.DetailedResponse{}, nil)
+
+		// Mock VNI deletion - not found error (already deleted)
+		mockVPC.EXPECT().
+			DeleteVirtualNetworkInterfacesWithContext(gomock.Any(), gomock.Any()).
+			Return(nil, nil, fmt.Errorf("VNI not found: 404"))
+
+		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
+
+		err := provider.cleanupOrphanedVNI(ctx, vpcClient, vniName, vpcID, logger)
+
+		// Should not error when VNI is already deleted
+		assert.NoError(t, err)
 	})
 }
 
@@ -298,66 +352,90 @@ func TestCleanupOrphanedVolume(t *testing.T) {
 	logger := logr.Discard()
 
 	t.Run("no orphaned volume found", func(t *testing.T) {
-		mockVPCSDKClient := &MockVPCSDKClient{}
-		mockVPCClient := ibm.NewVPCClientWithMock(mockVPCSDKClient)
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
 
 		// Mock volume listing - no matching volume found
 		emptyVolumeCollection := &vpcv1.VolumeCollection{
 			Volumes: []vpcv1.Volume{},
 		}
-		mockVPCSDKClient.On("ListVolumesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListVolumesOptions")).
+		mockVPC.EXPECT().
+			ListVolumesWithContext(gomock.Any(), gomock.Any()).
 			Return(emptyVolumeCollection, &core.DetailedResponse{}, nil)
 
-		err := provider.cleanupOrphanedVolume(ctx, mockVPCClient, volumeName, logger)
+		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
 
-		// Should not error when no matching volume is found
+		err := provider.cleanupOrphanedVolume(ctx, vpcClient, volumeName, logger)
+
 		assert.NoError(t, err)
-		mockVPCSDKClient.AssertExpectations(t)
 	})
 
 	t.Run("orphaned volume found and deleted", func(t *testing.T) {
-		mockVPCSDKClient := &MockVPCSDKClient{}
-		mockVPCClient := ibm.NewVPCClientWithMock(mockVPCSDKClient)
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
 
 		// Mock volume listing - matching volume found
+		volumeID := "vol-67890"
 		orphanedVolume := vpcv1.Volume{
-			ID:   &[]string{"vol-67890"}[0],
-			Name: &[]string{volumeName}[0],
+			ID:   &volumeID,
+			Name: &volumeName,
 		}
 		volumeCollection := &vpcv1.VolumeCollection{
 			Volumes: []vpcv1.Volume{orphanedVolume},
 		}
-		mockVPCSDKClient.On("ListVolumesWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.ListVolumesOptions")).
+		mockVPC.EXPECT().
+			ListVolumesWithContext(gomock.Any(), gomock.Any()).
 			Return(volumeCollection, &core.DetailedResponse{}, nil)
 
 		// Mock volume deletion
-		mockVPCSDKClient.On("DeleteVolumeWithContext", mock.Anything, mock.AnythingOfType("*vpcv1.DeleteVolumeOptions")).
+		mockVPC.EXPECT().
+			DeleteVolumeWithContext(gomock.Any(), gomock.Any()).
 			Return(&core.DetailedResponse{}, nil)
 
-		err := provider.cleanupOrphanedVolume(ctx, mockVPCClient, volumeName, logger)
+		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
 
-		// Should not error when volume is successfully deleted
+		err := provider.cleanupOrphanedVolume(ctx, vpcClient, volumeName, logger)
+
 		assert.NoError(t, err)
-		mockVPCSDKClient.AssertExpectations(t)
+	})
+
+	t.Run("volume deletion fails - already deleted", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
+
+		// Mock volume listing - matching volume found
+		volumeID := "vol-67890"
+		orphanedVolume := vpcv1.Volume{
+			ID:   &volumeID,
+			Name: &volumeName,
+		}
+		volumeCollection := &vpcv1.VolumeCollection{
+			Volumes: []vpcv1.Volume{orphanedVolume},
+		}
+		mockVPC.EXPECT().
+			ListVolumesWithContext(gomock.Any(), gomock.Any()).
+			Return(volumeCollection, &core.DetailedResponse{}, nil)
+
+		// Mock volume deletion - not found error (already deleted)
+		mockVPC.EXPECT().
+			DeleteVolumeWithContext(gomock.Any(), gomock.Any()).
+			Return(nil, fmt.Errorf("volume not found: 404"))
+
+		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
+
+		err := provider.cleanupOrphanedVolume(ctx, vpcClient, volumeName, logger)
+
+		// Should not error when volume is already deleted
+		assert.NoError(t, err)
 	})
 }
 
-func TestResourceCleanupIntegration(t *testing.T) {
-	t.Skip("Integration test - requires actual VPC client with resource management methods")
-
-	// This test would verify the complete resource cleanup flow:
-	// 1. Create a VPC instance with intentional failure after partial resource creation
-	// 2. Verify that cleanup is triggered
-	// 3. Verify that orphaned resources are properly removed
-	// 4. Verify that the error propagation works correctly
-
-	// Implementation would require:
-	// - Mock VPC client with resource creation/deletion methods
-	// - Simulated partial failures at different stages
-	// - Verification of cleanup calls with correct parameters
-}
-
-// TestResourceCleanupPatterns tests the overall error handling and cleanup patterns
 func TestResourceCleanupPatterns(t *testing.T) {
 	tests := []struct {
 		name          string
