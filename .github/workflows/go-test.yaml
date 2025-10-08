@@ -34,6 +34,16 @@ jobs:
         mkdir -p ~/.local/share/go/bin
         mv ~/go/bin/controller-gen ~/.local/share/go/bin/
 
+    - name: Install mockgen
+      run: |
+        go install github.com/golang/mock/mockgen@v1.6.0
+
+    - name: Verify mocks are up to date
+      run: |
+        make gen-mocks
+        git diff --exit-code pkg/providers/common/types/mock/ pkg/cloudprovider/ibm/mock/ pkg/providers/common/pricing/mock/ || \
+          (echo "Error: Generated mocks are out of date. Run 'make gen-mocks' and commit the changes." && exit 1)
+
     - name: Run tests
       run: |
         go test -v -race ./...
