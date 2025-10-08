@@ -66,6 +66,7 @@ gen-mocks: ## generate mocks using mockgen
 .PHONY: verify-mocks
 verify-mocks: ## verify mocks are up to date
 	@echo "Verifying mocks are up to date..."
+	@$(MAKE) gen-mocks
 	@git diff --exit-code pkg/providers/common/types/mock/ pkg/cloudprovider/ibm/mock/ pkg/providers/common/pricing/mock/ || \
 		(echo "Error: Generated mocks are out of date. Run 'make gen-mocks' to update them." && exit 1)
 
