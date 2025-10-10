@@ -57,18 +57,19 @@ gen-objects: ## generate the controller-gen related objects
 	$(CONTROLLER_GEN) object paths="./..."
 
 .PHONY: gen-mocks
-gen-mocks: ## generate mocks using mockgen
+gen-mocks: ## Generate mocks using mockgen
 	@echo "Generating mocks..."
 	go generate ./pkg/providers/common/types
 	go generate ./pkg/cloudprovider/ibm
 	go generate ./pkg/providers/common/pricing
+	@echo "Mocks generated successfully"
 
 .PHONY: verify-mocks
-verify-mocks: ## verify mocks are up to date
+verify-mocks: ## Verify mocks are up to date
 	@echo "Verifying mocks are up to date..."
-	@$(MAKE) gen-mocks
 	@git diff --exit-code pkg/providers/common/types/mock/ pkg/cloudprovider/ibm/mock/ pkg/providers/common/pricing/mock/ || \
 		(echo "Error: Generated mocks are out of date. Run 'make gen-mocks' to update them." && exit 1)
+	@echo "Mocks are up to date"
 
 .PHONY: generate
 generate: gen-objects gen-mocks manifests ## generate all controller-gen files and mocks

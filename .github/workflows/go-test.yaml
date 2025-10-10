@@ -36,13 +36,13 @@ jobs:
 
     - name: Install mockgen
       run: |
-        go install github.com/golang/mock/mockgen@latest
+        go install github.com/golang/mock/mockgen@v1.6.0
 
-    - name: Generate mocks
-      run: make gen-mocks
-
-    - name: Verify generated mocks are up to date
-      run: make verify-mocks
+    - name: Verify mocks are up to date
+      run: |
+        make gen-mocks
+        git diff --exit-code pkg/providers/common/types/mock/ pkg/cloudprovider/ibm/mock/ pkg/providers/common/pricing/mock/ || \
+          (echo "Error: Generated mocks are out of date. Run 'make gen-mocks' and commit the changes." && exit 1)
 
     - name: Run tests
       run: |
