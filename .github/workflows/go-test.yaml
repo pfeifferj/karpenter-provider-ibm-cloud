@@ -93,6 +93,13 @@ jobs:
         # Install golangci-lint using go install (safer than curl|sh)
         go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
 
+    - name: Install mockgen
+      run: |
+        go install github.com/golang/mock/mockgen@latest
+
+    - name: Generate mocks
+      run: make gen-mocks
+
     - name: Run make lint
       run: |
         # Ensure golangci-lint is available in PATH for pre-commit
