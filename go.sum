@@ -4,6 +4,8 @@ github.com/IBM/go-sdk-core/v5 v5.21.0 h1:DUnYhvC4SoC8T84rx5omnhY3+xcQg/Whyoa3mDP
 github.com/IBM/go-sdk-core/v5 v5.21.0/go.mod h1:Q3BYO6iDA2zweQPDGbNTtqft5tDcEpm6RTuqMlPcvbw=
 github.com/IBM/platform-services-go-sdk v0.88.0 h1:PZZYg+6FSvkiyLoRMabGHHzsR9OEwhUuTUsuKs3E4qg=
 github.com/IBM/platform-services-go-sdk v0.88.0/go.mod h1:aGD045m6I8pfcB77wft8w2cHqWOJjcM3YSSV55BX0Js=
+github.com/IBM/platform-services-go-sdk v0.89.0 h1:fIvKR1bQchPoMUXQf69gaRKak/giVAkRDISiAX8TlE8=
+github.com/IBM/platform-services-go-sdk v0.89.0/go.mod h1:aGD045m6I8pfcB77wft8w2cHqWOJjcM3YSSV55BX0Js=
 github.com/IBM/vpc-go-sdk v0.74.0 h1:41tRWn4Tw6r5so/tXsMEy6eYftSPOeRI1YGnECOydNw=
 github.com/IBM/vpc-go-sdk v0.74.0/go.mod h1:8lX6TpeYBbx1Vd4KTgM3PPQ4y3auGOPuD6qq3UBDdug=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
