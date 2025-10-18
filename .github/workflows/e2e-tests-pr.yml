@@ -109,7 +109,7 @@ jobs:
             }
 
             const tag = (prNumber ? `pr-${prNumber}-` : '') + headSHA.substring(0, 12);
-            const imageRef = `ghcr.io/${context.repo.owner}/${context.repo.repo}:${tag}`;
+            const imageRef = `quay.io/karpenter-provider-ibm-cloud/controller:${tag}`;
 
             console.log('Event:', context.eventName);
             console.log('Approved:', approved);
@@ -393,8 +393,9 @@ jobs:
             mkdir -p test-artifacts
 
             # Run test with enhanced logging and crash recovery
+            # E2E tests MUST run serially (-p 1 -parallel 1) to avoid resource conflicts
             set +e  # Don't exit on failure
-            timeout $timeout go test -tags=e2e -v -timeout $timeout ./test/e2e -run "^$test$" -count=1 2>&1 | tee "$test_log"
+            timeout $timeout go test -tags=e2e -v -timeout $timeout ./test/e2e -run "^$test$" -count=1 -p 1 -parallel 1 2>&1 | tee "$test_log"
             test_exit_code=$?
             set -e  # Re-enable exit on failure
 
