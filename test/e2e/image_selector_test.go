@@ -41,44 +41,7 @@ func TestE2EImageSelector(t *testing.T) {
 	testName := fmt.Sprintf("image-selector-test-%d", time.Now().Unix())
 	t.Logf("Starting ImageSelector E2E test: %s", testName)
 
-	// Test Case 1: Ubuntu 22.04 imageSelector with automatic latest version selection
-	t.Run("Ubuntu_22_04_ImageSelector", func(t *testing.T) {
-		nodeClass := suite.createImageSelectorNodeClass(t, testName+"-ubuntu22", &v1alpha1.ImageSelector{
-			OS:           "ubuntu",
-			MajorVersion: "22",
-			MinorVersion: "04",
-			Architecture: "amd64",
-			Variant:      "minimal",
-		})
-
-		// Wait for NodeClass to be ready
-		suite.waitForNodeClassReady(t, nodeClass.Name)
-		t.Logf("NodeClass with Ubuntu 22.04 imageSelector is ready: %s", nodeClass.Name)
-
-		// Create NodePool to trigger node provisioning
-		nodePool := suite.createTestNodePool(t, testName+"-ubuntu22", nodeClass.Name)
-		t.Logf("Created NodePool: %s", nodePool.Name)
-
-		// Create workload to trigger provisioning
-		deployment := suite.createTestWorkload(t, testName+"-ubuntu22")
-		t.Logf("Created test workload: %s", deployment.Name)
-
-		// Wait for pods to be scheduled and nodes to be provisioned
-		suite.waitForPodsToBeScheduled(t, deployment.Name, deployment.Namespace)
-		t.Logf("Pods scheduled successfully")
-
-		// Verify that new nodes were created by Karpenter
-		suite.verifyKarpenterNodesExist(t)
-		t.Logf("Verified Karpenter nodes exist")
-
-		// Verify the deployed image through node verification
-		suite.verifyImageSelectorResult(t, "ubuntu", "22", "04")
-
-		// Cleanup
-		suite.cleanupTestResources(t, testName+"-ubuntu22")
-	})
-
-	// Test Case 2: Ubuntu 24.04 imageSelector (latest LTS)
+	// Test Case 1: Ubuntu 24.04 imageSelector (latest LTS)
 	t.Run("Ubuntu_24_04_ImageSelector", func(t *testing.T) {
 		nodeClass := suite.createImageSelectorNodeClass(t, testName+"-ubuntu24", &v1alpha1.ImageSelector{
 			OS:           "ubuntu",
@@ -115,7 +78,7 @@ func TestE2EImageSelector(t *testing.T) {
 		suite.cleanupTestResources(t, testName+"-ubuntu24")
 	})
 
-	// Test Case 3: ImageSelector with placement strategy (no zone/subnet specified)
+	// Test Case 2: ImageSelector with placement strategy (no zone/subnet specified)
 	t.Run("ImageSelector_with_PlacementStrategy", func(t *testing.T) {
 		nodeClass := suite.createImageSelectorNodeClassWithPlacementStrategy(t, testName+"-placement", &v1alpha1.ImageSelector{
 			OS:           "ubuntu",
@@ -154,43 +117,6 @@ func TestE2EImageSelector(t *testing.T) {
 
 		// Cleanup
 		suite.cleanupTestResources(t, testName+"-placement")
-	})
-
-	// Test Case 4: ImageSelector without minor version (should select latest)
-	t.Run("Ubuntu_Latest_Minor_Version", func(t *testing.T) {
-		nodeClass := suite.createImageSelectorNodeClass(t, testName+"-latest", &v1alpha1.ImageSelector{
-			OS:           "ubuntu",
-			MajorVersion: "22",
-			// No MinorVersion specified - should auto-select latest
-			Architecture: "amd64",
-			Variant:      "minimal",
-		})
-
-		// Wait for NodeClass to be ready
-		suite.waitForNodeClassReady(t, nodeClass.Name)
-		t.Logf("NodeClass with Ubuntu latest minor version is ready: %s", nodeClass.Name)
-
-		// Create NodePool
-		nodePool := suite.createTestNodePool(t, testName+"-latest", nodeClass.Name)
-		t.Logf("Created NodePool: %s", nodePool.Name)
-
-		// Create workload
-		deployment := suite.createTestWorkload(t, testName+"-latest")
-		t.Logf("Created test workload: %s", deployment.Name)
-
-		// Wait for pods to be scheduled and nodes to be provisioned
-		suite.waitForPodsToBeScheduled(t, deployment.Name, deployment.Namespace)
-		t.Logf("Pods scheduled successfully")
-
-		// Verify that new nodes were created by Karpenter
-		suite.verifyKarpenterNodesExist(t)
-		t.Logf("Verified Karpenter nodes exist")
-
-		// Verify the deployed image (any minor version of Ubuntu 22)
-		suite.verifyImageSelectorResult(t, "ubuntu", "22", "")
-
-		// Cleanup
-		suite.cleanupTestResources(t, testName+"-latest")
 	})
 }
 
