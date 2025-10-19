@@ -4,8 +4,8 @@ go 1.24.6
 
 require (
 	github.com/IBM/go-sdk-core/v5 v5.21.0
-	github.com/IBM/platform-services-go-sdk v0.88.0
-	github.com/IBM/vpc-go-sdk v0.74.0
+	github.com/IBM/platform-services-go-sdk v0.89.0
+	github.com/IBM/vpc-go-sdk v0.74.1
 	github.com/awslabs/operatorpkg v0.0.0-20250909182303-e8e550b6f339
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
@@ -25,7 +25,7 @@ require (
 	k8s.io/client-go v0.35.0-alpha.0
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
-	sigs.k8s.io/controller-runtime v0.22.2
+	sigs.k8s.io/controller-runtime v0.22.3
 	sigs.k8s.io/controller-tools v0.19.0
 	sigs.k8s.io/karpenter v1.7.1
 )
