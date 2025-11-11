@@ -16,8 +16,7 @@ on:
 
 jobs:
   e2e-tests:
-    # Use self-hosted runner with 'ibm-e2e' label
-    runs-on: [self-hosted, ibm-e2e]
+    runs-on: ubuntu-latest
     if: |
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
