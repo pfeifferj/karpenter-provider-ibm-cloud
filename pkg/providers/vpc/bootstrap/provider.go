@@ -355,13 +355,23 @@ func (p *VPCBootstrapProvider) detectCNIPluginAndVersion(ctx context.Context) (s
 		return "cilium", version, nil
 	}
 
-	// Check for Flannel
+	// Check for Flannel (in kube-flannel namespace)
+	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-flannel").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
+		cniVersion, err := p.getLatestCNIVersion(ctx, "flannel")
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get Flannel CNI version: %w", err)
+		}
+		logger.Info("Detected Flannel CNI plugin in kube-flannel namespace", "cniVersion", cniVersion)
+		return "flannel", cniVersion, nil
+	}
+
+	// Also check kube-system for older Flannel installations
 	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
 		cniVersion, err := p.getLatestCNIVersion(ctx, "flannel")
 		if err != nil {
 			return "", "", fmt.Errorf("failed to get Flannel CNI version: %w", err)
 		}
-		logger.Info("Detected Flannel CNI plugin", "cniVersion", cniVersion)
+		logger.Info("Detected Flannel CNI plugin in kube-system namespace", "cniVersion", cniVersion)
 		return "flannel", cniVersion, nil
 	}
 
