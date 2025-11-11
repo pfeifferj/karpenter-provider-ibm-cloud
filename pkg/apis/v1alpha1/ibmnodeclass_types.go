@@ -546,6 +546,18 @@ type IBMNodeClassStatus struct {
 	// +optional
 	SelectedSubnets []string `json:"selectedSubnets,omitempty"`
 
+	// ResolvedImageID contains the IBM Cloud VPC image ID that has been resolved from either
+	// the Image field or the ImageSelector criteria. This field is populated by the status
+	// controller during validation and is used by the instance provider during provisioning.
+	// This eliminates duplicate VPC API calls and ensures consistency between validation and provisioning.
+	// The field is updated when:
+	// - ImageSelector criteria are specified and successfully resolved to an image
+	// - Image field is specified and successfully validated
+	// When this field is populated, the instance provider will use it directly instead of
+	// performing image resolution again.
+	// +optional
+	ResolvedImageID string `json:"resolvedImageID,omitempty"`
+
 	// Conditions contains signals for health and readiness of the IBMNodeClass.
 	// Standard conditions include:
 	// - "Ready": Indicates whether the nodeclass is valid and ready for node provisioning
