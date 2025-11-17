@@ -320,6 +320,7 @@ func getTestKubernetesService() *corev1.Service {
 			// Create fake Kubernetes client
 			scheme := runtime.NewScheme()
 			_ = corev1.AddToScheme(scheme)
+	//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeClient := fake.NewSimpleClientset()
 
 			// Setup mocks
@@ -419,6 +420,7 @@ func TestVPCBootstrapProvider_getClusterInfo(t *testing.T) {
 			ctx := context.Background()
 
 			// Create fake Kubernetes client
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeClient := fake.NewSimpleClientset()
 
 			// Setup mocks
@@ -513,6 +515,7 @@ func TestVPCBootstrapProvider_detectContainerRuntime(t *testing.T) {
 			ctx := context.Background()
 
 			// Create fake Kubernetes client
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeClient := fake.NewSimpleClientset()
 
 			// Setup mocks
@@ -708,6 +711,7 @@ func TestVPCBootstrapProvider_getClusterCA(t *testing.T) {
 			ctx := context.Background()
 
 			// Create fake Kubernetes client
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeClient := fake.NewSimpleClientset()
 
 			// Setup mocks
@@ -829,6 +833,7 @@ func TestVPCBootstrapProvider_getClusterCA(t *testing.T) {
 			// Create fake Kubernetes client
 			scheme := runtime.NewScheme()
 			_ = corev1.AddToScheme(scheme)
+	//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeClient := fake.NewSimpleClientset()
 
 			// Setup mocks
@@ -1038,6 +1043,7 @@ func TestVPCBootstrapProvider_ReportBootstrapStatus(t *testing.T) {
 			tt.setupMocks(mockIBMClient, mockVPCClient)
 
 			// Create fake Kubernetes client
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeClient := fake.NewSimpleClientset()
 
 			// Create VPC bootstrap provider (nil IBM client is fine for ConfigMap tests)
@@ -1126,6 +1132,7 @@ func TestVPCBootstrapProvider_GetBootstrapStatus(t *testing.T) {
 			tt.setupMocks(mockIBMClient, mockVPCClient)
 
 			// Create fake Kubernetes client
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeClient := fake.NewSimpleClientset()
 
 			// For successful test case, create the ConfigMap
@@ -1295,6 +1302,7 @@ func TestVPCBootstrapProvider_GetClusterDNS(t *testing.T) {
 			for i := range tt.configMaps {
 				k8sObjects = append(k8sObjects, &tt.configMaps[i])
 			}
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			k8sClient := fake.NewSimpleClientset(k8sObjects...)
 
 			provider := &VPCBootstrapProvider{
@@ -1353,6 +1361,7 @@ func TestVPCBootstrapProvider_PollInstanceBootstrapStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a simple mock that implements the interface correctly
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			provider := &VPCBootstrapProvider{
 				client:    nil, // For error testing - will fail VPC client creation
 				k8sClient: fake.NewSimpleClientset(),
@@ -1416,6 +1425,7 @@ func TestGetUserDataWithInstanceIDAndType_ArchitectureDetectionFallback(t *testi
 			ctx := context.Background()
 
 			// Create basic test setup
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeK8sClient := fake.NewSimpleClientset()
 
 			// Add minimal required k8s objects for bootstrap
@@ -1514,6 +1524,7 @@ func TestArchitectureDetectionPriorityOrder(t *testing.T) {
 	// This test verifies the logic structure without needing real IBM API calls
 	t.Run("code coverage verification", func(t *testing.T) {
 		// Create a provider without IBM client to test error handling
+		//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 		provider := &VPCBootstrapProvider{
 			client:     nil,
 			k8sClient:  fake.NewSimpleClientset(),

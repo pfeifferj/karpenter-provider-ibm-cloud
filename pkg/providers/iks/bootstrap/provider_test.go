@@ -256,6 +256,7 @@ func TestIKSBootstrapProvider_GetUserData(t *testing.T) {
 			}
 
 			// Create fake Kubernetes client
+			//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 			fakeClient := fake.NewSimpleClientset()
 
 			// Create IKS bootstrap provider
@@ -482,6 +483,7 @@ func TestIKSBootstrapProvider_Integration(t *testing.T) {
 					Return(kubeconfig, nil)
 
 				mockIBMClient := &mockIBMClientWrapper{iksClient: mockIKSClient}
+				//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 				fakeClient := fake.NewSimpleClientset()
 				return NewTestableIKSBootstrapProvider(mockIBMClient, fakeClient)
 			},
@@ -523,6 +525,7 @@ func TestIKSBootstrapProvider_Integration(t *testing.T) {
 					Return("", fmt.Errorf("API error"))
 
 				mockIBMClient := &mockIBMClientWrapper{iksClient: mockIKSClient}
+				//nolint:staticcheck // SA1019: NewSimpleClientset is deprecated but NewClientset requires generated apply configurations
 				fakeClient := fake.NewSimpleClientset()
 				return NewTestableIKSBootstrapProvider(mockIBMClient, fakeClient)
 			},
