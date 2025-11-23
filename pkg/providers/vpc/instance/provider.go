@@ -362,8 +362,14 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	}
 
 	// Create primary network attachment with VNI
+	// VPC resource names have a max length of 63 characters
+	// The suffix "-primary" is 8 chars, leaving 55 chars for the nodeclaim name
+	attachmentName := nodeClaim.Name
+	if len(attachmentName) > 55 {
+		attachmentName = attachmentName[:55]
+	}
 	primaryNetworkAttachment := &vpcv1.InstanceNetworkAttachmentPrototype{
-		Name:                    &[]string{fmt.Sprintf("%s-primary-attachment", nodeClaim.Name)}[0],
+		Name:                    &[]string{fmt.Sprintf("%s-primary", attachmentName)}[0],
 		VirtualNetworkInterface: vniPrototype,
 	}
 
