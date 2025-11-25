@@ -26,7 +26,7 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/logging"
 )
 
-//go:generate mockgen -source=./vpc.go -destination=./mock/vpc_generated.go -package=mock
+//go:generate go run go.uber.org/mock/mockgen@latest -source=./vpc.go -destination=./mock/vpc_generated.go -package=mock
 
 // vpcClientInterface defines the interface for the VPC client
 type vpcClientInterface interface {
