@@ -139,9 +139,14 @@ jobs:
           docker build -f Dockerfile.s390x -t "${IMAGE}" .
           docker push "${IMAGE}"
 
-          # Verify push succeeded
-          docker buildx imagetools inspect "${IMAGE}" > /dev/null
+          # Verify push succeeded by checking RepoDigests (buildx not available on s390x runner)
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" 2>/dev/null || echo "")
+          if [ -z "${DIGEST}" ]; then
+            echo "Error: Failed to verify image push"
+            exit 1
+          fi
           echo "Successfully pushed ${IMAGE}"
+          echo "Digest: ${DIGEST}"
 
       - name: Cleanup
         if: always()
