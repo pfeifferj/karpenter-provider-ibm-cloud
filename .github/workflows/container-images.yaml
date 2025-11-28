@@ -181,7 +181,7 @@ jobs:
           for ARCH in amd64 arm64 s390x; do
             IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-${ARCH}"
             echo "Checking ${IMAGE}..."
-            if ! docker buildx imagetools inspect "${IMAGE}" > /dev/null 2>&1; then
+            if ! docker manifest inspect "${IMAGE}" > /dev/null 2>&1; then
               echo "Error: Image for ${ARCH} not found: ${IMAGE}"
               exit 1
             fi
@@ -194,10 +194,12 @@ jobs:
           TAG="${{ needs.set-tags.outputs.tags }}"
           MANIFEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
 
-          docker buildx imagetools create -t "${MANIFEST}" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-arm64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-s390x
+          docker manifest create "${MANIFEST}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-amd64" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-arm64" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-s390x"
+
+          docker manifest push "${MANIFEST}"
 
       - name: Validate manifest contains all architectures
         run: |
@@ -206,10 +208,10 @@ jobs:
           MANIFEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
 
           echo "Inspecting manifest..."
-          docker buildx imagetools inspect "${MANIFEST}"
+          docker manifest inspect "${MANIFEST}"
 
           # Validate all architectures are present
-          MANIFEST_JSON=$(docker buildx imagetools inspect --raw "${MANIFEST}")
+          MANIFEST_JSON=$(docker manifest inspect "${MANIFEST}")
           for ARCH in amd64 arm64 s390x; do
             if ! echo "${MANIFEST_JSON}" | grep -q "\"architecture\":\"${ARCH}\""; then
               echo "Error: Architecture ${ARCH} not found in manifest"
