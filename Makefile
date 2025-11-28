@@ -112,6 +112,14 @@ lint:
 	@echo "Executing pre-commit for all files"
 	pre-commit run --all-files
 	@echo "pre-commit executed."
+	@echo "Validating commit messages with gitlint..."
+	@if command -v gitlint >/dev/null 2>&1; then \
+		BASE=$$(git merge-base HEAD $$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null || echo origin/main) 2>/dev/null || echo HEAD~1); \
+		gitlint --commits $$BASE..HEAD || exit 1; \
+		echo "gitlint passed."; \
+	else \
+		echo "gitlint not installed, skipping (pip install gitlint==0.19.1)"; \
+	fi
 
 .PHONY: vendor
 vendor: ## update modules and populate local vendor directory

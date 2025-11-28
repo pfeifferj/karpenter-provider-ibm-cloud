@@ -189,7 +189,7 @@ jobs:
           for ARCH in amd64 arm64 s390x; do
             IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}-${ARCH}"
             echo "Checking ${IMAGE}..."
-            if ! docker buildx imagetools inspect "${IMAGE}" > /dev/null 2>&1; then
+            if ! docker manifest inspect "${IMAGE}" > /dev/null 2>&1; then
               echo "Error: Image for ${ARCH} not found: ${IMAGE}"
               exit 1
             fi
@@ -202,17 +202,19 @@ jobs:
           VERSION="${{ needs.generate-version.outputs.nightly_version }}"
           MANIFEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
 
-          # Create versioned manifest
-          docker buildx imagetools create -t "${MANIFEST}:${VERSION}" \
+          # Create versioned manifest (use docker manifest for mixed media type compatibility)
+          docker manifest create "${MANIFEST}:${VERSION}" \
             "${MANIFEST}:${VERSION}-amd64" \
             "${MANIFEST}:${VERSION}-arm64" \
             "${MANIFEST}:${VERSION}-s390x"
+          docker manifest push "${MANIFEST}:${VERSION}"
 
           # Create 'nightly' tag pointing to latest nightly
-          docker buildx imagetools create -t "${MANIFEST}:nightly" \
+          docker manifest create "${MANIFEST}:nightly" \
             "${MANIFEST}:${VERSION}-amd64" \
             "${MANIFEST}:${VERSION}-arm64" \
             "${MANIFEST}:${VERSION}-s390x"
+          docker manifest push "${MANIFEST}:nightly"
 
       - name: Validate manifest contains all architectures
         run: |
@@ -221,9 +223,9 @@ jobs:
           MANIFEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
 
           echo "Inspecting manifest..."
-          docker buildx imagetools inspect "${MANIFEST}"
+          docker manifest inspect "${MANIFEST}"
 
-          MANIFEST_JSON=$(docker buildx imagetools inspect --raw "${MANIFEST}")
+          MANIFEST_JSON=$(docker manifest inspect "${MANIFEST}")
           for ARCH in amd64 arm64 s390x; do
             if ! echo "${MANIFEST_JSON}" | grep -q "\"architecture\":\"${ARCH}\""; then
               echo "Error: Architecture ${ARCH} not found in manifest"
