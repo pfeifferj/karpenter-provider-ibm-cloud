@@ -14,20 +14,33 @@ on:
 env:
   REGISTRY: quay.io
   IMAGE_NAME: karpenter-provider-ibm-cloud/controller
-  KO_DOCKER_REPO: quay.io/karpenter-provider-ibm-cloud/controller
 
 jobs:
-  generate-version:
+  nightly-build:
     runs-on: ubuntu-latest
-    outputs:
-      nightly_version: ${{ steps.version.outputs.nightly_version }}
-      short_sha: ${{ steps.version.outputs.short_sha }}
-      commit_date: ${{ steps.version.outputs.commit_date }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
 
       - name: Generate nightly version
         id: version
@@ -44,190 +57,34 @@ jobs:
           echo "commit_date=$COMMIT_DATE" >> $GITHUB_OUTPUT
           echo "Generated nightly version: $NIGHTLY_VERSION"
 
-  build-amd64-arm64:
-    runs-on: ubuntu-latest
-    needs: generate-version
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
         with:
-          go-version: '1.24'
-          cache: true
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/s390x
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.nightly_version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly
+          build-args: |
+            VERSION=${{ steps.version.outputs.nightly_version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
 
-      - name: Install ko
-        uses: ko-build/setup-ko@v0.6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to quay.io
-        uses: docker/login-action@v3
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
-
-      - name: Build and push amd64
-        env:
-          GOFLAGS: "-ldflags=-X=main.version=${{ needs.generate-version.outputs.nightly_version }}"
+      - name: Verify manifest
         run: |
           set -euo pipefail
-          ko build --platform=linux/amd64 --bare \
-            --tags=${{ needs.generate-version.outputs.nightly_version }}-amd64 \
-            ./cmd/controller
-
-      - name: Build and push arm64
-        env:
-          GOFLAGS: "-ldflags=-X=main.version=${{ needs.generate-version.outputs.nightly_version }}"
-        run: |
-          set -euo pipefail
-          ko build --platform=linux/arm64 --bare \
-            --tags=${{ needs.generate-version.outputs.nightly_version }}-arm64 \
-            ./cmd/controller
-
-  build-s390x:
-    runs-on: [self-hosted, ibm-s390x]
-    needs: generate-version
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-
-      - name: Log in to quay.io
-        uses: docker/login-action@v3
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
-
-      - name: Build s390x binary
-        run: |
-          set -euo pipefail
-          CGO_ENABLED=0 GOOS=linux GOARCH=s390x go build \
-            -ldflags="-X=main.version=${{ needs.generate-version.outputs.nightly_version }}" \
-            -o controller ./cmd/controller
-
-          if [ ! -f controller ]; then
-            echo "Error: Binary not created"
-            exit 1
-          fi
-
-      - name: Build and push s390x image
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.generate-version.outputs.nightly_version }}"
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}-s390x"
-
-          cat > Dockerfile.s390x << 'EOF'
-          FROM gcr.io/distroless/static:nonroot
-          COPY controller /controller
-          ENTRYPOINT ["/controller"]
-          EOF
-
-          docker build -f Dockerfile.s390x -t "${IMAGE}" .
-          docker push "${IMAGE}"
-
-          # Verify push succeeded by checking RepoDigests (buildx not available on s390x runner)
-          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" 2>/dev/null || echo "")
-          if [ -z "${DIGEST}" ]; then
-            echo "Error: Failed to verify image push"
-            exit 1
-          fi
-          echo "Successfully pushed ${IMAGE}"
-          echo "Digest: ${DIGEST}"
-
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -f Dockerfile.s390x controller
-          docker system prune -f --filter "until=1h" || true
-
-  create-manifest:
-    runs-on: ubuntu-latest
-    needs: [generate-version, build-amd64-arm64, build-s390x]
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to quay.io
-        uses: docker/login-action@v3
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
-
-      - name: Verify all architecture images exist
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.generate-version.outputs.nightly_version }}"
-
-          for ARCH in amd64 arm64 s390x; do
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}-${ARCH}"
-            echo "Checking ${IMAGE}..."
-            if ! docker manifest inspect "${IMAGE}" > /dev/null 2>&1; then
-              echo "Error: Image for ${ARCH} not found: ${IMAGE}"
-              exit 1
-            fi
-          done
-          echo "All architecture images verified"
-
-      - name: Create and push multi-arch manifest
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.generate-version.outputs.nightly_version }}"
-          MANIFEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-
-          # Create versioned manifest (use docker manifest for mixed media type compatibility)
-          docker manifest create "${MANIFEST}:${VERSION}" \
-            "${MANIFEST}:${VERSION}-amd64" \
-            "${MANIFEST}:${VERSION}-arm64" \
-            "${MANIFEST}:${VERSION}-s390x"
-          docker manifest push "${MANIFEST}:${VERSION}"
-
-          # Create 'nightly' tag pointing to latest nightly
-          docker manifest create "${MANIFEST}:nightly" \
-            "${MANIFEST}:${VERSION}-amd64" \
-            "${MANIFEST}:${VERSION}-arm64" \
-            "${MANIFEST}:${VERSION}-s390x"
-          docker manifest push "${MANIFEST}:nightly"
-
-      - name: Validate manifest contains all architectures
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.generate-version.outputs.nightly_version }}"
-          MANIFEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.nightly_version }}"
 
           echo "Inspecting manifest..."
-          docker manifest inspect "${MANIFEST}"
+          docker buildx imagetools inspect "${IMAGE}"
 
-          MANIFEST_JSON=$(docker manifest inspect "${MANIFEST}")
+          echo "Validating all architectures are present..."
+          MANIFEST_JSON=$(docker buildx imagetools inspect --raw "${IMAGE}")
           for ARCH in amd64 arm64 s390x; do
-            if ! echo "${MANIFEST_JSON}" | grep -q "\"architecture\":\"${ARCH}\""; then
+            if ! echo "${MANIFEST_JSON}" | jq -e ".manifests[] | select(.platform.architecture == \"${ARCH}\")" > /dev/null 2>&1; then
               echo "Error: Architecture ${ARCH} not found in manifest"
               exit 1
             fi
@@ -240,12 +97,12 @@ jobs:
           # Nightly Build Summary
 
           ## Version Information
-          - **Nightly Version**: \`${{ needs.generate-version.outputs.nightly_version }}\`
-          - **Commit SHA**: \`${{ needs.generate-version.outputs.short_sha }}\`
-          - **Commit Date**: \`${{ needs.generate-version.outputs.commit_date }}\`
+          - **Nightly Version**: \`${{ steps.version.outputs.nightly_version }}\`
+          - **Commit SHA**: \`${{ steps.version.outputs.short_sha }}\`
+          - **Commit Date**: \`${{ steps.version.outputs.commit_date }}\`
 
           ## Images Published
-          - \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.generate-version.outputs.nightly_version }}\`
+          - \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.nightly_version }}\`
           - \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly\`
 
           ## Platforms
@@ -258,34 +115,3 @@ jobs:
           podman pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly
           \`\`\`
           EOF
-
-  notify-failure:
-    runs-on: ubuntu-latest
-    needs: [generate-version, build-amd64-arm64, build-s390x, create-manifest]
-    if: ${{ always() && contains(needs.*.result, 'failure') }}
-    steps:
-      - name: Create issue for failed nightly build
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const date = new Date().toISOString().split('T')[0];
-            const title = `Nightly build failed - ${date}`;
-
-            const issues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: ['nightly-build-failure'],
-              state: 'open'
-            });
-
-            const existingIssue = issues.data.find(issue => issue.title === title);
-
-            if (!existingIssue) {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: title,
-                body: `The nightly build failed on ${date}.\n\nWorkflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                labels: ['nightly-build-failure', 'automated']
-              });
-            }
