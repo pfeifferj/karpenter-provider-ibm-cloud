@@ -9,9 +9,9 @@ on:
 
 permissions:
   contents: read
-  packages: write
   issues: read
   pull-requests: read
+  organization: read
 
 concurrency:
   group: e2e-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
@@ -41,23 +41,16 @@ jobs:
           script: |
             async function checkUserPermission(username) {
               try {
-                const { data: collaborator } = await github.rest.repos.getCollaboratorPermissionLevel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
+                await github.rest.teams.getMembershipForUserInOrg({
+                  org: 'kubernetes-sigs',
+                  team_slug: 'karpenter-ibm-maintainers',
                   username: username
                 });
-
-                const hasWriteAccess = ['admin', 'write', 'maintain'].includes(collaborator.permission);
-                return {
-                  hasAccess: hasWriteAccess,
-                  permission: collaborator.permission
-                };
+                console.log(`${username} is a member of karpenter-ibm-maintainers team`);
+                return { hasAccess: true, permission: 'team-member' };
               } catch (error) {
-                console.log(`Could not check permissions for ${username}: ${error.message}`);
-                return {
-                  hasAccess: false,
-                  permission: 'unknown'
-                };
+                console.log(`${username} is not in karpenter-ibm-maintainers team: ${error.message}`);
+                return { hasAccess: false, permission: 'none' };
               }
             }
 
@@ -130,7 +123,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -148,55 +140,10 @@ jobs:
 
       - name: Build & push image
         env:
-          KO_DOCKER_REPO: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+          KO_DOCKER_REPO: quay.io/karpenter-provider-ibm-cloud/controller
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | ko login ghcr.io --username ${{ github.actor }} --password-stdin
+          echo "${{ secrets.QUAY_PASSWORD }}" | ko login quay.io --username ${{ secrets.QUAY_USERNAME }} --password-stdin
           ko build ./cmd/controller --platform=linux/amd64 --bare --tags="${{ needs.gate.outputs.image_tag }}"
-
-      - name: Cleanup old PR images
-        if: ${{ needs.gate.outputs.pr_number != '' }}
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const packageName = context.repo.repo;
-            const prNumber = '${{ needs.gate.outputs.pr_number }}';
-
-            try {
-              const { data: versions } = await github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg({
-                package_type: 'container',
-                package_name: packageName,
-                org: context.repo.owner,
-                per_page: 100
-              });
-
-              const prVersions = versions
-                .filter(version =>
-                  version.metadata?.container?.tags?.some(tag => tag.startsWith(`pr-${prNumber}-`))
-                )
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-              const toDelete = prVersions.slice(3);
-
-              console.log(`Found ${prVersions.length} images for PR #${prNumber}`);
-              console.log(`Keeping latest 3, deleting ${toDelete.length} old images`);
-
-              for (const version of toDelete) {
-                try {
-                  await github.rest.packages.deletePackageVersionForOrg({
-                    package_type: 'container',
-                    package_name: packageName,
-                    org: context.repo.owner,
-                    package_version_id: version.id
-                  });
-                  console.log(`Deleted image version ${version.id}`);
-                } catch (error) {
-                  console.log(`Failed to delete version ${version.id}: ${error.message}`);
-                }
-              }
-            } catch (error) {
-              console.log(`Failed to cleanup images: ${error.message}`);
-            }
 
   e2e:
     name: Run E2E against PR image
