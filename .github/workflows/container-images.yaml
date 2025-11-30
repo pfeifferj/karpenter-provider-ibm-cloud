@@ -14,27 +14,11 @@ on:
 env:
   REGISTRY: quay.io
   IMAGE_NAME: karpenter-provider-ibm-cloud/controller
-  KO_DOCKER_REPO: quay.io/karpenter-provider-ibm-cloud/controller
 
 jobs:
-  set-tags:
+  build-and-push:
     runs-on: ubuntu-latest
-    outputs:
-      tags: ${{ steps.tags.outputs.tags }}
-    steps:
-      - name: Set image tags
-        id: tags
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "tags=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          else
-            echo "tags=latest" >> $GITHUB_OUTPUT
-          fi
-
-  build-amd64-arm64:
-    runs-on: ubuntu-latest
-    needs: set-tags
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -42,15 +26,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-
-      - name: Install ko
-        uses: ko-build/setup-ko@v0.6
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -65,155 +40,41 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      - name: Build and push amd64
-        env:
-          GOFLAGS: "-ldflags=-X=main.version=${{ needs.set-tags.outputs.tags }}"
+      - name: Set image tags
+        id: tags
         run: |
-          set -euo pipefail
-          ko build \
-            --platform=linux/amd64 \
-            --bare \
-            --tags=${{ needs.set-tags.outputs.tags }}-amd64 \
-            ./cmd/controller
-
-      - name: Build and push arm64
-        env:
-          GOFLAGS: "-ldflags=-X=main.version=${{ needs.set-tags.outputs.tags }}"
-        run: |
-          set -euo pipefail
-          ko build \
-            --platform=linux/arm64 \
-            --bare \
-            --tags=${{ needs.set-tags.outputs.tags }}-arm64 \
-            ./cmd/controller
-
-  build-s390x:
-    runs-on: [self-hosted, ibm-s390x]
-    needs: set-tags
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-
-      - name: Log in to quay.io
-        uses: docker/login-action@v3
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
-
-      - name: Build s390x binary
-        run: |
-          set -euo pipefail
-          CGO_ENABLED=0 GOOS=linux GOARCH=s390x go build \
-            -ldflags="-X=main.version=${{ needs.set-tags.outputs.tags }}" \
-            -o controller \
-            ./cmd/controller
-
-          if [ ! -f controller ]; then
-            echo "Error: Binary not created"
-            exit 1
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=latest" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build and push s390x image
-        run: |
-          set -euo pipefail
-          TAG="${{ needs.set-tags.outputs.tags }}"
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-s390x"
-
-          cat > Dockerfile.s390x << 'EOF'
-          FROM gcr.io/distroless/static:nonroot
-          COPY controller /controller
-          ENTRYPOINT ["/controller"]
-          EOF
-
-          docker build -f Dockerfile.s390x -t "${IMAGE}" .
-          docker push "${IMAGE}"
-
-          # Verify push succeeded by checking RepoDigests (buildx not available on s390x runner)
-          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" 2>/dev/null || echo "")
-          if [ -z "${DIGEST}" ]; then
-            echo "Error: Failed to verify image push"
-            exit 1
-          fi
-          echo "Successfully pushed ${IMAGE}"
-          echo "Digest: ${DIGEST}"
-
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -f Dockerfile.s390x controller
-          docker system prune -f --filter "until=1h" || true
-
-  create-manifest:
-    runs-on: ubuntu-latest
-    needs: [set-tags, build-amd64-arm64, build-s390x]
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to quay.io
-        uses: docker/login-action@v3
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
         with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/s390x
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.tags.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
 
-      - name: Verify all architecture images exist
+      - name: Verify manifest
         run: |
           set -euo pipefail
-          TAG="${{ needs.set-tags.outputs.tags }}"
-
-          for ARCH in amd64 arm64 s390x; do
-            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-${ARCH}"
-            echo "Checking ${IMAGE}..."
-            if ! docker manifest inspect "${IMAGE}" > /dev/null 2>&1; then
-              echo "Error: Image for ${ARCH} not found: ${IMAGE}"
-              exit 1
-            fi
-          done
-          echo "All architecture images verified"
-
-      - name: Create and push multi-arch manifest
-        run: |
-          set -euo pipefail
-          TAG="${{ needs.set-tags.outputs.tags }}"
-          MANIFEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
-
-          docker manifest create "${MANIFEST}" \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-amd64" \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-arm64" \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}-s390x"
-
-          docker manifest push "${MANIFEST}"
-
-      - name: Validate manifest contains all architectures
-        run: |
-          set -euo pipefail
-          TAG="${{ needs.set-tags.outputs.tags }}"
-          MANIFEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.version }}"
 
           echo "Inspecting manifest..."
-          docker manifest inspect "${MANIFEST}"
+          docker buildx imagetools inspect "${IMAGE}"
 
-          # Validate all architectures are present
-          MANIFEST_JSON=$(docker manifest inspect "${MANIFEST}")
+          echo "Validating all architectures are present..."
+          MANIFEST_JSON=$(docker buildx imagetools inspect --raw "${IMAGE}")
           for ARCH in amd64 arm64 s390x; do
-            if ! echo "${MANIFEST_JSON}" | grep -q "\"architecture\":\"${ARCH}\""; then
+            if ! echo "${MANIFEST_JSON}" | jq -e ".manifests[] | select(.platform.architecture == \"${ARCH}\")" > /dev/null 2>&1; then
               echo "Error: Architecture ${ARCH} not found in manifest"
               exit 1
             fi
