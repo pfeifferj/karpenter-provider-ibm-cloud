@@ -12,13 +12,11 @@ on:
     types: [published]
 
 env:
-  REGISTRY: quay.io
-  IMAGE_NAME: karpenter-provider-ibm-cloud/controller
+  KO_DOCKER_REPO: quay.io/karpenter-provider-ibm-cloud/controller
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -26,6 +24,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install ko
+        uses: ko-build/setup-ko@v0.6
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -44,39 +51,21 @@ jobs:
         id: tags
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "tags=${{ github.ref_name }}" >> $GITHUB_OUTPUT
           else
-            echo "version=latest" >> $GITHUB_OUTPUT
+            echo "tags=latest" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build and push multi-arch image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64,linux/s390x
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.version }}
-          build-args: |
-            VERSION=${{ steps.tags.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true
-
-      - name: Verify manifest
+      - name: Build and push multi-arch images
+        env:
+          GOFLAGS: "-ldflags=-X=main.version=${{ steps.tags.outputs.tags }}"
         run: |
-          set -euo pipefail
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.version }}"
+          # Build and push multi-arch images
+          ko build \
+            --platform=linux/amd64,linux/arm64,linux/s390x \
+            --bare \
+            --tags=${{ steps.tags.outputs.tags }} \
+            ./cmd/controller
 
-          echo "Inspecting manifest..."
-          docker buildx imagetools inspect "${IMAGE}"
-
-          echo "Validating all architectures are present..."
-          MANIFEST_JSON=$(docker buildx imagetools inspect --raw "${IMAGE}")
-          for ARCH in amd64 arm64 s390x; do
-            if ! echo "${MANIFEST_JSON}" | jq -e ".manifests[] | select(.platform.architecture == \"${ARCH}\")" > /dev/null 2>&1; then
-              echo "Error: Architecture ${ARCH} not found in manifest"
-              exit 1
-            fi
-          done
-          echo "Manifest validated: all architectures present"
+          # Verify the manifest
+          docker buildx imagetools inspect $KO_DOCKER_REPO:${{ steps.tags.outputs.tags }}

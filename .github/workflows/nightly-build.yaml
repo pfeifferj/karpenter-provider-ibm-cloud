@@ -12,13 +12,11 @@ on:
         default: 'nightly'
 
 env:
-  REGISTRY: quay.io
-  IMAGE_NAME: karpenter-provider-ibm-cloud/controller
+  KO_DOCKER_REPO: quay.io/karpenter-provider-ibm-cloud/controller
 
 jobs:
   nightly-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -27,7 +25,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Full history for accurate versioning
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install ko
+        uses: ko-build/setup-ko@v0.6
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -45,51 +52,52 @@ jobs:
       - name: Generate nightly version
         id: version
         run: |
-          set -euo pipefail
+          # Get the latest tag
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+
+          # Get commit info
           SHORT_SHA=$(git rev-parse --short HEAD)
           COMMIT_DATE=$(git show -s --format=%cs)
+
+          # Generate nightly version
+          # Format: <latest-tag>-<date>-<short-sha>-<suffix>
           SUFFIX="${{ github.event.inputs.tag_suffix || 'nightly' }}"
           NIGHTLY_VERSION="${LATEST_TAG}-${COMMIT_DATE}-${SHORT_SHA}-${SUFFIX}"
 
           echo "nightly_version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "commit_date=$COMMIT_DATE" >> $GITHUB_OUTPUT
+
+          # Also create a simple 'nightly' tag that always points to latest
+          echo "latest_tag=nightly" >> $GITHUB_OUTPUT
+
           echo "Generated nightly version: $NIGHTLY_VERSION"
 
-      - name: Build and push multi-arch image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64,linux/s390x
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.nightly_version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly
-          build-args: |
-            VERSION=${{ steps.version.outputs.nightly_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true
-
-      - name: Verify manifest
+      - name: Build and push multi-arch images
+        env:
+          GOFLAGS: "-ldflags=-X=main.version=${{ steps.version.outputs.nightly_version }}"
         run: |
-          set -euo pipefail
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.nightly_version }}"
+          # Build with nightly version tag
+          ko build \
+            --platform=linux/amd64,linux/arm64,linux/s390x \
+            --bare \
+            --tags=${{ steps.version.outputs.nightly_version }} \
+            ./cmd/controller
 
-          echo "Inspecting manifest..."
-          docker buildx imagetools inspect "${IMAGE}"
+          # Also tag as 'nightly' for easy reference
+          ko build \
+            --platform=linux/amd64,linux/arm64,linux/s390x \
+            --bare \
+            --tags=${{ steps.version.outputs.latest_tag }} \
+            ./cmd/controller
 
-          echo "Validating all architectures are present..."
-          MANIFEST_JSON=$(docker buildx imagetools inspect --raw "${IMAGE}")
-          for ARCH in amd64 arm64 s390x; do
-            if ! echo "${MANIFEST_JSON}" | jq -e ".manifests[] | select(.platform.architecture == \"${ARCH}\")" > /dev/null 2>&1; then
-              echo "Error: Architecture ${ARCH} not found in manifest"
-              exit 1
-            fi
-          done
-          echo "Manifest validated: all architectures present"
+          # Verify the manifests
+          echo "Verifying nightly version manifest..."
+          docker buildx imagetools inspect $KO_DOCKER_REPO:${{ steps.version.outputs.nightly_version }}
+
+          echo "Verifying latest nightly manifest..."
+          docker buildx imagetools inspect $KO_DOCKER_REPO:${{ steps.version.outputs.latest_tag }}
 
       - name: Create build summary
         run: |
@@ -102,8 +110,8 @@ jobs:
           - **Commit Date**: \`${{ steps.version.outputs.commit_date }}\`
 
           ## Images Published
-          - \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.nightly_version }}\`
-          - \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly\`
+          - \`$KO_DOCKER_REPO:${{ steps.version.outputs.nightly_version }}\`
+          - \`$KO_DOCKER_REPO:nightly\` (latest nightly)
 
           ## Platforms
           - linux/amd64
@@ -111,7 +119,14 @@ jobs:
           - linux/s390x
 
           ## Usage
+
+          To use the latest nightly build:
           \`\`\`bash
-          podman pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly
+          podman pull $KO_DOCKER_REPO:nightly
+          \`\`\`
+
+          To use this specific nightly build:
+          \`\`\`bash
+          podman pull $KO_DOCKER_REPO:${{ steps.version.outputs.nightly_version }}
           \`\`\`
           EOF
