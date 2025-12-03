@@ -239,6 +239,21 @@ func (mr *MockIKSWorkerPoolProviderMockRecorder) Create(ctx, nodeClaim, instance
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockIKSWorkerPoolProvider)(nil).Create), ctx, nodeClaim, instanceTypes)
 }
 
+// CreatePool mocks base method.
+func (m *MockIKSWorkerPoolProvider) CreatePool(ctx context.Context, clusterID string, request *types.CreatePoolRequest) (*types.WorkerPool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreatePool", ctx, clusterID, request)
+	ret0, _ := ret[0].(*types.WorkerPool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreatePool indicates an expected call of CreatePool.
+func (mr *MockIKSWorkerPoolProviderMockRecorder) CreatePool(ctx, clusterID, request any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePool", reflect.TypeOf((*MockIKSWorkerPoolProvider)(nil).CreatePool), ctx, clusterID, request)
+}
+
 // Delete mocks base method.
 func (m *MockIKSWorkerPoolProvider) Delete(ctx context.Context, node *v1.Node) error {
 	m.ctrl.T.Helper()
@@ -251,6 +266,20 @@ func (m *MockIKSWorkerPoolProvider) Delete(ctx context.Context, node *v1.Node) e
 func (mr *MockIKSWorkerPoolProviderMockRecorder) Delete(ctx, node any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockIKSWorkerPoolProvider)(nil).Delete), ctx, node)
+}
+
+// DeletePool mocks base method.
+func (m *MockIKSWorkerPoolProvider) DeletePool(ctx context.Context, clusterID, poolID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeletePool", ctx, clusterID, poolID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeletePool indicates an expected call of DeletePool.
+func (mr *MockIKSWorkerPoolProviderMockRecorder) DeletePool(ctx, clusterID, poolID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePool", reflect.TypeOf((*MockIKSWorkerPoolProvider)(nil).DeletePool), ctx, clusterID, poolID)
 }
 
 // Get mocks base method.

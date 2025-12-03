@@ -249,6 +249,24 @@ type WorkerPoolResizeRequest struct {
 	SizePerZone int `json:"sizePerZone"`
 }
 
+// WorkerPoolZone represents a zone configuration for a worker pool
+type WorkerPoolZone struct {
+	ID       string `json:"id"`
+	SubnetID string `json:"subnetID,omitempty"`
+}
+
+// WorkerPoolCreateRequest represents a request to create a new worker pool
+// Reference: https://cloud.ibm.com/apidocs/kubernetes#createworkerpool
+type WorkerPoolCreateRequest struct {
+	Name           string            `json:"name"`
+	Flavor         string            `json:"flavor"`
+	SizePerZone    int               `json:"sizePerZone"`
+	Zones          []WorkerPoolZone  `json:"zones"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	DiskEncryption bool              `json:"diskEncryption,omitempty"`
+	VpcID          string            `json:"vpcID,omitempty"`
+}
+
 // ListWorkerPools retrieves all worker pools for a cluster
 func (c *IKSClient) ListWorkerPools(ctx context.Context, clusterID string) ([]*WorkerPool, error) {
 	// Get IAM token for authentication
@@ -345,4 +363,84 @@ func (c *IKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID string)
 	}
 
 	return &workerPool, nil
+}
+
+// CreateWorkerPool creates a new worker pool in the specified cluster
+func (c *IKSClient) CreateWorkerPool(ctx context.Context, clusterID string, request *WorkerPoolCreateRequest) (*WorkerPool, error) {
+	// Get IAM token for authentication
+	token, err := c.client.iamClient.GetToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting IAM token: %w", err)
+	}
+
+	// Construct API endpoint
+	endpoint := fmt.Sprintf("/clusters/%s/workerpools", clusterID)
+
+	// Marshal request body
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	// Make POST request to create the worker pool
+	resp, err := c.httpClient.Post(ctx, endpoint, token, strings.NewReader(string(jsonData)))
+	if err != nil {
+		// Handle specific IBM Cloud error codes
+		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
+			switch ibmErr.Code {
+			case "E3917":
+				return nil, fmt.Errorf("cluster %s is not configured for worker pool creation: %s", clusterID, ibmErr.Description)
+			case "E0003":
+				return nil, fmt.Errorf("unauthorized to create worker pool: %s", ibmErr.Description)
+			case "E0015":
+				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, ibmErr.Description)
+			case "E4036":
+				return nil, fmt.Errorf("invalid worker pool configuration: %s", ibmErr.Description)
+			}
+		}
+		return nil, fmt.Errorf("creating worker pool: %w", err)
+	}
+
+	// Parse response
+	var workerPool WorkerPool
+	if err := json.Unmarshal(resp.Body, &workerPool); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+
+	return &workerPool, nil
+}
+
+// DeleteWorkerPool deletes a worker pool from the specified cluster
+func (c *IKSClient) DeleteWorkerPool(ctx context.Context, clusterID, poolID string) error {
+	// Get IAM token for authentication
+	token, err := c.client.iamClient.GetToken(ctx)
+	if err != nil {
+		return fmt.Errorf("getting IAM token: %w", err)
+	}
+
+	// Construct API endpoint
+	endpoint := fmt.Sprintf("/clusters/%s/workerpools/%s", clusterID, poolID)
+
+	// Make DELETE request
+	_, err = c.httpClient.Delete(ctx, endpoint, token)
+	if err != nil {
+		// Handle specific IBM Cloud error codes
+		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
+			switch ibmErr.Code {
+			case "E3917":
+				return fmt.Errorf("cluster %s is not configured for worker pool deletion: %s", clusterID, ibmErr.Description)
+			case "E0003":
+				return fmt.Errorf("unauthorized to delete worker pool: %s", ibmErr.Description)
+			case "E0015":
+				return fmt.Errorf("cluster %s not found: %s", clusterID, ibmErr.Description)
+			case "E0013":
+				return fmt.Errorf("worker pool %s not found in cluster %s: %s", poolID, clusterID, ibmErr.Description)
+			case "E4037":
+				return fmt.Errorf("cannot delete default worker pool: %s", ibmErr.Description)
+			}
+		}
+		return fmt.Errorf("deleting worker pool: %w", err)
+	}
+
+	return nil
 }

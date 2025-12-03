@@ -41,4 +41,10 @@ type IKSClientInterface interface {
 
 	// ResizeWorkerPool resizes a worker pool by adding one node
 	ResizeWorkerPool(ctx context.Context, clusterID, poolID string, newSize int) error
+
+	// CreateWorkerPool creates a new worker pool with the specified configuration
+	CreateWorkerPool(ctx context.Context, clusterID string, request *WorkerPoolCreateRequest) (*WorkerPool, error)
+
+	// DeleteWorkerPool deletes a worker pool from the cluster
+	DeleteWorkerPool(ctx context.Context, clusterID, poolID string) error
 }

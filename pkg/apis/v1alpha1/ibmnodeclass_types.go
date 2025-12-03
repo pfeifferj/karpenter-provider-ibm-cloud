@@ -81,6 +81,68 @@ type SubnetSelectionCriteria struct {
 	RequiredTags map[string]string `json:"requiredTags,omitempty"`
 }
 
+// IKSDynamicPoolConfig defines configuration for dynamic worker pool creation in IKS mode.
+// When enabled, Karpenter will dynamically create new worker pools to match pod requirements
+// when no existing pool with the required instance type is available.
+type IKSDynamicPoolConfig struct {
+	// Enabled controls whether dynamic pool creation is active.
+	// When true, Karpenter will create new worker pools as needed to satisfy pod requirements.
+	// When false (default), Karpenter will only use existing worker pools.
+	// +optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// NamePrefix is the prefix used when naming dynamically created worker pools.
+	// Pool names will follow the pattern: {NamePrefix}-{instanceType}-{uniqueID}
+	// Example: With prefix "karp", a pool might be named "karp-bx2-4x16-a1b2c3"
+	// +optional
+	// +kubebuilder:validation:MaxLength=20
+	// +kubebuilder:validation:Pattern="^[a-z][a-z0-9-]*$"
+	// +kubebuilder:default="karp"
+	NamePrefix string `json:"namePrefix,omitempty"`
+
+	// Labels are key-value pairs applied to dynamically created worker pools.
+	// These labels help identify and manage Karpenter-created pools.
+	// The label "karpenter.sh/managed=true" is always added automatically.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// DiskEncryption enables disk encryption for worker nodes in dynamically created pools.
+	// When true, the boot volume of worker nodes will be encrypted.
+	// +optional
+	// +kubebuilder:default=true
+	DiskEncryption *bool `json:"diskEncryption,omitempty"`
+
+	// AllowedInstanceTypes is a list of instance types (flavors) that can be used when
+	// creating dynamic pools. If empty, all available instance types are allowed.
+	// Example: ["bx2-4x16", "bx2-8x32", "cx2-4x8"]
+	// +optional
+	AllowedInstanceTypes []string `json:"allowedInstanceTypes,omitempty"`
+
+	// CleanupPolicy defines when dynamically created worker pools should be deleted.
+	// +optional
+	CleanupPolicy *IKSPoolCleanupPolicy `json:"cleanupPolicy,omitempty"`
+}
+
+// IKSPoolCleanupPolicy defines the policy for cleaning up dynamically created worker pools.
+type IKSPoolCleanupPolicy struct {
+	// EmptyPoolTTL specifies how long an empty pool should remain before being deleted.
+	// An empty pool is one with SizePerZone of 0 nodes.
+	// Format: duration string (e.g., "30m", "1h", "24h")
+	// If not specified, empty pools are cleaned up immediately.
+	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	// +kubebuilder:default="5m"
+	EmptyPoolTTL string `json:"emptyPoolTTL,omitempty"`
+
+	// DeleteOnEmpty controls whether empty pools are automatically deleted.
+	// When true (default), pools are deleted after being empty for EmptyPoolTTL.
+	// When false, pools are retained even when empty.
+	// +optional
+	// +kubebuilder:default=true
+	DeleteOnEmpty *bool `json:"deleteOnEmpty,omitempty"`
+}
+
 // LoadBalancerTarget defines a target group configuration for load balancer integration
 type LoadBalancerTarget struct {
 	// LoadBalancerID is the ID of the IBM Cloud Load Balancer
@@ -566,6 +628,13 @@ type IBMNodeClassSpec struct {
 	// Used with IKS API bootstrapping mode
 	// +optional
 	IKSWorkerPoolID string `json:"iksWorkerPoolID,omitempty"`
+
+	// IKSDynamicPools configures dynamic worker pool creation for IKS mode.
+	// When enabled, Karpenter will create new worker pools to match pod requirements
+	// when no existing pool with the required instance type is available.
+	// This allows Karpenter to provision nodes with specific instance types dynamically.
+	// +optional
+	IKSDynamicPools *IKSDynamicPoolConfig `json:"iksDynamicPools,omitempty"`
 
 	// LoadBalancerIntegration defines load balancer integration settings
 	// When configured, nodes will be automatically registered with IBM Cloud Load Balancers
