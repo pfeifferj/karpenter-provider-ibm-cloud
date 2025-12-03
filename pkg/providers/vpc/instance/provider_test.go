@@ -67,8 +67,9 @@ func (m *MockIBMClientWrapper) GetVPCClient() (*ibm.VPCClient, error) {
 	return ibm.NewVPCClientWithMock(m.vpcClient), nil
 }
 
-func (m *MockIBMClientWrapper) GetIKSClient() *ibm.IKSClient {
-	return nil
+func (m *MockIBMClientWrapper) GetIKSClient() (ibm.IKSClientInterface, error) {
+	// VPC mode doesn't use IKS client
+	return nil, nil
 }
 
 func TestVPCClient_CreateInstance(t *testing.T) {

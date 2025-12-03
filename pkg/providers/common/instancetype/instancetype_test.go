@@ -60,8 +60,8 @@ func (m *MockIBMClient) GetGlobalCatalogClient() (*ibm.GlobalCatalogClient, erro
 	return nil, nil
 }
 
-func (m *MockIBMClient) GetIKSClient() *ibm.IKSClient {
-	return nil
+func (m *MockIBMClient) GetIKSClient() (ibm.IKSClientInterface, error) {
+	return nil, nil
 }
 
 func (m *MockIBMClient) GetIAMClient() *ibm.IAMClient {
