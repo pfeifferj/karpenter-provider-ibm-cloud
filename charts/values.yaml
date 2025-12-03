@@ -567,3 +567,15 @@ metrics:
 
     # Additional custom rule groups
     additionalRuleGroups: []
+
+# Grafana Dashboard configuration
+grafanaDashboard:
+  # Enable Grafana dashboard ConfigMap creation
+  enabled: false
+  # Namespace to create the ConfigMap in (defaults to release namespace)
+  namespace: ""
+  # Labels to add to the ConfigMap for Grafana sidecar discovery
+  labels:
+    grafana_dashboard: "1"
+  # Annotations to add to the ConfigMap
+  annotations: {}
