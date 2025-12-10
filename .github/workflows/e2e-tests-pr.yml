@@ -19,9 +19,9 @@ concurrency:
 
 env:
   E2E_APPROVAL_COMMENT: "/ok-to-e2e"
-  GO_VERSION: "1.24"
+  GO_VERSION: "1.25"
   KO_VERSION: "0.15.4"
-  KUBECTL_VERSION: "1.28.0"
+  KUBECTL_VERSION: "1.34.3"
 
 jobs:
   gate:
