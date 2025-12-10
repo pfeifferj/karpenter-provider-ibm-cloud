@@ -31,7 +31,7 @@ jobs:
 
     container:
       # Run in a container with necessary tools
-      image: golang:1.24.6
+      image: golang:1.25.3
       options: --user 0
 
     steps:
