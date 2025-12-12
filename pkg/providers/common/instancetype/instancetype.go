@@ -585,7 +585,7 @@ func (p *IBMInstanceTypeProvider) getZonesForRegion(ctx context.Context, region 
 	}
 
 	// Get the SDK client directly for zone listing
-	vpcClient, err := p.client.GetVPCClient()
+	vpcClient, err := p.client.GetVPCClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VPC client: %w", err)
 	}

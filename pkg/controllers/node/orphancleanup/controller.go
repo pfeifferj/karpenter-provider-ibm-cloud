@@ -298,7 +298,7 @@ func (c *Controller) getAllVPCInstances(ctx context.Context) ([]string, error) {
 				err = fmt.Errorf("panic in GetVPCClient: %v", r)
 			}
 		}()
-		vpcClient, err = c.ibmClient.GetVPCClient()
+		vpcClient, err = c.ibmClient.GetVPCClient(ctx)
 	}()
 
 	if err != nil {
@@ -362,7 +362,7 @@ func (c *Controller) checkInstanceTagsWithGlobalTaggingAPI(ctx context.Context, 
 				err = fmt.Errorf("panic in GetVPCClient: %v", r)
 			}
 		}()
-		vpcClient, err = c.ibmClient.GetVPCClient()
+		vpcClient, err = c.ibmClient.GetVPCClient(ctx)
 	}()
 
 	if err != nil {
@@ -503,7 +503,7 @@ func (c *Controller) processOrphanedInstance(ctx context.Context, instanceID str
 
 	logger.Info("deleting orphaned instance from IBM Cloud")
 	// Get VPC client to delete instance
-	vpcClient, err := c.ibmClient.GetVPCClient()
+	vpcClient, err := c.ibmClient.GetVPCClient(ctx)
 	if err != nil {
 		logger.Error(err, "failed to get VPC client for instance deletion")
 		return fmt.Errorf("failed to get VPC client: %w", err)

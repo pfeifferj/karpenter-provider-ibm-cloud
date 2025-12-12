@@ -449,7 +449,7 @@ func (c *Controller) validateVPCInRegion(ctx context.Context, vpcID, resourceGro
 
 	// Create a new region-specific VPC client following the same pattern as GetVPCClient
 	// but with the correct regional endpoint
-	regionVPCClient, err := c.createRegionVPCClient(vpcURL, region)
+	regionVPCClient, err := c.createRegionVPCClient(ctx, vpcURL, region)
 	if err != nil {
 		return fmt.Errorf("creating region-specific VPC client for %s: %w", region, err)
 	}
@@ -479,7 +479,7 @@ func (c *Controller) validateVPCInRegion(ctx context.Context, vpcID, resourceGro
 }
 
 // createRegionVPCClient creates a VPC client for a specific region
-func (c *Controller) createRegionVPCClient(vpcURL, region string) (*ibm.VPCClient, error) {
+func (c *Controller) createRegionVPCClient(ctx context.Context, vpcURL, region string) (*ibm.VPCClient, error) {
 	// If we don't have an IBM client, we can't create a VPC client
 	if c.ibmClient == nil {
 		return nil, fmt.Errorf("IBM client not available")
@@ -487,7 +487,7 @@ func (c *Controller) createRegionVPCClient(vpcURL, region string) (*ibm.VPCClien
 
 	// Create a temporary client with the region-specific URL
 	// This follows the same pattern as the main client but uses the specified region's endpoint
-	vpcClient, err := c.ibmClient.GetVPCClient()
+	vpcClient, err := c.ibmClient.GetVPCClient(ctx)
 	if err != nil {
 		// If we can't get a VPC client from the main client,
 		// it likely means credentials are not available
