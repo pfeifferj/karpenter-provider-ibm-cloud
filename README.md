@@ -72,6 +72,16 @@ After changes pass tests and are merged to main:
 
 These CI workflows ensure chart quality through pre-merge validation and maintain the Helm repository for easy installation.
 
+## Subprojects and Additional Repositories
+
+This project does not currently produce, maintain, or release any additional
+subproject codebases or separate repositories.
+
+**Status:** Not applicable  
+**Intent:** The project is intentionally maintained as a single repository.
+If additional subprojects or repositories are introduced in the future, they
+will be documented in this section.
+
 ## Getting Help
 
 ### Community Support
