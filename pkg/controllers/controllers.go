@@ -190,7 +190,7 @@ func NewControllers(
 
 	// Add load balancer controller (VPC mode only)
 	if ibmClient != nil {
-		vpcClient, err := ibmClient.GetVPCClient()
+		vpcClient, err := ibmClient.GetVPCClient(ctx)
 		if err != nil {
 			logger.Error(err, "failed to get VPC client for load balancer controller")
 		} else {
