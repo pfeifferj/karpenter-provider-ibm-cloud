@@ -11,106 +11,64 @@ on:
         required: false
         default: 'nightly'
 
-env:
-  KO_DOCKER_REPO: quay.io/karpenter-provider-ibm-cloud/controller
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  nightly-build:
+  compute-version:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
+    outputs:
+      nightly_version: ${{ steps.version.outputs.nightly_version }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+      commit_date: ${{ steps.version.outputs.commit_date }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for accurate versioning
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.24'
-          cache: true
-
-      - name: Install ko
-        uses: ko-build/setup-ko@v0.6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to quay.io
-        uses: docker/login-action@v3
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
+          fetch-depth: 0
 
       - name: Generate nightly version
         id: version
         run: |
-          # Get the latest tag
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "Latest tag: $LATEST_TAG"
-
-          # Get commit info
           SHORT_SHA=$(git rev-parse --short HEAD)
           COMMIT_DATE=$(git show -s --format=%cs)
-
-          # Generate nightly version
-          # Format: <latest-tag>-<date>-<short-sha>-<suffix>
           SUFFIX="${{ github.event.inputs.tag_suffix || 'nightly' }}"
           NIGHTLY_VERSION="${LATEST_TAG}-${COMMIT_DATE}-${SHORT_SHA}-${SUFFIX}"
 
           echo "nightly_version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "commit_date=$COMMIT_DATE" >> $GITHUB_OUTPUT
-
-          # Also create a simple 'nightly' tag that always points to latest
-          echo "latest_tag=nightly" >> $GITHUB_OUTPUT
-
           echo "Generated nightly version: $NIGHTLY_VERSION"
 
-      - name: Build and push multi-arch images
-        env:
-          GOFLAGS: "-ldflags=-X=main.version=${{ steps.version.outputs.nightly_version }}"
-        run: |
-          # Build with nightly version tag
-          ko build \
-            --platform=linux/amd64,linux/arm64,linux/s390x \
-            --bare \
-            --tags=${{ steps.version.outputs.nightly_version }} \
-            ./cmd/controller
+  build:
+    needs: compute-version
+    uses: ./.github/workflows/build-image.yaml
+    with:
+      tag: ${{ needs.compute-version.outputs.nightly_version }}
+      additional_tags: 'nightly'
+      version: ${{ needs.compute-version.outputs.nightly_version }}
+    secrets: inherit
 
-          # Also tag as 'nightly' for easy reference
-          ko build \
-            --platform=linux/amd64,linux/arm64,linux/s390x \
-            --bare \
-            --tags=${{ steps.version.outputs.latest_tag }} \
-            ./cmd/controller
-
-          # Verify the manifests
-          echo "Verifying nightly version manifest..."
-          docker buildx imagetools inspect $KO_DOCKER_REPO:${{ steps.version.outputs.nightly_version }}
-
-          echo "Verifying latest nightly manifest..."
-          docker buildx imagetools inspect $KO_DOCKER_REPO:${{ steps.version.outputs.latest_tag }}
-
+  summary:
+    needs: [compute-version, build]
+    runs-on: ubuntu-latest
+    steps:
       - name: Create build summary
+        env:
+          KO_DOCKER_REPO: quay.io/karpenter-provider-ibm-cloud/controller
         run: |
           cat >> $GITHUB_STEP_SUMMARY <<EOF
           # Nightly Build Summary
 
           ## Version Information
-          - **Nightly Version**: \`${{ steps.version.outputs.nightly_version }}\`
-          - **Commit SHA**: \`${{ steps.version.outputs.short_sha }}\`
-          - **Commit Date**: \`${{ steps.version.outputs.commit_date }}\`
+          - **Nightly Version**: \`${{ needs.compute-version.outputs.nightly_version }}\`
+          - **Commit SHA**: \`${{ needs.compute-version.outputs.short_sha }}\`
+          - **Commit Date**: \`${{ needs.compute-version.outputs.commit_date }}\`
 
           ## Images Published
-          - \`$KO_DOCKER_REPO:${{ steps.version.outputs.nightly_version }}\`
+          - \`$KO_DOCKER_REPO:${{ needs.compute-version.outputs.nightly_version }}\`
           - \`$KO_DOCKER_REPO:nightly\` (latest nightly)
 
           ## Platforms
@@ -127,6 +85,6 @@ jobs:
 
           To use this specific nightly build:
           \`\`\`bash
-          podman pull $KO_DOCKER_REPO:${{ steps.version.outputs.nightly_version }}
+          podman pull $KO_DOCKER_REPO:${{ needs.compute-version.outputs.nightly_version }}
           \`\`\`
           EOF
