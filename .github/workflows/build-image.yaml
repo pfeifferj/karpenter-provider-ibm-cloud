@@ -86,11 +86,6 @@ jobs:
       - name: Build and push image
         id: build
         run: |
-          # Set version ldflags if provided
-          if [ -n "${{ inputs.version }}" ]; then
-            export GOFLAGS="-ldflags=-X main.version=${{ inputs.version }}"
-          fi
-
           # Build all tags in single ko build call
           ALL_TAGS="${{ inputs.tag }}"
           if [ -n "${{ inputs.additional_tags }}" ]; then
@@ -98,11 +93,22 @@ jobs:
           fi
 
           echo "Building with tags: $ALL_TAGS"
-          ko build \
-            --platform=${{ inputs.platforms }} \
-            --bare \
-            --tags=$ALL_TAGS \
-            ./cmd/controller
+
+          # Build with or without version ldflags
+          if [ -n "${{ inputs.version }}" ]; then
+            ko build \
+              --platform=${{ inputs.platforms }} \
+              --bare \
+              --tags=$ALL_TAGS \
+              --ldflags="-X main.version=${{ inputs.version }}" \
+              ./cmd/controller
+          else
+            ko build \
+              --platform=${{ inputs.platforms }} \
+              --bare \
+              --tags=$ALL_TAGS \
+              ./cmd/controller
+          fi
 
           echo "image_ref=$KO_DOCKER_REPO:${{ inputs.tag }}" >> $GITHUB_OUTPUT
 
