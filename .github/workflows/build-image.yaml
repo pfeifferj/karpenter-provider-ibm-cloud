@@ -96,11 +96,11 @@ jobs:
 
           # Build with or without version ldflags
           if [ -n "${{ inputs.version }}" ]; then
+            GOFLAGS="-ldflags=-X=github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/version.Version=${{ inputs.version }}" \
             ko build \
               --platform=${{ inputs.platforms }} \
               --bare \
               --tags=$ALL_TAGS \
-              --ldflags="-X main.version=${{ inputs.version }}" \
               ./cmd/controller
           else
             ko build \
