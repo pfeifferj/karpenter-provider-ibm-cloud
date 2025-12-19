@@ -34,6 +34,7 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/constants"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/image"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/vpcclient"
@@ -76,7 +77,7 @@ func NewController(kubeClient client.Client, apiReader client.Reader) (*Controll
 		ibmClient:        ibmClient,
 		subnetProvider:   subnetProvider,
 		cache:            zoneSubnetCache,
-		vpcClientManager: vpcclient.NewManager(ibmClient, 30*time.Minute),
+		vpcClientManager: vpcclient.NewManager(ibmClient, constants.DefaultVPCClientCacheTTL),
 	}, nil
 }
 

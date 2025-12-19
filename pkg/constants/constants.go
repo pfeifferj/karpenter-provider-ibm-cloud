@@ -16,7 +16,11 @@ limitations under the License.
 
 package constants
 
+import "time"
+
 const (
 	// Group is the API group for IBM Cloud provider
 	Group = "karpenter-ibm.sh"
+	// DefaultVPCClientCacheTTL is the default TTL for VPC client cache entries
+	DefaultVPCClientCacheTTL = 30 * time.Minute
 )

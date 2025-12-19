@@ -40,6 +40,7 @@ import (
 	"github.com/IBM/platform-services-go-sdk/resourcemanagerv2"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/constants"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/metrics"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/image"
 	commonTypes "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/types"
@@ -120,7 +121,7 @@ func NewVPCInstanceProvider(client *ibm.Client, kubeClient client.Client, opts .
 		k8sClient:              nil, // Will be set via options if provided
 		bootstrapProvider:      nil, // Will be lazily initialized or set via options
 		subnetProvider:         subnet.NewProvider(client),
-		vpcClientManager:       vpcclient.NewManager(client, 30*time.Minute),
+		vpcClientManager:       vpcclient.NewManager(client, constants.DefaultVPCClientCacheTTL),
 		resourceManagerService: nil, // Will be initialized after applying options
 	}
 
