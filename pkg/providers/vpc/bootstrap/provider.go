@@ -35,6 +35,7 @@ import (
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/constants"
 	commonTypes "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/vpcclient"
 )
@@ -51,7 +52,7 @@ type VPCBootstrapProvider struct {
 func NewVPCBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface, kubeClient client.Client) *VPCBootstrapProvider {
 	return &VPCBootstrapProvider{
 		client:           client,
-		vpcClientManager: vpcclient.NewManager(client, 30*time.Minute),
+		vpcClientManager: vpcclient.NewManager(client, constants.DefaultVPCClientCacheTTL),
 		k8sClient:        k8sClient,
 		kubeClient:       kubeClient,
 	}

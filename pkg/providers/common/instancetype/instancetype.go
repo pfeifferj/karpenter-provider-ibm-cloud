@@ -36,6 +36,7 @@ import (
 
 	v1alpha1 "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/constants"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/pricing"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/vpcclient"
 )
@@ -59,7 +60,7 @@ func NewProvider(client *ibm.Client, pricingProvider pricing.Provider) Provider 
 	return &IBMInstanceTypeProvider{
 		client:           client,
 		pricingProvider:  pricingProvider,
-		vpcClientManager: vpcclient.NewManager(client, 30*time.Minute),
+		vpcClientManager: vpcclient.NewManager(client, constants.DefaultVPCClientCacheTTL),
 		zonesCache:       make(map[string][]string),
 	}
 }
