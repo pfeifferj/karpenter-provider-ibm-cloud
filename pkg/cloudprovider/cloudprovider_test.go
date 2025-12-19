@@ -199,6 +199,7 @@ func getTestNodeClass() *v1alpha1.IBMNodeClass {
 			APIServerEndpoint: "https://10.240.0.1:6443",
 		},
 		Status: v1alpha1.IBMNodeClassStatus{
+			ResolvedImageID: "image-id-1",
 			Conditions: []metav1.Condition{
 				{
 					Type:               "Ready",
@@ -840,7 +841,8 @@ func TestCloudProvider_IsDrifted(t *testing.T) {
 					Name: "test-nodeclaim",
 					Annotations: map[string]string{
 						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-						v1alpha1.AnnotationIBMNodeClassHash:        "12345", // Match the hash in getTestNodeClass
+						v1alpha1.AnnotationIBMNodeClassHash:        "12345",      // Match the hash in getTestNodeClass
+						v1alpha1.AnnotationIBMNodeClaimImageID:     "image-id-1", // Match the imageID in getTestNodeClass
 					},
 				},
 				Spec: karpv1.NodeClaimSpec{
@@ -859,7 +861,8 @@ func TestCloudProvider_IsDrifted(t *testing.T) {
 					Name: "test-nodeclaim",
 					Annotations: map[string]string{
 						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-						v1alpha1.AnnotationIBMNodeClassHash:        "54321", // Different hash to trigger drift
+						v1alpha1.AnnotationIBMNodeClassHash:        "54321",      // Different hash to trigger drift
+						v1alpha1.AnnotationIBMNodeClaimImageID:     "image-id-1", // Match the imageID in getTestNodeClass
 					},
 				},
 				Spec: karpv1.NodeClaimSpec{
@@ -869,6 +872,26 @@ func TestCloudProvider_IsDrifted(t *testing.T) {
 				},
 			},
 			expectedDrift: "NodeClassHashChanged",
+			expectError:   false,
+		},
+		{
+			name: "image drift when image differs",
+			nodeClaim: &karpv1.NodeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclaim",
+					Annotations: map[string]string{
+						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
+						v1alpha1.AnnotationIBMNodeClassHash:        "12345",        // matches NodeClass hash
+						v1alpha1.AnnotationIBMNodeClaimImageID:     "old-image-id", // Different imageID to trigger image drift
+					},
+				},
+				Spec: karpv1.NodeClaimSpec{
+					NodeClassRef: &karpv1.NodeClassReference{
+						Name: "test-nodeclass",
+					},
+				},
+			},
+			expectedDrift: "ImageDrift",
 			expectError:   false,
 		},
 	}
