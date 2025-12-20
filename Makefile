@@ -21,7 +21,7 @@ BUILD_DIR = bin
 PLATFORMS = linux/amd64 linux/arm64
 
 # Build flags
-LDFLAGS = -ldflags "-X main.version=${VERSION}"
+LDFLAGS = -ldflags "-X github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/version.Version=${VERSION}"
 CGO_ENABLED = 0
 
 # Test settings
