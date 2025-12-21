@@ -47,6 +47,7 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/vpc/bootstrap"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/vpcclient"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/version"
 )
 
 type QuotaInfo struct {
@@ -1454,7 +1455,7 @@ func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceIDAndType(ctx
 	if nodeClass.Spec.UserData != "" {
 		logger.Info("Using manual userData from IBMNodeClass")
 		// Inject BOOTSTRAP_* environment variables into custom userData
-		return bootstrap.InjectBootstrapEnvVars(nodeClass.Spec.UserData), nil
+		return bootstrap.InjectBootstrapEnvVars(ctx, nodeClass.Spec.UserData), nil
 	}
 
 	// Initialize bootstrap provider if not already done
@@ -1644,7 +1645,7 @@ func (p *VPCInstanceProvider) addKarpenterTags(ctx context.Context, vpcClient *i
 		"karpenter.sh/cluster":    clusterName,
 		"karpenter.sh/nodepool":   nodeClaim.Labels["karpenter.sh/nodepool"],
 		"karpenter.sh/provider":   "ibm-cloud",
-		"karpenter.sh/version":    "v0.3.69", // TODO: Get this from build info
+		"karpenter.sh/version":    version.Version,
 		"karpenter.sh/node-claim": nodeClaim.Name,
 		"managed-by":              fmt.Sprintf("karpenter-%s", clusterName),
 	}

@@ -38,6 +38,7 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/constants"
 	commonTypes "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/vpcclient"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/version"
 )
 
 // VPCBootstrapProvider provides VPC-specific bootstrap functionality
@@ -629,7 +630,7 @@ func (p *VPCBootstrapProvider) ReportBootstrapStatus(ctx context.Context, instan
 		"phase":      phase,
 		"timestamp":  time.Now().Format(time.RFC3339),
 		"nodeclaim":  nodeClaimName,
-		"version":    "v0.3.44",
+		"version":    version.Version,
 		"instanceId": instanceID,
 	}
 
