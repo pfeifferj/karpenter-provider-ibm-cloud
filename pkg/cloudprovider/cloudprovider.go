@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/status"
+	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -46,6 +47,14 @@ import (
 )
 
 const CloudProviderName = "ibmcloud"
+
+const (
+	NodeClassNotFoundDrift           cloudprovider.DriftReason = "NodeClassNotFound"
+	NodeClassHashVersionChangedDrift cloudprovider.DriftReason = "NodeClassHashVersionChanged"
+	NodeClassHashChangedDrift        cloudprovider.DriftReason = "NodeClassHashChanged"
+	SubnetDrift                      cloudprovider.DriftReason = "SubnetDrift"
+	ImageDrift                       cloudprovider.DriftReason = "ImageDrift"
+)
 
 var _ cloudprovider.CloudProvider = (*CloudProvider)(nil)
 
@@ -452,6 +461,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	annotations := map[string]string{
 		v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
 		v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
+		v1alpha1.AnnotationIBMNodeClaimSubnetID:    node.Annotations[v1alpha1.AnnotationIBMNodeClaimSubnetID],
 	}
 
 	// Store resolved image ID only if available
@@ -555,44 +565,118 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCla
 	log := log.FromContext(ctx).WithValues("nodeClaim", nodeClaim.Name, "providerID", nodeClaim.Status.ProviderID)
 	log.Info("Checking if node has drifted")
 
-	// Get the current hash from the node's annotations
-	currentHash := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
-	currentVersion := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion]
-	storedImageID := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClaimImageID]
-
 	// Get the NodeClass
+	nodeClass, driftReason, err := c.getNodeClassForDrift(ctx, log, nodeClaim)
+	if err != nil {
+		return "", err
+	}
+	if driftReason != "" {
+		return driftReason, nil
+	}
+
+	if driftReason = c.isNodeClassHashVersionDrifted(ctx, log, nodeClaim); driftReason != "" {
+		return driftReason, nil
+	}
+
+	if driftReason = c.isNodeClassHashDrifted(ctx, log, nodeClaim, nodeClass); driftReason != "" {
+		return driftReason, nil
+	}
+
+	if driftReason = c.isImageDrifted(ctx, log, nodeClaim, nodeClass); driftReason != "" {
+		return driftReason, nil
+	}
+
+	driftReason, err = c.isSubnetDrifted(ctx, log, nodeClaim, nodeClass)
+	if err != nil {
+		return "", err
+	}
+	if driftReason != "" {
+		return driftReason, nil
+	}
+
+	return "", nil
+}
+
+func (c *CloudProvider) getNodeClassForDrift(ctx context.Context, log logr.Logger, nodeClaim *karpv1.NodeClaim) (*v1alpha1.IBMNodeClass, cloudprovider.DriftReason, error) {
 	nodeClass := &v1alpha1.IBMNodeClass{}
 	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
 		if errors.IsNotFound(err) {
 			log.Error(err, "NodeClass not found")
-			return "NodeClassNotFound", nil
+			return nil, NodeClassNotFoundDrift, nil
 		}
-		return "", fmt.Errorf("getting nodeclass, %w", err)
+		return nil, "", fmt.Errorf("getting nodeclass, %w", err)
 	}
+	return nodeClass, "", nil
+}
+
+func (c *CloudProvider) isNodeClassHashVersionDrifted(ctx context.Context, log logr.Logger, nodeClaim *karpv1.NodeClaim) cloudprovider.DriftReason {
+	// Get the current hash version from the node's annotations
+	currentVersion := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion]
 
 	// Check if the hash version matches
 	if currentVersion != v1alpha1.IBMNodeClassHashVersion {
 		log.Info("NodeClass hash version mismatch", "current", currentVersion, "expected", v1alpha1.IBMNodeClassHashVersion)
-		return "NodeClassHashVersionChanged", nil
+		return NodeClassHashVersionChangedDrift
 	}
+	return ""
+}
+
+func (c *CloudProvider) isNodeClassHashDrifted(ctx context.Context, log logr.Logger, nodeClaim *karpv1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) cloudprovider.DriftReason {
+	// Get the current hash from the node's annotations
+	currentHash := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
+	expectedHash := nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
 
 	// Check if the hash matches
-	expectedHash := nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
 	if expectedHash != currentHash {
 		log.Info("NodeClass hash mismatch", "current", currentHash, "expected", expectedHash)
-		return "NodeClassHashChanged", nil
+		return NodeClassHashChangedDrift
 	}
+	return ""
+}
+
+func (c *CloudProvider) isImageDrifted(ctx context.Context, log logr.Logger, nodeClaim *karpv1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) cloudprovider.DriftReason {
+	// Get the stored image id from the node's annotations
+	storedImageID := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClaimImageID]
+	currentImageID := nodeClass.Status.ResolvedImageID
 
 	// Check if the ImageID matches
-	currentImageID := nodeClass.Status.ResolvedImageID
-	if storedImageID != "" && currentImageID != "" {
-		if storedImageID != currentImageID {
-			log.Info("Node image drift detected", "storedImageID", storedImageID, "currentImageID", currentImageID)
-			return "ImageDrift", nil
+	if storedImageID != "" && currentImageID != "" && storedImageID != currentImageID {
+		log.Info("Node image drift detected", "storedImageID", storedImageID, "currentImageID", currentImageID)
+		return ImageDrift
+	}
+	return ""
+}
+
+func (c *CloudProvider) isSubnetDrifted(ctx context.Context, log logr.Logger, nodeClaim *karpv1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) (cloudprovider.DriftReason, error) {
+	storedSubnetID := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClaimSubnetID]
+	if storedSubnetID == "" {
+		return "", nil
+	}
+
+	// Case 1: Explicit subnet in spec - compare directly
+	if nodeClass.Spec.Subnet != "" {
+		if storedSubnetID != nodeClass.Spec.Subnet {
+			log.Info("Subnet drift detected", "storedSubnetID", storedSubnetID, "specSubnet", nodeClass.Spec.Subnet)
+			return SubnetDrift, nil
+		}
+		return "", nil
+	}
+
+	// Case 2: PlacementStrategy - check against Status.SelectedSubnets
+	validSubnets := nodeClass.Status.SelectedSubnets
+	if len(validSubnets) == 0 {
+		log.Info("No subnets in Status.SelectedSubnets, skipping drift check", "nodeClass", nodeClass.Name)
+		return "", nil
+	}
+
+	for _, curSubnet := range validSubnets {
+		if curSubnet == storedSubnetID {
+			return "", nil
 		}
 	}
 
-	return "", nil
+	log.Info("Subnet drift detected", "storedSubnetID", storedSubnetID, "validSubnets", validSubnets)
+	return SubnetDrift, nil
 }
 
 func (c *CloudProvider) Name() string {
