@@ -449,10 +449,17 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		nc.Status.Allocatable = instanceType.Allocatable()
 	}
 
-	nc.Annotations = lo.Assign(nc.Annotations, map[string]string{
+	annotations := map[string]string{
 		v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
 		v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-	})
+	}
+
+	// Store resolved image ID only if available
+	if nodeClass.Status.ResolvedImageID != "" {
+		annotations[v1alpha1.AnnotationIBMNodeClaimImageID] = nodeClass.Status.ResolvedImageID
+	}
+
+	nc.Annotations = lo.Assign(nc.Annotations, annotations)
 
 	log.Info("Node creation completed successfully",
 		"providerID", nc.Status.ProviderID,
@@ -551,6 +558,7 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCla
 	// Get the current hash from the node's annotations
 	currentHash := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
 	currentVersion := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion]
+	storedImageID := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClaimImageID]
 
 	// Get the NodeClass
 	nodeClass := &v1alpha1.IBMNodeClass{}
@@ -573,6 +581,15 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCla
 	if expectedHash != currentHash {
 		log.Info("NodeClass hash mismatch", "current", currentHash, "expected", expectedHash)
 		return "NodeClassHashChanged", nil
+	}
+
+	// Check if the ImageID matches
+	currentImageID := nodeClass.Status.ResolvedImageID
+	if storedImageID != "" && currentImageID != "" {
+		if storedImageID != currentImageID {
+			log.Info("Node image drift detected", "storedImageID", storedImageID, "currentImageID", currentImageID)
+			return "ImageDrift", nil
+		}
 	}
 
 	return "", nil
