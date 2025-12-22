@@ -603,7 +603,7 @@ func TestControllerReconcile(t *testing.T) {
 
 			result, err := controller.Reconcile(ctx, req)
 			assert.NoError(t, err, "Reconcile should not return error")
-			assert.Equal(t, reconcile.Result{}, result, "Should not requeue")
+			assert.Equal(t, 24*time.Hour, result.RequeueAfter, "Should requeue periodically for status refresh")
 
 			// Verify
 			var updatedNodeClass v1alpha1.IBMNodeClass
@@ -925,7 +925,7 @@ func TestControllerWithRealIBMCloud(t *testing.T) {
 
 			result, err := controller.Reconcile(timeoutCtx, req)
 			assert.NoError(t, err, "Reconcile should not return error")
-			assert.Equal(t, reconcile.Result{}, result, "Should not requeue")
+			assert.Equal(t, 24*time.Hour, result.RequeueAfter, "Should requeue periodically for status refresh")
 
 			// Verify status was updated
 			var updatedNodeClass v1alpha1.IBMNodeClass
