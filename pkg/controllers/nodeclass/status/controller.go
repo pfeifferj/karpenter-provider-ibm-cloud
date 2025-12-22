@@ -40,6 +40,8 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/vpcclient"
 )
 
+const nodeClassStatusRefreshInterval = 24 * time.Hour
+
 // Controller reconciles an IBMNodeClass object to update its status
 type Controller struct {
 	kubeClient       client.Client
@@ -136,7 +138,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			}
 			return reconcile.Result{}, err
 		}
-		return reconcile.Result{}, nil
+		return reconcile.Result{RequeueAfter: nodeClassStatusRefreshInterval}, nil
 	}
 
 	// Validation passed - clear any previous validation error and set Ready condition
@@ -161,7 +163,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, err
 	}
 
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: nodeClassStatusRefreshInterval}, nil
 }
 
 // validateNodeClass performs comprehensive validation of the IBMNodeClass configuration
