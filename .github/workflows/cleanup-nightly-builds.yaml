@@ -24,29 +24,25 @@ jobs:
       - name: Cleanup old nightly builds
         uses: actions/github-script@v7
         env:
-          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
-          QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+          QUAY_API_TOKEN: ${{ secrets.QUAY_API_TOKEN }}
         with:
           script: |
             const retentionDays = parseInt('${{ github.event.inputs.retention_days || 7 }}');
             const dryRun = ${{ github.event.inputs.dry_run || false }};
             const quayRepo = 'karpenter-provider-ibm-cloud/controller';
             const quayApi = 'https://quay.io/api/v1';
-            const quayUsername = process.env.QUAY_USERNAME;
-            const quayPassword = process.env.QUAY_PASSWORD;
+            const quayToken = process.env.QUAY_API_TOKEN;
 
             console.log(`Retention period: ${retentionDays} days`);
             console.log(`Dry run: ${dryRun}`);
 
-            if (!quayUsername || !quayPassword) {
-              console.log('Error: QUAY_USERNAME and QUAY_PASSWORD secrets must be configured');
+            if (!quayToken) {
+              console.log('Error: QUAY_API_TOKEN secret must be configured (OAuth Access Token from Quay.io)');
               return;
             }
 
-            // Use Basic auth with robot credentials
-            const authHeader = 'Basic ' + Buffer.from(`${quayUsername}:${quayPassword}`).toString('base64');
-            // Mask the derived credential so it won't appear in logs
-            core.setSecret(authHeader);
+            // Use Bearer auth with OAuth token (required for API delete operations)
+            const authHeader = `Bearer ${quayToken}`;
 
             // Fetch all tags with pagination
             let allTags = [];
@@ -129,7 +125,8 @@ jobs:
                   if (deleteResponse.ok || deleteResponse.status === 204) {
                     console.log(`Deleted tag: ${tag.name}`);
                   } else {
-                    console.warn(`Failed to delete ${tag.name}: ${deleteResponse.status}`);
+                    const errorBody = await deleteResponse.text();
+                    console.warn(`Failed to delete ${tag.name}: ${deleteResponse.status} - ${errorBody}`);
                   }
                 } catch (error) {
                   console.error(`Failed to delete tag ${tag.name}: ${error.message}`);
