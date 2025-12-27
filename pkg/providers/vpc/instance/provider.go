@@ -243,7 +243,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 			zone = subnetInfo.Zone
 			subnet = selectedSubnetID
 
-			logger.Info("Using pre-selected subnet from status",
+			logger.Info("Used pre-selected subnet from status",
 				"zone", zone, "subnet", subnet, "selectedSubnets", nodeClass.Status.SelectedSubnets)
 		} else {
 			// Fallback: Select subnets directly if status not populated
@@ -307,7 +307,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		return nil, fmt.Errorf("both zone and subnet must be specified")
 	}
 
-	logger.Info("Creating VPC instance with VNI", "instance_profile", instanceProfile, "zone", zone, "subnet", subnet)
+	logger.Info("Initiated VPC instance creation with VNI", "instance_profile", instanceProfile, "zone", zone, "subnet", subnet)
 
 	// Create virtual network interface for proper VPC service network access
 	vniPrototype := &vpcv1.InstanceNetworkAttachmentPrototypeVirtualNetworkInterfaceVirtualNetworkInterfacePrototypeInstanceNetworkAttachmentContext{
@@ -340,7 +340,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	} else {
 		// If no resource group specified, the VNI will use the account default
 		// This satisfies the oneOf constraint by explicitly not setting the ResourceGroup field
-		logger.Info("No resource group specified for VNI, using account default")
+		logger.Info("Used account default for VNI as no resource group was specified")
 	}
 
 	// Add security groups if specified, otherwise use default
@@ -350,7 +350,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 			securityGroups = append(securityGroups, &vpcv1.SecurityGroupIdentityByID{ID: &sg})
 		}
 		vniPrototype.SecurityGroups = securityGroups
-		logger.Info("Applying security groups to VNI", "security_groups", nodeClass.Spec.SecurityGroups, "count", len(securityGroups))
+		logger.Info("Applied security groups to VNI", "security_groups", nodeClass.Spec.SecurityGroups, "count", len(securityGroups))
 	} else {
 		// Get default security group for VPC
 		defaultSG, sgErr := p.getDefaultSecurityGroup(ctx, vpcClient, nodeClass.Spec.VPC)
@@ -360,7 +360,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		vniPrototype.SecurityGroups = []vpcv1.SecurityGroupIdentityIntf{
 			&vpcv1.SecurityGroupIdentityByID{ID: defaultSG.ID},
 		}
-		logger.Info("Using default security group for VNI", "security_group", *defaultSG.ID)
+		logger.Info("Used default security group for VNI", "security_group", *defaultSG.ID)
 	}
 
 	// Create primary network attachment with VNI
@@ -383,7 +383,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	if nodeClass.Status.ResolvedImageID != "" {
 		// Use cached resolved image from status
 		imageID = nodeClass.Status.ResolvedImageID
-		logger.Info("Using cached resolved image from NodeClass status",
+		logger.Info("Used cached resolved image from NodeClass status",
 			"resolvedImageID", imageID,
 			"hasImageSelector", nodeClass.Spec.ImageSelector != nil,
 			"hasExplicitImage", nodeClass.Spec.Image != "")
@@ -396,7 +396,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 
 		// Use explicit image if specified, otherwise use imageSelector
 		if nodeClass.Spec.Image != "" {
-			logger.Info("Resolving explicit image inline", "image", nodeClass.Spec.Image)
+			logger.Info("Resolved explicit image inline", "image", nodeClass.Spec.Image)
 			imageID, err = imageResolver.ResolveImage(ctx, nodeClass.Spec.Image)
 			if err != nil {
 				logger.Error(err, "Failed to resolve explicit image", "image", nodeClass.Spec.Image)
@@ -404,7 +404,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 			}
 			logger.Info("Successfully resolved explicit image inline", "image", nodeClass.Spec.Image, "imageID", imageID)
 		} else if nodeClass.Spec.ImageSelector != nil {
-			logger.Info("Resolving image using selector inline",
+			logger.Info("Resolved image using selector inline",
 				"os", nodeClass.Spec.ImageSelector.OS,
 				"majorVersion", nodeClass.Spec.ImageSelector.MajorVersion,
 				"minorVersion", nodeClass.Spec.ImageSelector.MinorVersion,
@@ -456,7 +456,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	}
 
 	// Debug log the instance profile value before VPC instance creation
-	logger.Info("DEBUG: Creating VPC instance with profile",
+	logger.V(1).Info("Logged VPC instance creation profile details",
 		"instanceProfile", instanceProfile,
 		"instanceProfile-ptr", &instanceProfile,
 		"instanceProfile-empty", instanceProfile == "",
@@ -501,7 +501,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 
 	// Add resource group if specified
 	if nodeClass.Spec.ResourceGroup != "" {
-		logger.Info("Starting instance resource group resolution",
+		logger.Info("Started instance resource group resolution",
 			"resourceGroup", nodeClass.Spec.ResourceGroup,
 			"instanceProfile", instanceProfile,
 			"selectionType", "dynamic")
@@ -565,7 +565,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	}
 
 	// Debug logging: COMPREHENSIVE struct validation
-	logger.Info("COMPREHENSIVE VPC instance prototype validation",
+	logger.Info("Validated VPC instance prototype",
 		"instance_name", nodeClaim.Name,
 		"instanceProfile", instanceProfile,
 		"imageID", imageID,
@@ -598,20 +598,20 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 			"profileName", *profileIdentity.Name,
 			"profileType", fmt.Sprintf("%T", instancePrototype.Profile))
 	} else {
-		logger.Info("Profile field details for oneOf debugging",
+		logger.Info("Logged profile field details for oneOf debugging",
 			"profileType", fmt.Sprintf("%T", instancePrototype.Profile),
 			"profileName", instanceProfile,
 			"profilePtr", fmt.Sprintf("%p", instancePrototype.Profile))
 	}
 
 	// Create the instance
-	logger.Info("Creating VPC instance",
+	logger.Info("Initiated VPC instance creation",
 		"instance_name", nodeClaim.Name,
 		"instance_profile", instanceProfile,
 		"zone", zone)
 
 	// DETAILED REQUEST LOGGING: Log the full instance prototype details
-	logger.Info("VPC CreateInstance request details",
+	logger.Info("Logged VPC CreateInstance request details",
 		"prototype_type", fmt.Sprintf("%T", instancePrototype),
 		"name", instancePrototype.Name,
 		"image_id", instancePrototype.Image,
@@ -631,7 +631,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	// This helps debug oneOf constraint violations
 	prototypeJSON, jsonErr := json.MarshalIndent(instancePrototype, "", "  ")
 	if jsonErr != nil {
-		logger.Info("WARN: Failed to marshal instancePrototype for debugging", "error", jsonErr)
+		logger.Info("Warning: Failed to marshal instancePrototype for debugging", "error", jsonErr)
 	} else {
 		// Sanitize user data before logging (it contains sensitive bootstrap tokens)
 		var prototypeMap map[string]interface{}
@@ -640,16 +640,16 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 				prototypeMap["user_data"] = "[REDACTED - contains bootstrap token]"
 			}
 			sanitizedJSON, _ := json.MarshalIndent(prototypeMap, "", "  ")
-			logger.Info("DEBUG: InstancePrototype JSON payload", "json", string(sanitizedJSON))
+			logger.V(1).Info("Logged InstancePrototype JSON payload", "json", string(sanitizedJSON))
 		} else {
-			logger.Info("DEBUG: InstancePrototype JSON payload (raw)", "json", string(prototypeJSON))
+			logger.V(1).Info("Logged InstancePrototype JSON payload (raw)", "json", string(prototypeJSON))
 		}
 	}
 
 	// Log volume attachments details for block device troubleshooting
 	if len(instancePrototype.VolumeAttachments) > 0 {
 		for i, va := range instancePrototype.VolumeAttachments {
-			logger.Info("VolumeAttachment details",
+			logger.Info("Logged VolumeAttachment details",
 				"index", i,
 				"name", va.Name,
 				"volume_type", fmt.Sprintf("%T", va.Volume),
@@ -657,7 +657,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 
 			// Log detailed volume fields for oneOf debugging
 			if volumeByCapacity, ok := va.Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity); ok {
-				logger.Info("Volume by capacity details",
+				logger.Info("Logged volume by capacity details",
 					"index", i,
 					"volume_name", volumeByCapacity.Name,
 					"volume_capacity", volumeByCapacity.Capacity,
@@ -719,7 +719,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		// Log specific oneOf error pattern analysis
 		errorString := err.Error()
 		isOneOfError := strings.Contains(errorString, "oneOf") || strings.Contains(errorString, "Expected only one")
-		logger.Info("OneOf error analysis",
+		logger.Info("Analyzed OneOf error",
 			"instance_name", nodeClaim.Name,
 			"is_oneof_error", isOneOfError,
 			"error_contains_oneof", strings.Contains(errorString, "oneOf"),
@@ -730,7 +730,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 			"is_dynamic_selection", nodeClass.Spec.InstanceProfile == "")
 
 		if p.isPartialFailure(ibmErr) {
-			logger.Info("Instance creation failed after partial resource creation, attempting cleanup",
+			logger.Info("Attempted cleanup after instance creation failed with partial resource creation",
 				"instance_name", nodeClaim.Name,
 				"error_code", ibmErr.Code)
 
@@ -766,7 +766,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	// Log network attachment details
 	if len(instance.NetworkAttachments) > 0 {
 		for i, na := range instance.NetworkAttachments {
-			logger.Info("Network attachment in response",
+			logger.Info("Logged network attachment in response",
 				"index", i,
 				"attachment_id", na.ID,
 				"attachment_type", fmt.Sprintf("%T", na))
@@ -776,7 +776,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	// Log volume attachment details in response
 	if len(instance.VolumeAttachments) > 0 {
 		for i, va := range instance.VolumeAttachments {
-			logger.Info("Volume attachment in response",
+			logger.Info("Logged volume attachment in response",
 				"index", i,
 				"attachment_id", va.ID,
 				"volume_id", va.Volume,
@@ -959,7 +959,7 @@ func (p *VPCInstanceProvider) Delete(ctx context.Context, node *corev1.Node) err
 		return err
 	}
 
-	logger.Info("Deleting VPC instance", "instance_id", instanceID, "node", node.Name)
+	logger.Info("Initiated VPC instance deletion", "instance_id", instanceID, "node", node.Name)
 
 	// Extract instance type from node labels for metrics
 	instanceType := "unknown"
@@ -1156,7 +1156,7 @@ func (p *VPCInstanceProvider) isPartialFailure(ibmErr *ibm.IBMError) bool {
 
 // cleanupOrphanedResources attempts to clean up resources that might be left after instance creation failure
 func (p *VPCInstanceProvider) cleanupOrphanedResources(ctx context.Context, vpcClient *ibm.VPCClient, instanceName, vpcID string, logger logr.Logger) error {
-	logger.Info("Starting cleanup of potentially orphaned resources", "instance_name", instanceName)
+	logger.Info("Started cleanup of potentially orphaned resources", "instance_name", instanceName)
 
 	var errors []error
 
@@ -1182,7 +1182,7 @@ func (p *VPCInstanceProvider) cleanupOrphanedResources(ctx context.Context, vpcC
 
 // cleanupOrphanedVNI removes a VNI that might have been created during failed instance creation
 func (p *VPCInstanceProvider) cleanupOrphanedVNI(ctx context.Context, vpcClient *ibm.VPCClient, vniName, vpcID string, logger logr.Logger) error {
-	logger.Info("Searching for orphaned VNI to cleanup", "vni_name", vniName, "vpc_id", vpcID)
+	logger.Info("Searched for orphaned VNI to cleanup", "vni_name", vniName, "vpc_id", vpcID)
 
 	// List virtual network interfaces to find the orphaned one
 	options := &vpcv1.ListVirtualNetworkInterfacesOptions{
@@ -1197,7 +1197,7 @@ func (p *VPCInstanceProvider) cleanupOrphanedVNI(ctx context.Context, vpcClient 
 	// Look for VNI with matching name
 	for _, vni := range vnis.VirtualNetworkInterfaces {
 		if vni.Name != nil && *vni.Name == vniName {
-			logger.Info("Found orphaned VNI, attempting deletion", "vni_id", *vni.ID, "vni_name", vniName)
+			logger.Info("Found orphaned VNI and initiated deletion", "vni_id", *vni.ID, "vni_name", vniName)
 
 			if err := vpcClient.DeleteVirtualNetworkInterface(ctx, *vni.ID); err != nil {
 				// Check if it's already deleted (not found error is acceptable)
@@ -1219,7 +1219,7 @@ func (p *VPCInstanceProvider) cleanupOrphanedVNI(ctx context.Context, vpcClient 
 
 // cleanupOrphanedVolume removes a volume that might have been created during failed instance creation
 func (p *VPCInstanceProvider) cleanupOrphanedVolume(ctx context.Context, vpcClient *ibm.VPCClient, volumeName string, logger logr.Logger) error {
-	logger.Info("Searching for orphaned volume to cleanup", "volume_name", volumeName)
+	logger.Info("Searched for orphaned volume to cleanup", "volume_name", volumeName)
 
 	// List volumes to find the orphaned one
 	options := &vpcv1.ListVolumesOptions{
@@ -1234,7 +1234,7 @@ func (p *VPCInstanceProvider) cleanupOrphanedVolume(ctx context.Context, vpcClie
 	// Look for volume with matching name
 	for _, volume := range volumes.Volumes {
 		if volume.Name != nil && *volume.Name == volumeName {
-			logger.Info("Found orphaned volume, attempting deletion", "volume_id", *volume.ID, "volume_name", volumeName)
+			logger.Info("Found orphaned volume and initiated deletion", "volume_id", *volume.ID, "volume_name", volumeName)
 
 			if err := vpcClient.DeleteVolume(ctx, *volume.ID); err != nil {
 				// Check if it's already deleted (not found error is acceptable)
@@ -1456,7 +1456,7 @@ func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceIDAndType(ctx
 
 	// Use manual userData if provided
 	if nodeClass.Spec.UserData != "" {
-		logger.Info("Using manual userData from IBMNodeClass")
+		logger.Info("Used manual userData from IBMNodeClass")
 		// Inject BOOTSTRAP_* environment variables into custom userData
 		return bootstrap.InjectBootstrapEnvVars(ctx, nodeClass.Spec.UserData), nil
 	}
@@ -1479,7 +1479,7 @@ func (p *VPCInstanceProvider) generateBootstrapUserDataWithInstanceIDAndType(ctx
 	}
 
 	// Generate dynamic bootstrap script with instance ID and selected type
-	logger.Info("Generating dynamic bootstrap script with automatic cluster discovery",
+	logger.Info("Generated dynamic bootstrap script with automatic cluster discovery",
 		"instanceID", instanceID,
 		"selectedInstanceType", selectedInstanceType)
 	userData, err := p.bootstrapProvider.GetUserDataWithInstanceIDAndType(ctx, nodeClass, nodeClaim, instanceID, selectedInstanceType)
@@ -1520,7 +1520,7 @@ func (p *VPCInstanceProvider) resolveResourceGroupID(ctx context.Context, resour
 	}
 
 	// Otherwise, treat it as a name and resolve to ID using IBM Platform Services
-	logger.Info("Resolving resource group name to ID", "resource_group_name", resourceGroupInput)
+	logger.Info("Resolved resource group name to ID", "resource_group_name", resourceGroupInput)
 
 	// Get resource groups from IBM Platform Services
 	resourceGroupID, err := p.client.GetResourceGroupIDByName(ctx, resourceGroupInput)
@@ -1663,7 +1663,7 @@ func (p *VPCInstanceProvider) addKarpenterTags(ctx context.Context, vpcClient *i
 		}
 	}
 
-	logger.Info("Adding Karpenter tags to instance",
+	logger.Info("Added Karpenter tags to instance",
 		"instance-id", instanceID,
 		"cluster", clusterName,
 		"nodepool", nodeClaim.Labels["karpenter.sh/nodepool"],
