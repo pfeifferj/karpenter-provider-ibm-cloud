@@ -22,6 +22,18 @@ repos:
         language: system
         types: [go]
         stages: [pre-commit]
+      - id: verify-codegen
+        name: verify generated code
+        entry: bash -c 'make generate && git diff --exit-code pkg/apis/ charts/crds/ || (echo "Generated code is out of date. Run make generate and commit." && exit 1)'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: verify-vendor
+        name: verify vendor
+        entry: bash -c 'make vendor && git diff --exit-code vendor/ || (echo "Vendor directory is out of date. Run make vendor and commit." && exit 1)'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
       - id: go-test
         name: go test
         entry: go test ./...
