@@ -182,7 +182,7 @@ func (c *Controller) validateNodeClass(ctx context.Context, nc *v1alpha1.IBMNode
 
 	// Phase 3: IBM Cloud resource validation
 	if err := c.validateIBMCloudResources(ctx, nc); err != nil {
-		logger.V(1).Info("IBM Cloud resource validation failed", "error", err)
+		logger.V(1).Info("Failing IBM Cloud resource validation", "error", err)
 		return fmt.Errorf("IBM Cloud resource validation failed: %w", err)
 	}
 
@@ -191,7 +191,7 @@ func (c *Controller) validateNodeClass(ctx context.Context, nc *v1alpha1.IBMNode
 		return fmt.Errorf("business logic validation failed: %w", err)
 	}
 
-	logger.V(1).Info("NodeClass validation succeeded")
+	logger.V(1).Info("Passing NodeClass validation")
 	return nil
 }
 
@@ -655,7 +655,7 @@ func (c *Controller) validateImageConfiguration(ctx context.Context, nc *v1alpha
 		}
 		// Store resolved image ID in status for use during provisioning
 		nc.Status.ResolvedImageID = resolvedImageID
-		logger.V(1).Info("Resolved and cached explicit image",
+		logger.V(1).Info("Resolving and caching explicit image",
 			"image", nc.Spec.Image,
 			"resolvedImageID", resolvedImageID)
 		return nil
