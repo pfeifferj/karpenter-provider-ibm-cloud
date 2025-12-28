@@ -1093,6 +1093,108 @@ func TestCloudProvider_IsDrifted_SubnetDrift_WhenExplicitSubnetChanged(t *testin
 	assert.Equal(t, SubnetDrift, drift)
 }
 
+func TestCloudProvider_IsDrifted_SecurityGroupDrift_WhenSGsDoNotMatch(t *testing.T) {
+	ctx := context.Background()
+	scheme := getTestScheme()
+
+	nodeClass := getTestNodeClass()
+	nodeClass.Status.ResolvedSecurityGroups = []string{"sg-new-1", "sg-new-2"}
+
+	nodeClaim := &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-nodeclaim",
+			Annotations: map[string]string{
+				v1alpha1.AnnotationIBMNodeClassHashVersion:    v1alpha1.IBMNodeClassHashVersion,
+				v1alpha1.AnnotationIBMNodeClassHash:           nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClaimImageID:        nodeClass.Status.ResolvedImageID,
+				v1alpha1.AnnotationIBMNodeClaimSecurityGroups: "sg-old-1,sg-old-2",
+			},
+		},
+		Spec: karpv1.NodeClaimSpec{
+			NodeClassRef: &karpv1.NodeClassReference{Name: nodeClass.Name},
+		},
+	}
+
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nodeClass).
+		Build()
+
+	cp := &CloudProvider{kubeClient: kubeClient}
+
+	drift, err := cp.IsDrifted(ctx, nodeClaim)
+	assert.NoError(t, err)
+	assert.Equal(t, SecurityGroupDrift, drift)
+}
+
+func TestCloudProvider_IsDrifted_NoSecurityGroupDrift_WhenSGsMatch(t *testing.T) {
+	ctx := context.Background()
+	scheme := getTestScheme()
+
+	nodeClass := getTestNodeClass()
+	nodeClass.Status.ResolvedSecurityGroups = []string{"sg-123", "sg-456"}
+
+	nodeClaim := &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-nodeclaim",
+			Annotations: map[string]string{
+				v1alpha1.AnnotationIBMNodeClassHashVersion:    v1alpha1.IBMNodeClassHashVersion,
+				v1alpha1.AnnotationIBMNodeClassHash:           nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClaimImageID:        nodeClass.Status.ResolvedImageID,
+				v1alpha1.AnnotationIBMNodeClaimSecurityGroups: "sg-123,sg-456",
+			},
+		},
+		Spec: karpv1.NodeClaimSpec{
+			NodeClassRef: &karpv1.NodeClassReference{Name: nodeClass.Name},
+		},
+	}
+
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nodeClass).
+		Build()
+
+	cp := &CloudProvider{kubeClient: kubeClient}
+
+	drift, err := cp.IsDrifted(ctx, nodeClaim)
+	assert.NoError(t, err)
+	assert.Equal(t, cloudprovider.DriftReason(""), drift)
+}
+
+func TestCloudProvider_IsDrifted_SecurityGroupCheck_SkipsWhenNoAnnotation(t *testing.T) {
+	ctx := context.Background()
+	scheme := getTestScheme()
+
+	nodeClass := getTestNodeClass()
+	nodeClass.Status.ResolvedSecurityGroups = []string{"sg-123"}
+
+	nodeClaim := &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-nodeclaim",
+			Annotations: map[string]string{
+				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
+				v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClaimImageID:     nodeClass.Status.ResolvedImageID,
+				// No security groups annotation
+			},
+		},
+		Spec: karpv1.NodeClaimSpec{
+			NodeClassRef: &karpv1.NodeClassReference{Name: nodeClass.Name},
+		},
+	}
+
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nodeClass).
+		Build()
+
+	cp := &CloudProvider{kubeClient: kubeClient}
+
+	drift, err := cp.IsDrifted(ctx, nodeClaim)
+	assert.NoError(t, err)
+	assert.Equal(t, cloudprovider.DriftReason(""), drift)
+}
+
 func TestCloudProvider_Get(t *testing.T) {
 	tests := []struct {
 		name         string

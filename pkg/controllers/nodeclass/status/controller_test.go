@@ -2299,6 +2299,23 @@ func TestValidateIBMCloudResources_SecurityGroupsAndSSHKeys(t *testing.T) {
 	}
 }
 
+func TestSecurityGroupResolution_ExplicitSGsMirroredToStatus(t *testing.T) {
+	ctx := context.Background()
+
+	nodeClass := &v1alpha1.IBMNodeClass{
+		Spec: v1alpha1.IBMNodeClassSpec{
+			Region:         "us-south",
+			VPC:            "r010-12345678-1234-5678-9abc-def012345678",
+			Image:          "ubuntu-20-04-amd64",
+			SecurityGroups: []string{"sg-explicit-1", "sg-explicit-2"},
+		},
+	}
+
+	controller := NewTestController(nil)
+	err := controller.validateIBMCloudResources(ctx, nodeClass)
+	assert.NoError(t, err)
+}
+
 func TestRegister(t *testing.T) {
 	s := getTestScheme()
 	kubeClient := fake.NewClientBuilder().WithScheme(s).Build()

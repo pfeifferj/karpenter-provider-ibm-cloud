@@ -324,11 +324,19 @@ func (c *Controller) validateIBMCloudResources(ctx context.Context, nc *v1alpha1
 		return fmt.Errorf("image validation failed: %w", err)
 	}
 
-	// Validate security groups exist and are accessible
+	// Validate and resolve security groups
 	if len(nc.Spec.SecurityGroups) > 0 {
 		if err := c.validateSecurityGroups(ctx, nc.Spec.SecurityGroups, nc.Spec.VPC, nc.Spec.Region); err != nil {
 			return fmt.Errorf("security group validation failed: %w", err)
 		}
+		nc.Status.ResolvedSecurityGroups = nc.Spec.SecurityGroups
+	} else {
+		// No explicit SGs - resolve default security group from VPC
+		defaultSGID, err := c.resolveDefaultSecurityGroup(ctx, nc.Spec.VPC)
+		if err != nil {
+			return fmt.Errorf("failed to resolve default security group: %w", err)
+		}
+		nc.Status.ResolvedSecurityGroups = []string{defaultSGID}
 	}
 
 	// Validate SSH keys exist and are accessible
@@ -339,6 +347,19 @@ func (c *Controller) validateIBMCloudResources(ctx context.Context, nc *v1alpha1
 	}
 
 	return nil
+}
+
+// resolveDefaultSecurityGroup gets the default security group ID for a VPC
+func (c *Controller) resolveDefaultSecurityGroup(ctx context.Context, vpcID string) (string, error) {
+	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
+	if err != nil {
+		return "", fmt.Errorf("getting VPC client: %w", err)
+	}
+	defaultSG, err := vpcClient.GetDefaultSecurityGroup(ctx, vpcID)
+	if err != nil {
+		return "", err
+	}
+	return *defaultSG.ID, nil
 }
 
 // validateRegion validates that the region exists and is accessible
