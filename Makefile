@@ -87,7 +87,7 @@ manifests: ## generate the controller-gen kubernetes manifests
 test: vendor unit
 
 .PHONY: ci
-ci: vendor unit lint ## Run all CI checks (tests + linting)
+ci: ensure-hooks vendor unit lint ## Run all CI checks (tests + linting)
 
 .PHONY: unit
 unit:
@@ -151,12 +151,20 @@ verify-license: ## Verify all Go files have license headers
 pre-commit: ## Run pre-commit checks (license headers + linting)
 	hack/pre-commit.sh
 
-.PHONY: lint-commits install-git-hooks
+.PHONY: ensure-hooks
+ensure-hooks: ## Ensure git hooks are installed (runs automatically)
+	@if [ ! -f .git/hooks/pre-commit ] || [ ! -f .git/hooks/pre-push ]; then \
+		echo "Installing git hooks..."; \
+		pre-commit install; \
+		pre-commit install --hook-type pre-push; \
+		if command -v gitlint >/dev/null 2>&1; then \
+			gitlint install-hook; \
+		fi; \
+	fi
+
+.PHONY: lint-commits
 lint-commits: ## Lint commit messages since main
 	gitlint --commits origin/main..HEAD
-
-install-git-hooks: ## Install gitlint git hooks
-	gitlint install-hook
 
 .PHONY: k8s-support-table
 k8s-support-table: ## Generate Kubernetes version support table
