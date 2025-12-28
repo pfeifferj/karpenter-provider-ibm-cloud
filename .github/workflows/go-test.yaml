@@ -44,6 +44,18 @@ jobs:
         git diff --exit-code pkg/providers/common/types/mock/ pkg/cloudprovider/ibm/mock/ pkg/providers/common/pricing/mock/ || \
           (echo "Error: Generated mocks are out of date. Run 'make gen-mocks' and commit the changes." && exit 1)
 
+    - name: Verify generated code is up to date
+      run: |
+        make generate
+        git diff --exit-code pkg/apis/ charts/crds/ || \
+          (echo "Error: Generated code (CRDs/deepcopy) is out of date. Run 'make generate' and commit the changes." && exit 1)
+
+    - name: Verify vendor is up to date
+      run: |
+        make vendor
+        git diff --exit-code vendor/ go.sum || \
+          (echo "Error: Vendor directory is out of date. Run 'make vendor' and commit the changes." && exit 1)
+
     - name: Run tests
       run: |
         go test -v -race ./...
