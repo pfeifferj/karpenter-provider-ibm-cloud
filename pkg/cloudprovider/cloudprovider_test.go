@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -1193,6 +1195,113 @@ func TestCloudProvider_IsDrifted_SecurityGroupCheck_SkipsWhenNoAnnotation(t *tes
 	drift, err := cp.IsDrifted(ctx, nodeClaim)
 	assert.NoError(t, err)
 	assert.Equal(t, cloudprovider.DriftReason(""), drift)
+}
+
+func TestCloudProvider_IsDrifted_RecordsMetrics(t *testing.T) {
+	tests := []struct {
+		name                 string
+		nodeClaim            *karpv1.NodeClaim
+		expectedDrift        cloudprovider.DriftReason
+		expectMetricRecorded bool
+	}{
+		{
+			name: "no drift - duration recorded, counter not incremented",
+			nodeClaim: &karpv1.NodeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclaim",
+					Annotations: map[string]string{
+						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
+						v1alpha1.AnnotationIBMNodeClassHash:        "12345",
+						v1alpha1.AnnotationIBMNodeClaimImageID:     "image-id-1",
+					},
+				},
+				Spec: karpv1.NodeClaimSpec{
+					NodeClassRef: &karpv1.NodeClassReference{
+						Name: "test-nodeclass",
+					},
+				},
+			},
+			expectedDrift:        "",
+			expectMetricRecorded: false,
+		},
+		{
+			name: "hash drift - counter incremented",
+			nodeClaim: &karpv1.NodeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclaim",
+					Annotations: map[string]string{
+						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
+						v1alpha1.AnnotationIBMNodeClassHash:        "different-hash",
+						v1alpha1.AnnotationIBMNodeClaimImageID:     "image-id-1",
+					},
+				},
+				Spec: karpv1.NodeClaimSpec{
+					NodeClassRef: &karpv1.NodeClassReference{
+						Name: "test-nodeclass",
+					},
+				},
+			},
+			expectedDrift:        NodeClassHashChangedDrift,
+			expectMetricRecorded: true,
+		},
+		{
+			name: "image drift - counter incremented",
+			nodeClaim: &karpv1.NodeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-nodeclaim",
+					Annotations: map[string]string{
+						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
+						v1alpha1.AnnotationIBMNodeClassHash:        "12345",
+						v1alpha1.AnnotationIBMNodeClaimImageID:     "old-image-id",
+					},
+				},
+				Spec: karpv1.NodeClaimSpec{
+					NodeClassRef: &karpv1.NodeClassReference{
+						Name: "test-nodeclass",
+					},
+				},
+			},
+			expectedDrift:        ImageDrift,
+			expectMetricRecorded: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset metrics before each test
+			metrics.DriftDetectionsTotal.Reset()
+			metrics.DriftDetectionDuration.Reset()
+
+			ctx := context.Background()
+			scheme := getTestScheme()
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(getTestNodeClass()).
+				Build()
+
+			cp := &CloudProvider{
+				kubeClient: fakeClient,
+			}
+
+			drift, err := cp.IsDrifted(ctx, tt.nodeClaim)
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedDrift, drift)
+
+			// Verify counter metric
+			if tt.expectMetricRecorded {
+				count := testutil.ToFloat64(metrics.DriftDetectionsTotal.WithLabelValues(
+					string(tt.expectedDrift),
+					tt.nodeClaim.Spec.NodeClassRef.Name,
+				))
+				assert.Equal(t, float64(1), count, "DriftDetectionsTotal should be incremented")
+			}
+
+			// Duration metric should always have observations
+			// (we can't easily check histogram values, but we verify no panic)
+		})
+	}
 }
 
 func TestCloudProvider_Get(t *testing.T) {

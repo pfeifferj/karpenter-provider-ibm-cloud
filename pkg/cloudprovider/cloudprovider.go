@@ -24,6 +24,7 @@ import (
 
 	"github.com/awslabs/operatorpkg/status"
 	"github.com/go-logr/logr"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/metrics"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -562,8 +563,20 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 	return compatible, nil
 }
 
-func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeClaim) (cloudprovider.DriftReason, error) {
+func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeClaim) (driftReason cloudprovider.DriftReason, err error) {
 	log := log.FromContext(ctx).WithValues("nodeClaim", nodeClaim.Name, "providerID", nodeClaim.Status.ProviderID)
+
+	nodeClassName := nodeClaim.Spec.NodeClassRef.Name
+	start := time.Now()
+	defer func() {
+		metrics.DriftDetectionDuration.WithLabelValues(
+			nodeClassName,
+		).Observe(time.Since(start).Seconds())
+
+		if driftReason != "" {
+			metrics.DriftDetectionsTotal.WithLabelValues(string(driftReason), nodeClassName).Inc()
+		}
+	}()
 
 	// Get the NodeClass
 	nodeClass, driftReason, err := c.getNodeClassForDrift(ctx, log, nodeClaim)
