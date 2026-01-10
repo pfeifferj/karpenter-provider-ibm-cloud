@@ -607,18 +607,8 @@ func TestE2ETaintsBasicScheduling(t *testing.T) {
 		_ = suite.kubeClient.Delete(ctx, intolerantDeployment)
 	}()
 
-	// Wait and verify intolerant deployment does NOT become ready
-	time.Sleep(30 * time.Second) // Give it time to try scheduling
-
-	var intolerantDep appsv1.Deployment
-	err = suite.kubeClient.Get(ctx, types.NamespacedName{
-		Namespace: intolerantDeployment.Namespace,
-		Name:      intolerantDeployment.Name,
-	}, &intolerantDep)
-	require.NoError(t, err)
-
-	// Should have 0 ready replicas due to taint preventing scheduling
-	assert.Equal(t, int32(0), intolerantDep.Status.ReadyReplicas, "Intolerant deployment should not have ready replicas due to taint")
+	// Verify intolerant deployment does NOT become ready (check multiple times to ensure stability)
+	suite.verifyDeploymentNotReady(t, intolerantDeployment.Name, intolerantDeployment.Namespace, 30*time.Second)
 
 	t.Logf("PASS: Basic taints scheduling E2E test passed - taints properly prevent intolerant pods from scheduling")
 }

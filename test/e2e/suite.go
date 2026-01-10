@@ -118,7 +118,7 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 		// Fallback to explicit kubeconfig if KUBECONFIG env is not set
 		kubeconfigPath := os.Getenv("KUBECONFIG")
 		if kubeconfigPath == "" {
-			kubeconfigPath = "../../kubecofig_test"
+			kubeconfigPath = "../../kubeconfig_test"
 		}
 		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		require.NoError(t, err)

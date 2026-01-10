@@ -238,12 +238,15 @@ func (s *E2ETestSuite) cleanupTestResources(t *testing.T, testName string) {
 
 		// If we deleted any resources, wait for them to be fully deleted
 		if resourcesDeleted {
+			// Create bounded context for waiting
+			waitCtx, waitCancel := context.WithTimeout(ctx, resource.timeout)
 			// Wait for deletion with appropriate timeout for IBM Cloud resources
-			success := s.waitForResourceDeletion(ctx, t, resource.name, resource.listObj, map[string]string{"test-name": testName}, resource.timeout)
+			success := s.waitForResourceDeletion(waitCtx, t, resource.name, resource.listObj, map[string]string{"test-name": testName}, resource.timeout)
 			if !success {
 				// Also check with "test": "e2e" label
-				s.waitForResourceDeletion(ctx, t, resource.name, resource.listObj, map[string]string{"test": "e2e"}, resource.timeout/2)
+				s.waitForResourceDeletion(waitCtx, t, resource.name, resource.listObj, map[string]string{"test": "e2e"}, resource.timeout/2)
 			}
+			waitCancel()
 		}
 	}
 
@@ -486,65 +489,6 @@ func (s *E2ETestSuite) matchesAnyPattern(name string, patterns []string) bool {
 		}
 	}
 	return false
-}
-
-// cleanupAllE2EResources performs a comprehensive cleanup of all E2E test resources
-func (s *E2ETestSuite) cleanupAllE2EResources(t *testing.T) {
-	ctx := context.Background()
-	t.Logf("Starting comprehensive E2E resource cleanup")
-
-	// Clean up all resources with the e2e test label
-	err := s.kubeClient.List(ctx, &appsv1.DeploymentList{}, client.MatchingLabels{"test": "e2e"})
-	if err == nil {
-		var deploymentList appsv1.DeploymentList
-		s.kubeClient.List(ctx, &deploymentList, client.MatchingLabels{"test": "e2e"})
-		for _, deployment := range deploymentList.Items {
-			s.kubeClient.Delete(ctx, &deployment)
-			t.Logf("Deleted deployment: %s", deployment.Name)
-		}
-	}
-
-	// Clean up NodeClaims
-	var nodeClaimList karpv1.NodeClaimList
-	err = s.kubeClient.List(ctx, &nodeClaimList, client.MatchingLabels{"test": "e2e"})
-	if err == nil {
-		for _, nodeClaim := range nodeClaimList.Items {
-			s.kubeClient.Delete(ctx, &nodeClaim)
-			t.Logf("Deleted NodeClaim: %s", nodeClaim.Name)
-		}
-	}
-
-	// Clean up NodePools
-	var nodePoolList karpv1.NodePoolList
-	err = s.kubeClient.List(ctx, &nodePoolList, client.MatchingLabels{"test": "e2e"})
-	if err == nil {
-		for _, nodePool := range nodePoolList.Items {
-			s.kubeClient.Delete(ctx, &nodePool)
-			t.Logf("Deleted NodePool: %s", nodePool.Name)
-		}
-	}
-
-	// Clean up IBMNodeClasses
-	var nodeClassList v1alpha1.IBMNodeClassList
-	err = s.kubeClient.List(ctx, &nodeClassList, client.MatchingLabels{"test": "e2e"})
-	if err == nil {
-		for _, nodeClass := range nodeClassList.Items {
-			s.kubeClient.Delete(ctx, &nodeClass)
-			t.Logf("Deleted IBMNodeClass: %s", nodeClass.Name)
-		}
-	}
-
-	// Clean up PodDisruptionBudgets
-	var pdbList policyv1.PodDisruptionBudgetList
-	err = s.kubeClient.List(ctx, &pdbList, client.MatchingLabels{"test": "e2e"})
-	if err == nil {
-		for _, pdb := range pdbList.Items {
-			s.kubeClient.Delete(ctx, &pdb)
-			t.Logf("Deleted PodDisruptionBudget: %s", pdb.Name)
-		}
-	}
-
-	t.Logf("Comprehensive E2E resource cleanup completed")
 }
 
 // cleanupOrphanedKubernetesResources removes resources that may be left behind after tests

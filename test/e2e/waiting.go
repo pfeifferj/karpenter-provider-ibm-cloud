@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -285,4 +286,111 @@ func (s *E2ETestSuite) waitForPodToBeRunning(t *testing.T, podName, namespace st
 		return false, nil
 	})
 	require.NoError(t, err, "Pod should be running within timeout")
+}
+
+// waitForNodesCleanedUp waits for all Karpenter nodes matching a NodePool to be removed
+func (s *E2ETestSuite) waitForNodesCleanedUp(t *testing.T, nodePoolName string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		nodes := s.getKarpenterNodes(t, nodePoolName)
+		if len(nodes) == 0 {
+			t.Logf("All nodes cleaned up for NodePool %s", nodePoolName)
+			return true, nil
+		}
+		t.Logf("Still waiting for %d nodes to be cleaned up for NodePool %s", len(nodes), nodePoolName)
+		return false, nil
+	})
+	require.NoError(t, err, "Nodes should be cleaned up within timeout")
+}
+
+// waitForNodeClaimsCleanedUp waits for all NodeClaims matching a NodePool to be removed
+func (s *E2ETestSuite) waitForNodeClaimsCleanedUp(t *testing.T, nodePoolName string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var nodeClaimList karpv1.NodeClaimList
+		err := s.kubeClient.List(ctx, &nodeClaimList, client.MatchingLabels{
+			"karpenter.sh/nodepool": nodePoolName,
+		})
+		if err != nil {
+			return false, err
+		}
+		if len(nodeClaimList.Items) == 0 {
+			t.Logf("All NodeClaims cleaned up for NodePool %s", nodePoolName)
+			return true, nil
+		}
+		t.Logf("Still waiting for %d NodeClaims to be cleaned up for NodePool %s", len(nodeClaimList.Items), nodePoolName)
+		return false, nil
+	})
+	require.NoError(t, err, "NodeClaims should be cleaned up within timeout")
+}
+
+// waitForPDBReady waits for a PodDisruptionBudget to be processed and have observed generation
+func (s *E2ETestSuite) waitForPDBReady(t *testing.T, pdbName, namespace string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var pdb policyv1.PodDisruptionBudget
+		err := s.kubeClient.Get(ctx, client.ObjectKey{Name: pdbName, Namespace: namespace}, &pdb)
+		if err != nil {
+			return false, err
+		}
+		// PDB is ready when ObservedGeneration matches Generation
+		if pdb.Status.ObservedGeneration >= pdb.Generation {
+			t.Logf("PDB %s is ready - Expected: %d, Current: %d", pdbName, pdb.Status.ExpectedPods, pdb.Status.CurrentHealthy)
+			return true, nil
+		}
+		return false, nil
+	})
+	require.NoError(t, err, "PDB should be ready within timeout")
+}
+
+// waitForNodeClaimCleanedUp waits for a specific NodeClaim to be removed
+func (s *E2ETestSuite) waitForNodeClaimCleanedUp(t *testing.T, nodeClaimName string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		var nodeClaim karpv1.NodeClaim
+		err := s.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaimName}, &nodeClaim)
+		if errors.IsNotFound(err) {
+			t.Logf("NodeClaim %s has been cleaned up", nodeClaimName)
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		t.Logf("NodeClaim %s still exists, waiting for cleanup...", nodeClaimName)
+		return false, nil
+	})
+	require.NoError(t, err, "NodeClaim should be cleaned up within timeout")
+}
+
+// waitForInstanceCountReduction waits for IBM Cloud instance count to reduce
+func (s *E2ETestSuite) waitForInstanceCountReduction(t *testing.T, targetCount int, timeout time.Duration) int {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var finalCount int
+	err := wait.PollUntilContextTimeout(ctx, 10*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		instances, err := s.getIBMCloudInstances(t)
+		if err != nil {
+			t.Logf("Warning: Failed to get instance count: %v", err)
+			return false, nil // Don't fail, just retry
+		}
+		finalCount = len(instances)
+		t.Logf("Current instance count: %d (target: %d)", finalCount, targetCount)
+		if finalCount <= targetCount {
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Logf("Warning: Instance count did not reach target within timeout")
+	}
+	return finalCount
 }

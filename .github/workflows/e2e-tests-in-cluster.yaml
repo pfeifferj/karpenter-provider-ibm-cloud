@@ -95,12 +95,23 @@ jobs:
       run: |
         echo "Cleaning up any existing e2e test resources..."
 
-        # Clean up any leftover resources from previous runs
-        kubectl delete pods -l test=e2e --all-namespaces --timeout=300s || true
-        kubectl delete deployments -l test=e2e --all-namespaces --timeout=300s || true
-        kubectl delete nodeclaims -l test=e2e --timeout=300s || true
-        kubectl delete nodepools -l test=e2e --timeout=300s || true
-        kubectl delete ibmnodeclasses -l test=e2e --timeout=300s || true
+        # Clean up any leftover resources from previous runs using multiple label patterns
+        # Primary label
+        kubectl delete pods -l test=e2e --all-namespaces --timeout=60s || true
+        kubectl delete deployments -l test=e2e --all-namespaces --timeout=60s || true
+        kubectl delete pdb -l test=e2e --all-namespaces --timeout=60s || true
+        kubectl delete nodeclaims -l test=e2e --timeout=60s || true
+        kubectl delete nodepools -l test=e2e --timeout=60s || true
+        kubectl delete ibmnodeclasses -l test=e2e --timeout=60s || true
+
+        # Additional label patterns used by test code
+        for label in "created-by=karpenter-e2e" "purpose=e2e-verification" "purpose=karpenter-test"; do
+          kubectl delete pods -l "$label" --all-namespaces --timeout=30s 2>/dev/null || true
+          kubectl delete deployments -l "$label" --all-namespaces --timeout=30s 2>/dev/null || true
+          kubectl delete nodeclaims -l "$label" --timeout=30s 2>/dev/null || true
+          kubectl delete nodepools -l "$label" --timeout=30s 2>/dev/null || true
+          kubectl delete ibmnodeclasses -l "$label" --timeout=30s 2>/dev/null || true
+        done
 
         # Wait for cluster stabilization
         echo "Waiting for cluster stabilization..."
@@ -118,9 +129,9 @@ jobs:
 
         # Wait for no disrupted nodes
         for i in {1..10}; do
-          disrupted_nodes=$(kubectl get nodes --no-headers -o custom-columns="NAME:.metadata.name,TAINTS:.spec.taints[*].key" | grep -c "karpenter.sh/disrupted" 2>/dev/null || echo "0")
-          disrupted_nodes=$(echo "$disrupted_nodes" | tr -d '\n' | grep -o '[0-9]*' || echo "0")
-          if [ "$disrupted_nodes" -eq 0 ]; then
+          disrupted_nodes=$(kubectl get nodes --no-headers -o custom-columns="TAINTS:.spec.taints[*].key" 2>/dev/null | grep -c "karpenter.sh/disrupted" || true)
+          disrupted_nodes=${disrupted_nodes:-0}
+          if [ "$disrupted_nodes" = "" ] || [ "$disrupted_nodes" -eq 0 ] 2>/dev/null; then
             echo "No disrupted nodes found"
             break
           fi
@@ -276,12 +287,13 @@ jobs:
           # Inter-test cleanup and stabilization
           echo "Cleaning up after test: $test"
 
-          # Delete test-specific resources
-          kubectl delete pods -l test=e2e --all-namespaces --timeout=300s || true
-          kubectl delete deployments -l test=e2e --all-namespaces --timeout=300s || true
-          kubectl delete nodeclaims -l test=e2e --timeout=300s || true
-          kubectl delete nodepools -l test=e2e --timeout=300s || true
-          kubectl delete ibmnodeclasses -l test=e2e --timeout=300s || true
+          # Delete test-specific resources (shorter timeouts for faster iteration)
+          kubectl delete pods -l test=e2e --all-namespaces --timeout=60s || true
+          kubectl delete deployments -l test=e2e --all-namespaces --timeout=60s || true
+          kubectl delete pdb -l test=e2e --all-namespaces --timeout=30s || true
+          kubectl delete nodeclaims -l test=e2e --timeout=120s || true
+          kubectl delete nodepools -l test=e2e --timeout=60s || true
+          kubectl delete ibmnodeclasses -l test=e2e --timeout=60s || true
 
           # Wait for cleanup to complete
           echo "Waiting for cleanup to complete..."

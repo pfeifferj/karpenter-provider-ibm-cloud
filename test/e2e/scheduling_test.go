@@ -155,8 +155,8 @@ func TestE2EConsolidationWithPDB(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("Scaled deployment down to 2 replicas")
 
-	// Wait for scaling to complete
-	time.Sleep(60 * time.Second)
+	// Wait for scaling to complete by checking deployment status
+	suite.waitForPodsToBeScheduled(t, deployment.Name, "default")
 
 	// Check if consolidation occurred while respecting PDB
 	// Note: Actual consolidation timing depends on Karpenter configuration
@@ -223,7 +223,7 @@ func TestE2EPodDisruptionBudget(t *testing.T) {
 	t.Logf("Created restrictive PDB: %s", pdb.Name)
 
 	// Wait for PDB to be processed
-	time.Sleep(30 * time.Second)
+	suite.waitForPDBReady(t, pdb.Name, pdb.Namespace, 30*time.Second)
 
 	// Verify PDB is active
 	var updatedPDB policyv1.PodDisruptionBudget

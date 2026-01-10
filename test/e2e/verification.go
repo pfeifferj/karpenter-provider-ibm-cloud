@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -304,4 +305,46 @@ func (s *E2ETestSuite) getIBMCloudInstances(t *testing.T) (map[string]string, er
 	}
 
 	return instances, nil
+}
+
+// verifyDeploymentNotReady verifies that a deployment does not become ready within the timeout
+// This is useful for testing negative cases like taint-based scheduling prevention
+func (s *E2ETestSuite) verifyDeploymentNotReady(t *testing.T, deploymentName, namespace string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// Check multiple times to ensure the deployment stays unscheduled
+	checkCount := 0
+	maxChecks := int(timeout / (5 * time.Second))
+	if maxChecks < 3 {
+		maxChecks = 3
+	}
+
+	for checkCount < maxChecks {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+			checkCount++
+			var deployment appsv1.Deployment
+			err := s.kubeClient.Get(ctx, types.NamespacedName{
+				Namespace: namespace,
+				Name:      deploymentName,
+			}, &deployment)
+			if err != nil {
+				t.Logf("Check %d: Failed to get deployment: %v", checkCount, err)
+				continue
+			}
+
+			// Verify deployment has 0 ready replicas
+			if deployment.Status.ReadyReplicas > 0 {
+				t.Errorf("Deployment %s unexpectedly has %d ready replicas - should have 0",
+					deploymentName, deployment.Status.ReadyReplicas)
+				return
+			}
+			t.Logf("Check %d: Deployment %s correctly has 0 ready replicas", checkCount, deploymentName)
+		}
+	}
+
+	t.Logf("Verified deployment %s remained unscheduled for %v", deploymentName, timeout)
 }

@@ -19,8 +19,10 @@ limitations under the License.
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -329,12 +331,8 @@ func TestE2EBlockDeviceMapping(t *testing.T) {
 	require.NotNil(t, nodeClaim.Spec.NodeClassRef)
 	require.Equal(t, nodeClass.Name, nodeClaim.Spec.NodeClassRef.Name)
 
-	// Wait a bit for the pod to execute and gather block device info
+	// Wait for pod to complete block device checks
 	t.Logf("Waiting for pod to complete block device checks...")
-	time.Sleep(30 * time.Second)
-
-	// Verify pod completed successfully by checking its exit status
-	t.Logf("Waiting for pod to complete...")
 	suite.waitForPodCompletion(t, testPod.Name, testPod.Namespace)
 
 	// Get pod status to verify successful completion
@@ -399,15 +397,24 @@ func TestE2EBlockDeviceMapping(t *testing.T) {
 	t.Logf("Block device mapping test completed successfully")
 }
 
-// getPodLogs retrieves logs from a pod (simplified version)
+// getPodLogs retrieves logs from a pod using kubectl
 func (s *E2ETestSuite) getPodLogs(ctx context.Context, podName, namespace string) (string, error) {
 	if namespace == "" {
 		namespace = "default"
 	}
 
-	// For now, return a placeholder since getting logs requires additional setup
-	// In a real implementation, this would use kubectl or a clientset
-	return "Pod logs not available in this test setup", nil
+	// Use kubectl to get pod logs
+	cmd := exec.CommandContext(ctx, "kubectl", "logs", podName, "-n", namespace)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("failed to get pod logs: %v, stderr: %s", err, stderr.String())
+	}
+
+	return stdout.String(), nil
 }
 
 // waitForPodCompletion waits for a pod to complete (either succeed or fail)

@@ -44,6 +44,12 @@ func TestE2EMultiZoneDistribution(t *testing.T) {
 	testName := fmt.Sprintf("multizone-distribution-%d", time.Now().Unix())
 	t.Logf("Starting multi-zone distribution test: %s", testName)
 
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		t.Logf("Running deferred cleanup for test: %s", testName)
+		suite.cleanupTestResources(t, testName)
+	}()
+
 	// Skip test if multi-zone infrastructure not available
 	if os.Getenv("E2E_SKIP_MULTIZONE") == "true" {
 		t.Skip("Skipping multi-zone test: E2E_SKIP_MULTIZONE is set")
@@ -68,9 +74,8 @@ func TestE2EMultiZoneDistribution(t *testing.T) {
 	// Verify all pods are running
 	suite.verifyPodsScheduledOnCorrectNodes(t, deployment.Name, "default", nodePool.Name)
 
-	// Cleanup
+	// Cleanup workload explicitly (resources cleaned by defer)
 	suite.cleanupTestWorkload(t, deployment.Name, "default")
-	suite.cleanupTestResources(t, testName)
 	t.Logf("Multi-zone distribution test completed: %s", testName)
 }
 
@@ -80,6 +85,12 @@ func TestE2EZoneAntiAffinity(t *testing.T) {
 	ctx := context.Background()
 	testName := fmt.Sprintf("zone-anti-affinity-%d", time.Now().Unix())
 	t.Logf("Starting zone anti-affinity test: %s", testName)
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		t.Logf("Running deferred cleanup for test: %s", testName)
+		suite.cleanupTestResources(t, testName)
+	}()
 
 	// Create infrastructure
 	nodeClass := suite.createMultiZoneNodeClass(t, testName)
@@ -168,9 +179,8 @@ func TestE2EZoneAntiAffinity(t *testing.T) {
 		t.Logf("Zone %s: %d pods", zone, count)
 	}
 
-	// Cleanup
+	// Cleanup workload explicitly (resources cleaned by defer)
 	suite.cleanupTestWorkload(t, deployment.Name, "default")
-	suite.cleanupTestResources(t, testName)
 	t.Logf("Zone anti-affinity test completed: %s", testName)
 }
 
