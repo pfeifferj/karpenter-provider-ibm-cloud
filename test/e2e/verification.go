@@ -53,7 +53,7 @@ func (s *E2ETestSuite) verifyPodsScheduledOnCorrectNodes(t *testing.T, deploymen
 		require.True(t, exists, "Node %s should have karpenter.sh/nodepool label", node.Name)
 		require.Equal(t, expectedNodePool, nodePoolLabel, "Pod %s should be on node from NodePool %s, but is on %s", pod.Name, expectedNodePool, nodePoolLabel)
 
-		t.Logf("✅ Pod %s correctly scheduled on node %s (NodePool: %s)", pod.Name, pod.Spec.NodeName, nodePoolLabel)
+		t.Logf("Pod %s correctly scheduled on node %s (NodePool: %s)", pod.Name, pod.Spec.NodeName, nodePoolLabel)
 	}
 }
 
@@ -126,7 +126,7 @@ func (s *E2ETestSuite) verifyInstancesUseAllowedTypes(t *testing.T, allowedTypes
 		}
 
 		require.True(t, found, "Node %s uses instance type %s, which is not in allowed types %v", node.Name, instanceType, allowedTypes)
-		t.Logf("✅ Node %s correctly uses allowed instance type %s", node.Name, instanceType)
+		t.Logf("Node %s correctly uses allowed instance type %s", node.Name, instanceType)
 	}
 }
 
@@ -194,7 +194,7 @@ func (s *E2ETestSuite) verifyInstanceUsesAllowedType(t *testing.T, nodeClaimName
 	}
 
 	require.True(t, found, "NodeClaim %s uses instance type %s, which is not in allowed types %v", nodeClaimName, instanceType, allowedTypes)
-	t.Logf("✅ NodeClaim %s correctly uses allowed instance type %s", nodeClaimName, instanceType)
+	t.Logf("NodeClaim %s correctly uses allowed instance type %s", nodeClaimName, instanceType)
 }
 
 // isNodeClaimReady checks if a NodeClaim is in a ready state
@@ -276,7 +276,7 @@ func (s *E2ETestSuite) monitorNodeStability(t *testing.T, nodePoolName string, i
 		time.Sleep(checkInterval)
 	}
 
-	t.Logf("✅ Node stability monitoring completed for %v", duration)
+	t.Logf("Node stability monitoring completed for %v", duration)
 }
 
 // getIBMCloudInstances retrieves current IBM Cloud instances (simplified implementation)
