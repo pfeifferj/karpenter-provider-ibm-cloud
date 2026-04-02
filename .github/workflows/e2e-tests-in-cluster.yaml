@@ -31,7 +31,7 @@ jobs:
 
     container:
       # Run in a container with necessary tools
-      image: golang:1.25.3
+      image: golang:1.26
       options: --user 0
 
     steps:
@@ -94,6 +94,7 @@ jobs:
 
         # Restart operator pods to pull latest upstream image tag
         kubectl rollout restart deployment/karpenter-karpenter-ibm -n karpenter
+        kubectl rollout status deployment/karpenter-karpenter-ibm -n karpenter --timeout=300s
 
     - name: Pre-test cleanup
       id: pre-test-cleanup
@@ -423,9 +424,9 @@ jobs:
 
         # Force cleanup any stuck resources with direct patching
         echo "Force cleaning up any stuck resources..."
-        kubectl patch nodeclaims --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
-        kubectl patch nodepools --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
-        kubectl patch ibmnodeclasses --selector test=e2e --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+        kubectl get nodeclaims -l test=e2e -o name | xargs -r kubectl patch --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+        kubectl get nodepools -l test=e2e -o name | xargs -r kubectl patch --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
+        kubectl get ibmnodeclasses -l test=e2e -o name | xargs -r kubectl patch --type='merge' -p='{"metadata":{"finalizers":[]}}' || true
 
         # Clean up IBM Cloud instances created by e2e tests
         echo "Cleaning up IBM Cloud instances..."

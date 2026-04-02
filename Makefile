@@ -102,7 +102,7 @@ e2e: ## Run e2e tests against real cluster (requires env vars)
 		echo "Warning: RUN_E2E_TESTS not set, tests will be skipped"; \
 		echo "Set RUN_E2E_TESTS=true and required env vars to run e2e tests"; \
 	fi
-	go test -v -timeout 45m ./test/e2e/... -run TestE2E
+	go test -tags=e2e -v -timeout 45m ./test/e2e/... -run TestE2E
 
 .PHONY: e2e-benchmark
 e2e-benchmark: ## Run e2e performance benchmarks

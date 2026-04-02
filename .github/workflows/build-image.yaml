@@ -41,7 +41,7 @@ on:
         required: false
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.26'
   KO_DOCKER_REPO: quay.io/karpenter-provider-ibm-cloud/controller
 
 jobs:
@@ -62,7 +62,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
