@@ -417,6 +417,7 @@ if [[ -f "/etc/kubernetes/additional-ca.crt" ]]; then
 fi
 
 # Create bootstrap kubeconfig
+install -m 0600 /dev/null /var/lib/kubelet/bootstrap-kubeconfig
 cat > /var/lib/kubelet/bootstrap-kubeconfig << EOF
 apiVersion: v1
 kind: Config
@@ -542,6 +543,7 @@ echo "$(date): Instance ID: $INSTANCE_ID, Provider ID: $PROVIDER_ID"
 
 # Create bootstrap kubeconfig with correct API server endpoint
 mkdir -p /etc/kubernetes
+install -m 0600 /dev/null /etc/kubernetes/bootstrap-kubeconfig
 cat > /etc/kubernetes/bootstrap-kubeconfig << EOF
 apiVersion: v1
 kind: Config

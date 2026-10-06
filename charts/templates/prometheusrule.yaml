@@ -54,7 +54,7 @@ spec:
 
         # IBM Cloud API specific alerts
         - alert: KarpenterIBMAPIErrors
-          expr: rate(karpenter_ibm_api_requests_total{status_code!~"2.."}[5m]) > {{ .Values.metrics.prometheusRule.alerts.apiErrors.threshold | default "0.05" }}
+          expr: rate(karpenter_ibm_api_requests_total{status!~"2.."}[5m]) > {{ .Values.metrics.prometheusRule.alerts.apiErrors.threshold | default "0.05" }}
           for: {{ .Values.metrics.prometheusRule.alerts.apiErrors.for | default "5m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.apiErrors.severity | default "warning" }}
@@ -65,7 +65,7 @@ spec:
             runbook_url: "{{ .Values.metrics.prometheusRule.runbookUrl | default "https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md" }}"
 
         - alert: KarpenterIBMAPIRateLimit
-          expr: rate(karpenter_ibm_api_requests_total{status_code="429"}[5m]) > {{ .Values.metrics.prometheusRule.alerts.apiRateLimit.threshold | default "0.01" }}
+          expr: rate(karpenter_ibm_api_requests_total{status="429"}[5m]) > {{ .Values.metrics.prometheusRule.alerts.apiRateLimit.threshold | default "0.01" }}
           for: {{ .Values.metrics.prometheusRule.alerts.apiRateLimit.for | default "2m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.apiRateLimit.severity | default "warning" }}
@@ -88,7 +88,7 @@ spec:
             runbook_url: "{{ .Values.metrics.prometheusRule.runbookUrl | default "https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md" }}"
 
         - alert: KarpenterIBMSlowNodeProvisioning
-          expr: histogram_quantile(0.99, rate(karpenter_ibm_instance_provisioning_duration_seconds_bucket[10m])) > {{ .Values.metrics.prometheusRule.alerts.slowNodeProvisioning.threshold | default "600" }}
+          expr: histogram_quantile(0.99, rate(karpenter_ibm_provisioning_duration_seconds_bucket[10m])) > {{ .Values.metrics.prometheusRule.alerts.slowNodeProvisioning.threshold | default "600" }}
           for: {{ .Values.metrics.prometheusRule.alerts.slowNodeProvisioning.for | default "15m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.slowNodeProvisioning.severity | default "warning" }}

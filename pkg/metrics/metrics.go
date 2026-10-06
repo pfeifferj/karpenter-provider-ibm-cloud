@@ -34,7 +34,7 @@ var (
 		prometheus.HistogramOpts{
 			Name:    "karpenter_ibm_provisioning_duration_seconds",
 			Help:    "Provisioning duration in seconds.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600},
 		},
 		[]string{"instance_type", "zone"},
 	)
