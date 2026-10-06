@@ -212,9 +212,6 @@ func NewControllers(
 		controllers = append(controllers, instanceTypeCtrl)
 	}
 
-	// Add interruption controller (supports both VPC and IKS modes)
-	// - VPC Mode: Direct instance deletion and replacement via Karpenter
-	// - IKS Mode: Node cordoning + IKS worker pool management hybrid approach
 	var providerFactory *providers.ProviderFactory
 	if ibmClient != nil {
 		if len(factories) != 0 && factories[0] != nil {
@@ -226,7 +223,7 @@ func NewControllers(
 	if providerFactory != nil {
 		controllers = append(controllers, vpcallocation.NewController(kubeClient, mgr.GetAPIReader(), providerFactory))
 	}
-	interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings, providerFactory)
+	interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings)
 	controllers = append(controllers, interruptionCtrl)
 
 	if ibmClient != nil {
@@ -258,7 +255,7 @@ func NewControllers(
 
 	// Add IKS pool cleanup controller for dynamic pool lifecycle management
 	if ibmClient != nil {
-		controllers = append(controllers, iksallocation.NewController(kubeClient, mgr.GetAPIReader(), ibmClient))
+		controllers = append(controllers, iksallocation.NewController(kubeClient, mgr.GetAPIReader(), providerFactory))
 		poolCleanupCtrl := ikspoolcleanup.NewController(kubeClient, ibmClient, mgr.GetAPIReader())
 		if err := poolCleanupCtrl.Register(ctx, mgr); err != nil {
 			logger.Error(err, "failed to register IKS pool cleanup controller")

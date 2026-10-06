@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -78,13 +79,14 @@ type allocationCloud struct {
 	keepWorker  bool
 }
 
-func (c *allocationCloud) GetWorkerPool(context.Context, string, string) (*ibm.WorkerPool, error) {
+func (c *allocationCloud) GetWorkerPool(_ context.Context, clusterID, pool string) (*ibm.WorkerPool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.getError != nil {
 		return nil, c.getError
 	}
-	if c.pool == nil {
+	// IKS resolves the pool argument as either a name or an ID within the cluster.
+	if c.pool == nil || clusterID != "cluster" || (pool != c.pool.ID && pool != c.pool.Name) {
 		return nil, &httpclient.IBMCloudError{StatusCode: 404}
 	}
 	copy := *c.pool
@@ -158,7 +160,7 @@ func allocationFixture(t *testing.T) (*IKSWorkerPoolProvider, client.Client, *al
 
 func registerAllocatedNode(t *testing.T, kubeClient client.Client) *corev1.Node {
 	t.Helper()
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "registered-worker", Labels: map[string]string{ownership.ClaimUIDTag: "claim-uid", ownership.ClusterUIDTag: "cluster-uid"}},
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "registered-worker", Labels: map[string]string{ownership.ClaimUIDLabel: "claim-uid", ownership.ClusterUIDLabel: "cluster-uid"}},
 		Spec: corev1.NodeSpec{ProviderID: "ibm://" + testAccount + "///cluster/real-worker"},
 		Status: corev1.NodeStatus{Capacity: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")},
 			Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("3800m"), corev1.ResourceMemory: resource.MustParse("15Gi")}}}
@@ -166,14 +168,12 @@ func registerAllocatedNode(t *testing.T, kubeClient client.Client) *corev1.Node 
 	return node
 }
 
-func TestAllocationPersistsBeforeCreateAndWaitsForResources(t *testing.T) {
+func TestAllocationLaunchesBeforeRegistrationAndAdoptsRegisteredResources(t *testing.T) {
 	provider, kubeClient, cloud, claim := allocationFixture(t)
 	result, err := provider.Create(context.Background(), claim, nil)
-	require.Error(t, err)
-	require.Nil(t, result)
-	var createError *cloudprovider.CreateError
-	require.ErrorAs(t, err, &createError)
-	require.Equal(t, "WorkerProvisioning", createError.ConditionReason)
+	require.NoError(t, err)
+	require.Equal(t, resource.MustParse("4"), result.Status.Capacity[corev1.ResourceCPU])
+	require.False(t, result.Status.Allocatable.Cpu().IsZero())
 	fresh := &v1.NodeClaim{}
 	require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
 	require.Contains(t, fresh.Finalizers, AllocationFinalizer)
@@ -182,7 +182,7 @@ func TestAllocationPersistsBeforeCreateAndWaitsForResources(t *testing.T) {
 	require.Equal(t, "real-worker", allocation.WorkerID)
 	reservation := &corev1.ConfigMap{}
 	require.NoError(t, kubeClient.Get(context.Background(), ReservationKey("cluster", allocation.PoolName, "karpenter"), reservation))
-	require.Equal(t, "active", reservation.Data[reservationPhaseKey])
+	require.Equal(t, "active", reservation.Data[ReservationPhaseKey])
 	registered := registerAllocatedNode(t, kubeClient)
 	result, err = provider.Create(context.Background(), fresh, nil)
 	require.NoError(t, err)
@@ -210,7 +210,7 @@ func TestAllocationRecoversLostCreateResponseAcrossProviderRestart(t *testing.T)
 func TestAllocationResumesAfterNodeClassDeleted(t *testing.T) {
 	provider, kubeClient, _, claim := allocationFixture(t)
 	_, err := provider.Create(context.Background(), claim, nil)
-	require.Error(t, err)
+	require.NoError(t, err)
 	require.NoError(t, kubeClient.Delete(context.Background(), &v1alpha1.IBMNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "class"}}))
 	registerAllocatedNode(t, kubeClient)
 	_, err = provider.Create(context.Background(), claim, nil)
@@ -231,8 +231,8 @@ func TestAllocationRejectsStaticPoolWithoutMutation(t *testing.T) {
 func TestAllocationRejectsForeignPoolOwnership(t *testing.T) {
 	provider, kubeClient, cloud, claim := allocationFixture(t)
 	_, err := provider.Create(context.Background(), claim, nil)
-	require.Error(t, err)
-	cloud.pool.Labels[ownership.ClaimUIDTag] = "another-claim"
+	require.NoError(t, err)
+	cloud.pool.Labels[ownership.ClaimUIDLabel] = "another-claim"
 	fresh := &v1.NodeClaim{}
 	require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
 	require.Error(t, provider.Cleanup(context.Background(), fresh))
@@ -244,6 +244,7 @@ func TestExactPoolDeletionWaitsForWorkerAbsence(t *testing.T) {
 	registerAllocatedNode(t, kubeClient)
 	node, err := provider.Create(context.Background(), claim, nil)
 	require.NoError(t, err)
+	node.UID = claim.UID
 	cloud.keepWorker = true
 	require.NoError(t, provider.Delete(context.Background(), node))
 	require.Equal(t, []string{"real-pool"}, cloud.deleteCalls)
@@ -257,7 +258,7 @@ func TestExactPoolDeletionWaitsForWorkerAbsence(t *testing.T) {
 func TestPendingCleanupDelegatesNodeDrainBeforeCloudDeletion(t *testing.T) {
 	provider, kubeClient, cloud, claim := allocationFixture(t)
 	_, err := provider.Create(context.Background(), claim, nil)
-	require.Error(t, err)
+	require.NoError(t, err)
 	node := registerAllocatedNode(t, kubeClient)
 	node.Finalizers = []string{v1.TerminationFinalizer}
 	node.Labels[v1.NodePoolLabelKey] = "pool"
@@ -279,7 +280,7 @@ func TestPendingCleanupDelegatesNodeDrainBeforeCloudDeletion(t *testing.T) {
 func TestWorkerLookupPreservesUncertaintyAndUsesRegisteredResources(t *testing.T) {
 	provider, kubeClient, cloud, claim := allocationFixture(t)
 	_, err := provider.Create(context.Background(), claim, nil)
-	require.Error(t, err)
+	require.NoError(t, err)
 	registered := registerAllocatedNode(t, kubeClient)
 	node, err := provider.Get(context.Background(), registered.Spec.ProviderID)
 	require.NoError(t, err)
@@ -412,7 +413,7 @@ func TestAllocationQuarantinesAccountDriftAndWrongSubnet(t *testing.T) {
 	t.Run("account drift", func(t *testing.T) {
 		provider, kubeClient, cloud, claim := allocationFixture(t)
 		_, err := provider.Create(context.Background(), claim, nil)
-		require.Error(t, err)
+		require.NoError(t, err)
 		fresh := &v1.NodeClaim{}
 		require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
 		t.Setenv("IBM_ACCOUNT_ID", "ffffffffffffffffffffffffffffffff")
@@ -425,7 +426,7 @@ func TestAllocationQuarantinesAccountDriftAndWrongSubnet(t *testing.T) {
 	t.Run("wrong subnet", func(t *testing.T) {
 		provider, kubeClient, cloud, claim := allocationFixture(t)
 		_, err := provider.Create(context.Background(), claim, nil)
-		require.Error(t, err)
+		require.NoError(t, err)
 		registerAllocatedNode(t, kubeClient)
 		cloud.worker.NetworkInterfaces[0].SubnetID = "different-subnet"
 		_, err = provider.Create(context.Background(), claim, nil)
@@ -437,7 +438,7 @@ func TestAllocationQuarantinesAccountDriftAndWrongSubnet(t *testing.T) {
 func TestPendingCleanupQuarantinesNodeWithoutDrainOwnership(t *testing.T) {
 	provider, kubeClient, cloud, claim := allocationFixture(t)
 	_, err := provider.Create(context.Background(), claim, nil)
-	require.Error(t, err)
+	require.NoError(t, err)
 	node := registerAllocatedNode(t, kubeClient)
 	fresh := &v1.NodeClaim{}
 	require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
@@ -450,7 +451,7 @@ func TestPendingCleanupQuarantinesNodeWithoutDrainOwnership(t *testing.T) {
 func TestBoundAllocationCleanupOnlyConfirmsCoreDeletion(t *testing.T) {
 	provider, kubeClient, cloud, claim := allocationFixture(t)
 	_, err := provider.Create(context.Background(), claim, nil)
-	require.Error(t, err)
+	require.NoError(t, err)
 	fresh := &v1.NodeClaim{}
 	require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
 	fresh.Status.ProviderID = "ibm://" + testAccount + "///cluster/real-worker"
@@ -468,6 +469,7 @@ func TestCoreDeletionRejectsProviderIDMismatch(t *testing.T) {
 	registerAllocatedNode(t, kubeClient)
 	node, err := provider.Create(context.Background(), claim, nil)
 	require.NoError(t, err)
+	node.UID = claim.UID
 	node.Spec.ProviderID = "ibm://" + testAccount + "///cluster/foreign-worker"
 	require.ErrorContains(t, provider.Delete(context.Background(), node), "identity differs")
 	require.Empty(t, cloud.deleteCalls)
@@ -492,7 +494,7 @@ func TestAllocationRequiresKnownOfferingPriceForBudgetConstraint(t *testing.T) {
 			class.Spec.InstanceRequirements = &v1alpha1.InstanceTypeRequirements{MaximumHourlyPrice: "0.10"}
 			require.NoError(t, kubeClient.Update(context.Background(), class))
 			_, err := provider.Create(context.Background(), claim, nil)
-			require.Error(t, err)
+			require.Equal(t, test.creates == 0, err != nil, "%v", err)
 			if test.unknown {
 				require.ErrorContains(t, err, "offering price is unavailable")
 			}
@@ -511,4 +513,61 @@ func TestIsNotFoundUsesHTTPStatus(t *testing.T) {
 	require.True(t, IsNotFound(&httpclient.IBMCloudError{StatusCode: 404}))
 	require.False(t, IsNotFound(&httpclient.IBMCloudError{StatusCode: 503, Message: "backend worker not found"}))
 	require.False(t, IsNotFound(fmt.Errorf("get pool: %w", &httpclient.IBMCloudError{StatusCode: 500, Description: "not found"})))
+}
+
+func TestCoreDeletionRejectsForeignClaimUID(t *testing.T) {
+	provider, kubeClient, cloud, claim := allocationFixture(t)
+	registerAllocatedNode(t, kubeClient)
+	node, err := provider.Create(context.Background(), claim, nil)
+	require.NoError(t, err)
+	node.UID = "replacement-claim"
+	require.ErrorContains(t, provider.Delete(context.Background(), node), "owner identity mismatch")
+	require.Empty(t, cloud.deleteCalls)
+}
+
+func TestRejectedPoolCreateIsRetriedAndReleasable(t *testing.T) {
+	provider, kubeClient, cloud, claim := allocationFixture(t)
+	cloud.createError = &httpclient.IBMCloudError{StatusCode: 400, Message: "invalid flavor"}
+	_, err := provider.Create(context.Background(), claim, nil)
+	require.Error(t, err)
+	cloud.pool, cloud.worker = nil, nil
+	_, err = provider.Create(context.Background(), claim, nil)
+	require.Error(t, err)
+	require.Equal(t, 2, cloud.createCalls)
+	cloud.pool, cloud.worker = nil, nil
+	fresh := &v1.NodeClaim{}
+	require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
+	err = provider.Cleanup(context.Background(), fresh)
+	require.True(t, cloudprovider.IsNodeClaimNotFoundError(err), "%v", err)
+}
+
+func TestUncertainPoolCreateExpiresAfterWindow(t *testing.T) {
+	provider, kubeClient, cloud, claim := allocationFixture(t)
+	cloud.createError = fmt.Errorf("response lost")
+	_, err := provider.Create(context.Background(), claim, nil)
+	require.Error(t, err)
+	cloud.pool, cloud.worker, cloud.createError = nil, nil, nil
+	fresh := &v1.NodeClaim{}
+	require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
+	allocation, err := DecodeAllocation(fresh.Annotations)
+	require.NoError(t, err)
+	reservation := &corev1.ConfigMap{}
+	require.NoError(t, kubeClient.Get(context.Background(), ReservationKey(allocation.ClusterID, allocation.PoolName, allocation.Namespace), reservation))
+	reservation.Data[ReservationCreationStartedKey] = time.Now().Add(-2 * poolCreationWindow).UTC().Format(time.RFC3339)
+	require.NoError(t, kubeClient.Update(context.Background(), reservation))
+	_, err = provider.Create(context.Background(), fresh, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, cloud.createCalls)
+}
+
+func TestMalformedForeignAllocationDoesNotBlockLookup(t *testing.T) {
+	provider, kubeClient, _, claim := allocationFixture(t)
+	registerAllocatedNode(t, kubeClient)
+	node, err := provider.Create(context.Background(), claim, nil)
+	require.NoError(t, err)
+	foreign := &v1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: "foreign", Annotations: map[string]string{AllocationAnnotation: "{not json"}}}
+	require.NoError(t, kubeClient.Create(context.Background(), foreign))
+	found, err := provider.Get(context.Background(), node.Spec.ProviderID)
+	require.NoError(t, err)
+	require.Equal(t, node.Spec.ProviderID, found.Spec.ProviderID)
 }

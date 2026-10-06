@@ -159,6 +159,7 @@ func TestProviderList(t *testing.T) {
 	t.Run("list with multiple instances", func(t *testing.T) {
 		instance1 := getTestVPCInstance()
 		instance2 := &vpcv1.Instance{
+			CRN:  core.StringPtr(testInstanceCRN),
 			ID:   ptrString("instance-2"),
 			Name: ptrString("node-2"),
 			Profile: &vpcv1.InstanceProfileReference{

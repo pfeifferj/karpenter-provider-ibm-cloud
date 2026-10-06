@@ -19,14 +19,17 @@ package instance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -42,6 +45,13 @@ const (
 	LaunchImageAnnotation = "karpenter-ibm.sh/launch-image-id"
 )
 
+// launchResolutionWindow bounds how long a submitted launch whose instance never appeared
+// is retained. IBM lists an instance as soon as CreateInstance accepts it, so absence past
+// this window means the request did not create anything.
+const launchResolutionWindow = 15 * time.Minute
+
+var errLaunchUnresolved = errors.New("launch outcome is not yet resolved")
+
 type launchConfig struct {
 	Name, ClusterUID, ClaimUID, ClassUID      string
 	AccountID, ResourceGroup                  string
@@ -49,11 +59,13 @@ type launchConfig struct {
 	CapacityType, Hash, HashVersion           string
 	SecurityGroups                            []string
 	Submitted, Rejected                       bool
+	SubmittedAt                               time.Time
 	Capacity, Allocatable                     corev1.ResourceList
+	Tags                                      map[string]string
 }
 
-func tagVolumeAttachments(boot *vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, data []vpcv1.VolumeAttachmentPrototype, ownershipTags map[string]string) {
-	tags := func(custom []string, retained bool) []string {
+func tagVolumeAttachments(boot *vpcv1.VolumeAttachmentPrototypeInstanceByImageContext, data []vpcv1.VolumeAttachmentPrototype, ownershipTags map[string]string) error {
+	tags := func(custom []string, retained bool) ([]string, error) {
 		result := make([]string, 0, len(custom)+len(ownershipTags)+1)
 		for _, tag := range custom {
 			key, _, _ := strings.Cut(tag, ":")
@@ -65,19 +77,33 @@ func tagVolumeAttachments(boot *vpcv1.VolumeAttachmentPrototypeInstanceByImageCo
 			result = append(result, key+":"+value)
 		}
 		if retained {
-			result = append(result, "karpenter-ibm.sh/retain:true")
+			result = append(result, ownership.RetainTag+":true")
+		}
+		for _, tag := range result {
+			if err := ownership.ValidateTag(tag); err != nil {
+				return nil, err
+			}
 		}
 		sort.Strings(result)
-		return result
+		return result, nil
 	}
 	if boot != nil && boot.Volume != nil {
-		boot.Volume.UserTags = tags(boot.Volume.UserTags, boot.DeleteVolumeOnInstanceDelete != nil && !*boot.DeleteVolumeOnInstanceDelete)
+		var err error
+		boot.Volume.UserTags, err = tags(boot.Volume.UserTags, boot.DeleteVolumeOnInstanceDelete != nil && !*boot.DeleteVolumeOnInstanceDelete)
+		if err != nil {
+			return err
+		}
 	}
 	for _, attachment := range data {
 		if volume, ok := attachment.Volume.(*vpcv1.VolumeAttachmentPrototypeVolumeVolumePrototypeInstanceContextVolumePrototypeInstanceContextVolumeByCapacity); ok {
-			volume.UserTags = tags(volume.UserTags, attachment.DeleteVolumeOnInstanceDelete != nil && !*attachment.DeleteVolumeOnInstanceDelete)
+			var err error
+			volume.UserTags, err = tags(volume.UserTags, attachment.DeleteVolumeOnInstanceDelete != nil && !*attachment.DeleteVolumeOnInstanceDelete)
+			if err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 func (p *VPCInstanceProvider) reader() client.Reader {
@@ -187,9 +213,14 @@ func (p *VPCInstanceProvider) validateAccountTarget(ctx context.Context, vpc *ib
 	return nil
 }
 
+// abandoned reports whether an absent instance proves the launch created nothing.
+func (config *launchConfig) abandoned(now time.Time) bool {
+	return config.Rejected || !config.Submitted || now.Sub(config.SubmittedAt) > launchResolutionWindow
+}
+
 func verifyInstanceAccount(instance *vpcv1.Instance, accountID string) error {
 	if instance.CRN == nil || *instance.CRN == "" {
-		return nil
+		return fmt.Errorf("instance has no CRN to verify its account")
 	}
 	parts := strings.Split(*instance.CRN, ":")
 	if len(parts) != 10 || parts[0] != "crn" || parts[6] != "a/"+accountID {
@@ -231,6 +262,32 @@ func (p *VPCInstanceProvider) updateLaunch(ctx context.Context, claim *karpv1.No
 	return p.kubeClient.Patch(ctx, claim, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))
 }
 
+// markLaunchRejected records a definite rejection, re-reading the claim on conflict so an
+// unrelated concurrent write cannot drop the marker.
+func (p *VPCInstanceProvider) markLaunchRejected(ctx context.Context, claim *karpv1.NodeClaim, config *launchConfig) error {
+	submitted, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	config.Rejected = true
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh := &karpv1.NodeClaim{}
+		if err := p.reader().Get(ctx, client.ObjectKeyFromObject(claim), fresh); err != nil {
+			return err
+		}
+		if fresh.UID != claim.UID || fresh.Annotations[LaunchAnnotation] != string(submitted) {
+			return fmt.Errorf("NodeClaim launch changed before rejection was recorded")
+		}
+		if err := p.updateLaunch(ctx, fresh, config); err != nil {
+			return err
+		}
+		claim.ResourceVersion = fresh.ResourceVersion
+		claim.Annotations = fresh.Annotations
+		claim.Finalizers = fresh.Finalizers
+		return nil
+	})
+}
+
 func (p *VPCInstanceProvider) resetPreparedLaunch(ctx context.Context, claim *karpv1.NodeClaim) error {
 	stored := claim.DeepCopy()
 	delete(claim.Annotations, LaunchAnnotation)
@@ -245,7 +302,7 @@ func rejectedCreate(err *ibm.IBMError) bool {
 }
 
 func (p *VPCInstanceProvider) findLaunch(ctx context.Context, vpc *ibm.VPCClient, config *launchConfig) (*vpcv1.Instance, error) {
-	instances, err := vpc.ListInstances(ctx)
+	instances, err := vpc.ListInstancesByName(ctx, config.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -303,12 +360,18 @@ func (p *VPCInstanceProvider) recoverLaunch(ctx context.Context, claim *karpv1.N
 		return nil, err
 	}
 	if instance == nil {
-		return nil, fmt.Errorf("launch outcome for %s is not yet resolved", config.Name)
+		return nil, fmt.Errorf("%w: %s", errLaunchUnresolved, config.Name)
 	}
 	if instance.ID == nil || (instance.Status != nil && *instance.Status == vpcv1.InstanceStatusDeletingConst) {
 		return nil, fmt.Errorf("launch instance is terminating")
 	}
-	if err := vpc.UpdateInstanceTags(ctx, *instance.ID, ownership.VPCTags(config.ClusterUID, config.ClaimUID, config.ClassUID)); err != nil {
+	tags := ownership.VPCTags(config.ClusterUID, config.ClaimUID, config.ClassUID)
+	for key, value := range config.Tags {
+		if !ownership.ReservedTag(key) {
+			tags[key] = value
+		}
+	}
+	if err := vpc.UpdateInstanceTags(ctx, *instance.ID, tags); err != nil {
 		return nil, err
 	}
 	return config.node(claim, *instance.ID), nil
@@ -317,7 +380,7 @@ func (p *VPCInstanceProvider) recoverLaunch(ctx context.Context, claim *karpv1.N
 func (config *launchConfig) node(claim *karpv1.NodeClaim, instanceID string) *corev1.Node {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: claim.Name, Labels: map[string]string{
-			ownership.ManagedTag: "true", corev1.LabelInstanceTypeStable: config.Profile, corev1.LabelTopologyZone: config.Zone, corev1.LabelTopologyRegion: config.Region, karpv1.CapacityTypeLabelKey: config.CapacityType, karpv1.NodePoolLabelKey: claim.Labels[karpv1.NodePoolLabelKey],
+			ownership.ManagedLabel: "true", corev1.LabelInstanceTypeStable: config.Profile, corev1.LabelTopologyZone: config.Zone, corev1.LabelTopologyRegion: config.Region, karpv1.CapacityTypeLabelKey: config.CapacityType, karpv1.NodePoolLabelKey: claim.Labels[karpv1.NodePoolLabelKey],
 		}, Annotations: map[string]string{
 			ownership.BackendAnnotation: "vpc", ownership.RegionAnnotation: config.Region,
 			LaunchAnnotation: claim.Annotations[LaunchAnnotation], LaunchImageAnnotation: config.Image, v1alpha1.AnnotationIBMNodeClaimImageID: config.Image,
@@ -351,7 +414,7 @@ func (p *VPCInstanceProvider) CleanupPending(ctx context.Context, claim *karpv1.
 		return false, err
 	}
 	if instance == nil {
-		return config.Rejected || !config.Submitted, nil
+		return config.abandoned(time.Now()), nil
 	}
 	if instance.ID == nil {
 		return false, fmt.Errorf("pending instance has no ID")

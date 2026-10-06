@@ -18,7 +18,6 @@ package interruption
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"testing"
 	"time"
 
@@ -34,11 +33,7 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
-)
-
-// InfrastructureFailure represents infrastructure-related interruption events
-const (
-	InfrastructureFailure InterruptionReason = "infrastructure-failure"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 )
 
 func TestNewController(t *testing.T) {
@@ -46,15 +41,12 @@ func TestNewController(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 	unavailableOfferings := cache.NewUnavailableOfferings()
 
-	controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+	controller := NewController(kubeClient, recorder, unavailableOfferings)
 
 	assert.NotNil(t, controller)
 	assert.Equal(t, kubeClient, controller.kubeClient)
 	assert.Equal(t, recorder, controller.recorder)
 	assert.Equal(t, unavailableOfferings, controller.unavailableOfferings)
-	assert.Nil(t, controller.providerFactory)
-	assert.NotNil(t, controller.httpClient)
-	assert.Equal(t, 10*time.Second, controller.httpClient.Timeout)
 }
 
 func TestControllerName(t *testing.T) {
@@ -128,7 +120,7 @@ func TestReconcile(t *testing.T) {
 			recorder := record.NewFakeRecorder(10)
 			unavailableOfferings := cache.NewUnavailableOfferings()
 
-			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+			controller := NewController(kubeClient, recorder, unavailableOfferings)
 
 			ctx := context.Background()
 			result, err := controller.Reconcile(ctx)
@@ -145,7 +137,7 @@ func TestReconcileListError(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 	unavailableOfferings := cache.NewUnavailableOfferings()
 
-	controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+	controller := NewController(kubeClient, recorder, unavailableOfferings)
 
 	ctx := context.Background()
 	_, err := controller.Reconcile(ctx)
@@ -180,7 +172,7 @@ func TestIsNodeInterrupted(t *testing.T) {
 			expectedReason: "",
 		},
 		{
-			name: "node with ready=false should be interrupted",
+			name: "node with ready=false is left to node repair",
 			node: &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "unhealthy-node",
@@ -198,11 +190,11 @@ func TestIsNodeInterrupted(t *testing.T) {
 					},
 				},
 			},
-			expectedResult: true,
-			expectedReason: InstanceHealthFailed,
+			expectedResult: false,
+			expectedReason: "",
 		},
 		{
-			name: "node with capacity issues should be capacity-related interruption",
+			name: "node with capacity issues is left to node repair",
 			node: &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "capacity-node",
@@ -220,11 +212,11 @@ func TestIsNodeInterrupted(t *testing.T) {
 					},
 				},
 			},
-			expectedResult: true,
-			expectedReason: CapacityUnavailable,
+			expectedResult: false,
+			expectedReason: "",
 		},
 		{
-			name: "node with memory pressure should be capacity-related",
+			name: "node with memory pressure is left to node repair",
 			node: &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "memory-pressure-node",
@@ -242,11 +234,11 @@ func TestIsNodeInterrupted(t *testing.T) {
 					},
 				},
 			},
-			expectedResult: true,
-			expectedReason: CapacityUnavailable,
+			expectedResult: false,
+			expectedReason: "",
 		},
 		{
-			name: "node with network unavailable should be network-related",
+			name: "node with network unavailable is left to node repair",
 			node: &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "network-node",
@@ -264,8 +256,8 @@ func TestIsNodeInterrupted(t *testing.T) {
 					},
 				},
 			},
-			expectedResult: true,
-			expectedReason: NetworkResourceLimit,
+			expectedResult: false,
+			expectedReason: "",
 		},
 		{
 			name: "node with interruption annotation should not be processed again",
@@ -313,10 +305,7 @@ func TestIsNodeInterrupted(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{
-				httpClient:      &http.Client{Timeout: 5 * time.Second},
-				providerFactory: nil, // No provider factory in tests
-			}
+			controller := &Controller{}
 
 			interrupted, reason := controller.isNodeInterrupted(context.Background(), tt.node)
 			assert.Equal(t, tt.expectedResult, interrupted)
@@ -357,7 +346,7 @@ func TestIsCapacityRelated(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "unknown reason with memory pressure should be capacity related",
+			name: "unknown reason with memory pressure is not capacity related",
 			node: &v1.Node{
 				Status: v1.NodeStatus{
 					Conditions: []v1.NodeCondition{
@@ -369,7 +358,7 @@ func TestIsCapacityRelated(t *testing.T) {
 				},
 			},
 			reason:   "unknown",
-			expected: true,
+			expected: false,
 		},
 		{
 			name: "unknown reason without pressure should not be capacity related",
@@ -434,59 +423,6 @@ func TestMarkNodeAsInterrupted(t *testing.T) {
 	// Verify the time annotation is a valid RFC3339 timestamp
 	_, err = time.Parse(time.RFC3339, updatedNode.Annotations[InterruptionTimeAnnotation])
 	assert.NoError(t, err)
-}
-
-func TestGetInstanceIDFromNode(t *testing.T) {
-	tests := []struct {
-		name     string
-		node     *v1.Node
-		expected string
-	}{
-		{
-			name: "instance ID from provider ID",
-			node: &v1.Node{
-				Spec: v1.NodeSpec{
-					ProviderID: "ibm:///eu-de-2/02c7_12345678-1234-1234-1234-123456789abc",
-				},
-			},
-			expected: "02c7_12345678-1234-1234-1234-123456789abc",
-		},
-		{
-			name: "instance ID from label",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"ibm-cloud.kubernetes.io/instance-id": "02c7_87654321-4321-4321-4321-cba987654321",
-					},
-				},
-			},
-			expected: "02c7_87654321-4321-4321-4321-cba987654321",
-		},
-		{
-			name: "instance ID from annotation",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{
-						"ibm-cloud.kubernetes.io/instance-id": "02c7_11111111-2222-3333-4444-555555555555",
-					},
-				},
-			},
-			expected: "02c7_11111111-2222-3333-4444-555555555555",
-		},
-		{
-			name:     "no instance ID available",
-			node:     &v1.Node{},
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{}
-			result := controller.getInstanceIDFromNode(tt.node)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 func TestCheckCapacitySignals(t *testing.T) {
@@ -664,120 +600,6 @@ func (m *mockErrorClient) Scheme() *runtime.Scheme {
 
 // Test node class resolution functionality
 
-func TestGetNodeClassForNode(t *testing.T) {
-	tests := []struct {
-		name          string
-		node          *v1.Node
-		nodeClasses   []client.Object
-		expectedError bool
-		expectedMode  string
-	}{
-		{
-			name: "node with karpenter-ibm.sh/nodeclass label",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						registration.NodeClassLabel: "test-nodeclass",
-					},
-				},
-			},
-			nodeClasses: []client.Object{
-				&v1alpha1.IBMNodeClass{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-nodeclass",
-					},
-					Spec: v1alpha1.IBMNodeClassSpec{
-						Region: "us-south",
-					},
-				},
-			},
-			expectedError: false,
-			expectedMode:  "test-nodeclass",
-		},
-		{
-			name: "node with fallback karpenter.sh/nodepool label",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						"karpenter.sh/nodepool": "test-nodepool",
-					},
-				},
-			},
-			nodeClasses: []client.Object{
-				&v1alpha1.IBMNodeClass{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-nodepool",
-					},
-					Spec: v1alpha1.IBMNodeClassSpec{
-						Region: "us-south",
-					},
-				},
-			},
-			expectedError: false,
-			expectedMode:  "test-nodepool",
-		},
-		{
-			name: "node with no nodeclass labels",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						"some-other-label": "value",
-					},
-				},
-			},
-			nodeClasses:   []client.Object{},
-			expectedError: true,
-		},
-		{
-			name: "nodeclass not found",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-					Labels: map[string]string{
-						registration.NodeClassLabel: "non-existent-nodeclass",
-					},
-				},
-			},
-			nodeClasses:   []client.Object{},
-			expectedError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scheme := runtime.NewScheme()
-			err := v1.AddToScheme(scheme)
-			require.NoError(t, err)
-			err = v1alpha1.AddToScheme(scheme)
-			require.NoError(t, err)
-
-			kubeClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(tt.nodeClasses...).
-				Build()
-
-			recorder := record.NewFakeRecorder(10)
-			unavailableOfferings := cache.NewUnavailableOfferings()
-			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
-
-			ctx := context.Background()
-			nodeClass, err := controller.getNodeClassForNode(ctx, tt.node)
-
-			if tt.expectedError {
-				assert.Error(t, err)
-				assert.Nil(t, nodeClass)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, nodeClass)
-				assert.Equal(t, tt.expectedMode, nodeClass.Name)
-			}
-		})
-	}
-}
-
 func TestInferModeFromNode(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -785,38 +607,18 @@ func TestInferModeFromNode(t *testing.T) {
 		expectedMode string
 	}{
 		{
-			name: "IKS mode - cluster ID label",
+			name: "IKS mode - account provider ID",
 			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "iks-node",
-					Labels: map[string]string{
-						"ibm-cloud.kubernetes.io/iks-cluster-id": "test-cluster",
-					},
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "iks-node"},
+				Spec:       v1.NodeSpec{ProviderID: "ibm://account///cluster-id/worker-id"},
 			},
 			expectedMode: "iks",
 		},
 		{
-			name: "IKS mode - worker pool annotation",
+			name: "IKS mode - backend annotation",
 			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "iks-node",
-					Annotations: map[string]string{
-						"ibm-cloud.kubernetes.io/iks-worker-pool": "test-pool",
-					},
-				},
-			},
-			expectedMode: "iks",
-		},
-		{
-			name: "IKS mode - provider ID format",
-			node: &v1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "iks-node",
-				},
-				Spec: v1.NodeSpec{
-					ProviderID: "iks://cluster-id/worker-id",
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "iks-node", Annotations: map[string]string{ownership.BackendAnnotation: "iks"}},
+				Spec:       v1.NodeSpec{ProviderID: "ibm:///region/worker-id"},
 			},
 			expectedMode: "iks",
 		},
@@ -967,6 +769,7 @@ func TestHandleVPCInterruption(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			withSignal(tt.node, tt.reason)
 			scheme := runtime.NewScheme()
 			err := v1.AddToScheme(scheme)
 			require.NoError(t, err)
@@ -978,7 +781,7 @@ func TestHandleVPCInterruption(t *testing.T) {
 
 			recorder := record.NewFakeRecorder(10)
 			unavailableOfferings := cache.NewUnavailableOfferings()
-			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+			controller := NewController(kubeClient, recorder, unavailableOfferings)
 
 			ctx := context.Background()
 			err = controller.handleVPCInterruption(ctx, tt.node, tt.reason)
@@ -1058,7 +861,7 @@ func TestHandleIKSInterruption(t *testing.T) {
 					Unschedulable: false,
 				},
 			},
-			reason:                InfrastructureFailure,
+			reason:                InstanceHealthFailed,
 			expectCapacityMarking: false,
 			expectNodeCordoning:   true,
 			expectNodeDeletion:    true,
@@ -1110,6 +913,7 @@ func TestHandleIKSInterruption(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			withSignal(tt.node, tt.reason)
 			scheme := runtime.NewScheme()
 			err := v1.AddToScheme(scheme)
 			require.NoError(t, err)
@@ -1121,7 +925,7 @@ func TestHandleIKSInterruption(t *testing.T) {
 
 			recorder := record.NewFakeRecorder(10)
 			unavailableOfferings := cache.NewUnavailableOfferings()
-			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+			controller := NewController(kubeClient, recorder, unavailableOfferings)
 
 			ctx := context.Background()
 			err = controller.handleIKSInterruption(ctx, tt.node, tt.reason)
@@ -1245,6 +1049,7 @@ func TestHandleInterruption(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			withSignal(tt.node, tt.reason)
 			scheme := runtime.NewScheme()
 			err := v1.AddToScheme(scheme)
 			require.NoError(t, err)
@@ -1259,7 +1064,7 @@ func TestHandleInterruption(t *testing.T) {
 
 			recorder := record.NewFakeRecorder(10)
 			unavailableOfferings := cache.NewUnavailableOfferings()
-			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+			controller := NewController(kubeClient, recorder, unavailableOfferings)
 
 			ctx := context.Background()
 			err = controller.handleInterruption(ctx, tt.node, tt.reason)
@@ -1396,7 +1201,7 @@ func TestReconcileWithInterruptedNodes(t *testing.T) {
 
 			recorder := record.NewFakeRecorder(10)
 			unavailableOfferings := cache.NewUnavailableOfferings()
-			controller := NewController(kubeClient, recorder, unavailableOfferings, nil)
+			controller := NewController(kubeClient, recorder, unavailableOfferings)
 
 			ctx := context.Background()
 			result, err := controller.Reconcile(ctx)
@@ -1409,4 +1214,25 @@ func TestReconcileWithInterruptedNodes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func withSignal(node *v1.Node, reason InterruptionReason) {
+	if node.Annotations == nil {
+		node.Annotations = map[string]string{}
+	}
+	node.Annotations["ibm-cloud.kubernetes.io/status"] = string(reason)
+}
+
+func TestDeleteAbortsWhenSignalCleared(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1.AddToScheme(scheme))
+	node := &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: "worker-uid"}}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
+	controller := NewController(kubeClient, nil, nil)
+	current := &v1.Node{}
+	require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(node), current))
+
+	require.Error(t, controller.deleteIfStillInterrupted(context.Background(), current))
+	require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(node), current))
+	require.Nil(t, current.DeletionTimestamp)
 }

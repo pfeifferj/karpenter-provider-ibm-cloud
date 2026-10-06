@@ -17,8 +17,10 @@ limitations under the License.
 package ibm
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -136,63 +138,60 @@ func ParseError(err error) *IBMError {
 		return nil
 	}
 
-	// Check if it's already an IBMError
-	if ibmErr, ok := err.(*IBMError); ok {
+	var ibmErr *IBMError
+	if errors.As(err, &ibmErr) {
 		return ibmErr
 	}
 
-	// Skip DetailedResponse as it's not an error type - it's a response wrapper
-
-	// Check for standard HTTP response errors
-	if httpErr, ok := err.(*core.SDKProblem); ok {
-		return parseSDKProblem(httpErr)
+	var httpProblem *core.HTTPProblem
+	if errors.As(err, &httpProblem) {
+		if httpProblem.Response != nil {
+			return ParseErrorResponse(err, httpProblem.Response)
+		}
+		return &IBMError{Message: err.Error(), wrapped: err}
 	}
 
-	// Parse error string for common patterns
+	var sdkProblem *core.SDKProblem
+	if errors.As(err, &sdkProblem) {
+		// SDK errors without a response can originate before or after sending a request.
+		return &IBMError{Message: err.Error(), wrapped: err}
+	}
+
 	return parseErrorString(err)
 }
 
-// parseDetailedResponse is removed - DetailedResponse is not an error type
-
-// parseSDKProblem parses an IBM SDK problem
-func parseSDKProblem(problem *core.SDKProblem) *IBMError {
-	// Extract status code and details from the problem
-	statusCode := 0
-	errorCode := ""
-	message := ""
-	moreInfo := ""
-
-	// Try to extract HTTP status from problem context if available
-	if problem != nil {
-		message = problem.Error()
-		// Use default status code mapping based on error patterns
-		errorStr := strings.ToLower(message)
-		if strings.Contains(errorStr, "404") || strings.Contains(errorStr, "not found") {
-			statusCode = http.StatusNotFound
-		} else if strings.Contains(errorStr, "401") || strings.Contains(errorStr, "unauthorized") {
-			statusCode = http.StatusUnauthorized
-		} else if strings.Contains(errorStr, "403") || strings.Contains(errorStr, "forbidden") {
-			statusCode = http.StatusForbidden
-		} else if strings.Contains(errorStr, "429") || strings.Contains(errorStr, "rate limit") {
-			statusCode = http.StatusTooManyRequests
-		} else if strings.Contains(errorStr, "500") || strings.Contains(errorStr, "internal") {
-			statusCode = http.StatusInternalServerError
-		} else {
-			statusCode = http.StatusInternalServerError // Default to server error
-		}
+// ParseErrorResponse preserves the status and details of an IBM HTTP error response.
+func ParseErrorResponse(err error, response *core.DetailedResponse) *IBMError {
+	if err == nil {
+		return nil
+	}
+	if response == nil {
+		return ParseError(err)
 	}
 
 	ibmErr := &IBMError{
-		StatusCode: statusCode,
-		Code:       errorCode,
-		Message:    message,
-		MoreInfo:   moreInfo,
-		wrapped:    problem,
-		Retryable:  statusCode >= 500 || statusCode == http.StatusTooManyRequests,
+		StatusCode: response.StatusCode,
+		Message:    err.Error(),
+		wrapped:    err,
+		Retryable:  response.StatusCode >= 500 || response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusRequestTimeout,
+	}
+	if details, ok := response.Result.(map[string]interface{}); ok {
+		if entries, entriesOK := details["errors"].([]interface{}); entriesOK && len(entries) > 0 {
+			if first, firstOK := entries[0].(map[string]interface{}); firstOK {
+				details = first
+			}
+		}
+		ibmErr.Code, _ = details["code"].(string)
+		if ibmErr.Code == "" {
+			ibmErr.Code, _ = details["errorCode"].(string)
+		}
+		ibmErr.MoreInfo, _ = details["more_info"].(string)
+	}
+	if retryAfter, parseErr := strconv.Atoi(response.Headers.Get("Retry-After")); parseErr == nil && retryAfter >= 0 {
+		ibmErr.RetryAfter = retryAfter
 	}
 
-	// Set error type based on status code
-	switch statusCode {
+	switch response.StatusCode {
 	case http.StatusNotFound:
 		ibmErr.Type = ErrorTypeNotFound
 	case http.StatusUnauthorized:
@@ -208,9 +207,9 @@ func parseSDKProblem(problem *core.SDKProblem) *IBMError {
 	case http.StatusRequestTimeout:
 		ibmErr.Type = ErrorTypeTimeout
 	default:
-		if statusCode >= 500 {
+		if response.StatusCode >= 500 {
 			ibmErr.Type = ErrorTypeServerError
-		} else if statusCode >= 400 {
+		} else if response.StatusCode >= 400 {
 			ibmErr.Type = ErrorTypeClientError
 		} else {
 			ibmErr.Type = ErrorTypeUnknown

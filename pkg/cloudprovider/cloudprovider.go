@@ -618,6 +618,7 @@ func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        nodeClaim.Name,
+			UID:         nodeClaim.UID,
 			Labels:      nodeClaim.Labels,
 			Annotations: nodeClaim.Annotations,
 		},

@@ -127,7 +127,7 @@ spec:
 ### Instance Type Limitations
 `iksDynamicPools.enabled: true` is required. Shared worker pools are not resized because their scale-down operation cannot identify the worker owned by a particular NodeClaim. An optional `iksWorkerPoolID` supplies the flavor for a new dedicated pool. The chosen flavor, zone, and resources must satisfy the NodeClaim requirements.
 
-Creation remains pending until the real worker joins Kubernetes with reported capacity. The claim stores its original cluster, account, pool, and worker identities before returning a provider ID. Deletion removes only that owned allocation after Karpenter drains the Node. Do not enable another autoscaler on these pools.
+Launch completes once the worker exists and reports the flavor's catalog capacity until the Node registers its own resources. The claim stores its original cluster, account, pool, and worker identities before returning a provider ID. Deletion removes only that owned allocation after Karpenter drains the Node. Do not enable another autoscaler on these pools.
 
 A lost cloud response can leave an allocation uncertain. Its finalizer and reservation remain in place until the controller can prove ownership and absence; investigate the reported cloud error rather than removing the finalizer.
 

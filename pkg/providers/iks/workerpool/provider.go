@@ -18,11 +18,7 @@ package workerpool
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"regexp"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,20 +30,13 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
 	commonTypes "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/types"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 )
 
 const (
 	// KarpenterManagedLabel is the label applied to dynamically created pools
-	KarpenterManagedLabel = "karpenter.sh/managed"
-
-	// maxPoolNameLength is the maximum length for IKS worker pool names
-	// IKS API accepts up to 63 characters (Kubernetes naming constraint)
-	maxPoolNameLength = 63
+	KarpenterManagedLabel = ownership.ManagedLabel
 )
-
-// poolNamePattern validates IKS pool names: lowercase alphanumeric, can contain hyphens,
-// must start with a letter, cannot end with hyphen
-var poolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$`)
 
 // IKSWorkerPoolProvider implements IKS-specific worker pool provisioning
 type IKSWorkerPoolProvider struct {
@@ -245,80 +234,6 @@ func (p *IKSWorkerPoolProvider) DeletePool(ctx context.Context, clusterID, poolI
 	return nil
 }
 
-// generatePoolName creates a unique name for a dynamically created pool.
-// Returns a name that conforms to IKS naming constraints:
-// - Max 63 characters
-// - Lowercase alphanumeric and hyphens
-// - Must start with a letter
-// - Cannot end with a hyphen
-func generatePoolName(prefix, flavor string) string {
-	// Generate a short random suffix (3 bytes = 6 hex chars)
-	b := make([]byte, 3)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback if random fails - use truncated flavor only
-		sanitized := sanitizePoolNameComponent(flavor)
-		return truncatePoolName(prefix + "-" + sanitized)
-	}
-	suffix := hex.EncodeToString(b)
-
-	// Sanitize flavor name
-	sanitizedFlavor := sanitizePoolNameComponent(flavor)
-
-	// Build name: prefix-flavor-suffix
-	name := fmt.Sprintf("%s-%s-%s", prefix, sanitizedFlavor, suffix)
-
-	return truncatePoolName(name)
-}
-
-// sanitizePoolNameComponent sanitizes a string for use in pool names.
-// Replaces invalid characters with hyphens and ensures lowercase.
-func sanitizePoolNameComponent(s string) string {
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, ".", "-")
-	s = strings.ReplaceAll(s, "_", "-")
-
-	// Remove any characters that aren't alphanumeric or hyphens
-	var result strings.Builder
-	for _, c := range s {
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
-			result.WriteRune(c)
-		}
-	}
-
-	// Collapse multiple consecutive hyphens
-	sanitized := result.String()
-	for strings.Contains(sanitized, "--") {
-		sanitized = strings.ReplaceAll(sanitized, "--", "-")
-	}
-
-	return strings.Trim(sanitized, "-")
-}
-
-// truncatePoolName ensures the name doesn't exceed max length and ends properly.
-func truncatePoolName(name string) string {
-	if len(name) <= maxPoolNameLength {
-		return strings.TrimRight(name, "-")
-	}
-
-	// Truncate and ensure it doesn't end with a hyphen
-	truncated := name[:maxPoolNameLength]
-	return strings.TrimRight(truncated, "-")
-}
-
-// validatePoolName checks if a pool name conforms to IKS naming constraints.
-func validatePoolName(name string) error {
-	if len(name) == 0 {
-		return fmt.Errorf("pool name cannot be empty")
-	}
-	if len(name) > maxPoolNameLength {
-		return fmt.Errorf("pool name exceeds maximum length of %d characters", maxPoolNameLength)
-	}
-	if !poolNamePattern.MatchString(name) {
-		return fmt.Errorf("pool name '%s' does not match IKS naming pattern (lowercase alphanumeric and hyphens, must start with letter)", name)
-	}
-	return nil
-}
-
 // isInstanceTypeAllowed checks if the instance type is in the allowed list
 func isInstanceTypeAllowed(instanceType string, allowedTypes []string) bool {
 	if len(allowedTypes) == 0 {
@@ -332,160 +247,7 @@ func isInstanceTypeAllowed(instanceType string, allowedTypes []string) bool {
 	return false
 }
 
-// findOrSelectWorkerPool finds an appropriate worker pool for the given instance type.
-// If dynamic pool creation is enabled and no suitable pool exists, a new pool is created.
-func (p *IKSWorkerPoolProvider) findOrSelectWorkerPool(ctx context.Context, iksClient ibm.IKSClientInterface, clusterID string, nodeClass *v1alpha1.IBMNodeClass, requestedInstanceType string) (string, string, error) {
-	logger := log.FromContext(ctx)
-
-	// If a specific worker pool is configured, use it and return its instance type
-	if nodeClass.Spec.IKSWorkerPoolID != "" {
-		logger.Info("Used configured worker pool", "pool_id", nodeClass.Spec.IKSWorkerPoolID)
-		// Get the pool details to determine its instance type
-		pool, err := iksClient.GetWorkerPool(ctx, clusterID, nodeClass.Spec.IKSWorkerPoolID)
-		if err != nil {
-			return "", "", fmt.Errorf("getting configured worker pool %s: %w", nodeClass.Spec.IKSWorkerPoolID, err)
-		}
-		// Return pool.Name for v1 API compatibility (resize uses pool name, not ID)
-		return pool.Name, pool.Flavor, nil
-	}
-
-	// List all worker pools for the cluster
-	workerPools, err := iksClient.ListWorkerPools(ctx, clusterID)
-	if err != nil {
-		return "", "", fmt.Errorf("listing worker pools: %w", err)
-	}
-
-	// Strategy 1: Find exact match (same instance type and zone)
-	if requestedInstanceType != "" {
-		for _, pool := range workerPools {
-			if pool.Flavor == requestedInstanceType && pool.Zone == nodeClass.Spec.Zone {
-				logger.Info("Found exact matching worker pool", "pool_name", pool.Name, "pool_id", pool.ID, "flavor", pool.Flavor, "zone", pool.Zone)
-				return pool.Name, pool.Flavor, nil
-			}
-		}
-	}
-
-	// Strategy 2: If dynamic pools enabled and we have a requested instance type,
-	// create a new pool with the exact instance type
-	if requestedInstanceType != "" && p.isDynamicPoolsEnabled(nodeClass) {
-		pool, createErr := p.createDynamicPool(ctx, iksClient, clusterID, nodeClass, requestedInstanceType)
-		if createErr != nil {
-			logger.Error(createErr, "Failed to create dynamic pool, falling back to existing pools")
-		} else {
-			return pool.Name, pool.Flavor, nil
-		}
-	}
-
-	// Strategy 3: Find pool in same zone (any instance type)
-	for _, pool := range workerPools {
-		if pool.Zone == nodeClass.Spec.Zone {
-			if requestedInstanceType != "" && pool.Flavor != requestedInstanceType {
-				logger.Info("Used worker pool in same zone with different instance type",
-					"pool_name", pool.Name, "pool_id", pool.ID, "pool_flavor", pool.Flavor, "zone", pool.Zone, "requested_flavor", requestedInstanceType)
-			} else {
-				logger.Info("Used worker pool in same zone", "pool_name", pool.Name, "pool_id", pool.ID, "flavor", pool.Flavor, "zone", pool.Zone)
-			}
-			return pool.Name, pool.Flavor, nil
-		}
-	}
-
-	// Strategy 4: Find pool with matching instance type (any zone)
-	if requestedInstanceType != "" {
-		for _, pool := range workerPools {
-			if pool.Flavor == requestedInstanceType {
-				logger.Info("Used worker pool with matching instance type in different zone",
-					"pool_name", pool.Name, "pool_id", pool.ID, "flavor", pool.Flavor, "pool_zone", pool.Zone, "requested_zone", nodeClass.Spec.Zone)
-				return pool.Name, pool.Flavor, nil
-			}
-		}
-	}
-
-	// Strategy 5: Use first available pool as last resort (if any exist)
-	if len(workerPools) > 0 {
-		selectedPool := workerPools[0]
-		logger.Info("Used first available worker pool as fallback",
-			"pool_name", selectedPool.Name, "pool_id", selectedPool.ID, "flavor", selectedPool.Flavor, "zone", selectedPool.Zone,
-			"requested_flavor", requestedInstanceType, "requested_zone", nodeClass.Spec.Zone)
-		return selectedPool.Name, selectedPool.Flavor, nil
-	}
-
-	return "", "", fmt.Errorf("no worker pools found for cluster %s and dynamic pool creation is not enabled", clusterID)
-}
-
 // isDynamicPoolsEnabled checks if dynamic pool creation is enabled in the nodeClass
 func (p *IKSWorkerPoolProvider) isDynamicPoolsEnabled(nodeClass *v1alpha1.IBMNodeClass) bool {
 	return nodeClass.Spec.IKSDynamicPools != nil && nodeClass.Spec.IKSDynamicPools.Enabled
-}
-
-// createDynamicPool creates a new worker pool for the requested instance type
-func (p *IKSWorkerPoolProvider) createDynamicPool(ctx context.Context, iksClient ibm.IKSClientInterface, clusterID string, nodeClass *v1alpha1.IBMNodeClass, instanceType string) (*ibm.WorkerPool, error) {
-	logger := log.FromContext(ctx)
-	config := nodeClass.Spec.IKSDynamicPools
-
-	// Check if instance type is allowed
-	if !isInstanceTypeAllowed(instanceType, config.AllowedInstanceTypes) {
-		return nil, fmt.Errorf("instance type %s is not in allowed list", instanceType)
-	}
-
-	// Generate pool name
-	prefix := "karp"
-	if config.NamePrefix != "" {
-		prefix = sanitizePoolNameComponent(config.NamePrefix)
-	}
-	poolName := generatePoolName(prefix, instanceType)
-
-	// Validate the generated pool name
-	if err := validatePoolName(poolName); err != nil {
-		return nil, fmt.Errorf("invalid pool name generated: %w", err)
-	}
-
-	// Build labels
-	labels := map[string]string{
-		KarpenterManagedLabel: "true",
-	}
-	for k, v := range config.Labels {
-		labels[k] = v
-	}
-
-	// Determine disk encryption setting
-	diskEncryption := true
-	if config.DiskEncryption != nil {
-		diskEncryption = *config.DiskEncryption
-	}
-
-	// Build zone configuration
-	zones := []ibm.WorkerPoolZone{
-		{
-			ID:       nodeClass.Spec.Zone,
-			SubnetID: nodeClass.Spec.Subnet,
-		},
-	}
-
-	request := &ibm.WorkerPoolCreateRequest{
-		Name:           poolName,
-		Flavor:         instanceType,
-		SizePerZone:    0, // Start with 0, will be resized after creation
-		Zones:          zones,
-		Labels:         labels,
-		DiskEncryption: diskEncryption,
-		VpcID:          nodeClass.Spec.VPC,
-	}
-
-	logger.Info("Initiated dynamic worker pool creation",
-		"name", poolName,
-		"flavor", instanceType,
-		"zone", nodeClass.Spec.Zone,
-		"labels", labels)
-
-	pool, err := iksClient.CreateWorkerPool(ctx, clusterID, request)
-	if err != nil {
-		return nil, fmt.Errorf("creating dynamic worker pool: %w", err)
-	}
-
-	logger.Info("Dynamic worker pool created successfully",
-		"pool_id", pool.ID,
-		"pool_name", pool.Name,
-		"flavor", pool.Flavor)
-
-	return pool, nil
 }

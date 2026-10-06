@@ -54,7 +54,7 @@ spec:
 
 #### VPC Launch Recovery
 
-VPC launches store their original configuration and use a name derived from the cluster and NodeClaim UIDs. Retries adopt a matching instance after a lost response. An uncertain submission with no visible instance remains pending instead of issuing another create request, including a crash between checkpointing and submission. Restore access to the original account and region and investigate the launch checkpoint before intervening in the claim's finalizer.
+VPC launches store their original configuration and use a name derived from the cluster and NodeClaim UIDs. Retries adopt a matching instance after a lost response. An uncertain submission with no visible instance remains pending for 15 minutes instead of issuing another create request; after that the checkpoint is discarded and the claim relaunches under the same name. Restore access to the original account and region and investigate the launch checkpoint before intervening in the claim's finalizer.
 
 New VPC launches resolve and record the account from the VPC API key. Helm's optional `credentials.accountId` checks that the credential belongs to the expected account. Credential changes to another account block recovery and deletion instead of treating that account's 404 as proof of absence.
 
@@ -62,7 +62,7 @@ Older claims record account identity after a successful lookup of their exact in
 
 #### IKS Mode Instance Type Constraints {#iks-mode-instance-type-constraints}
 
-IKS provisioning requires `iksDynamicPools.enabled: true`, an explicit zone and subnet, and capacity for one dedicated pool per NodeClaim. Shared pools are not resized. `instanceProfile` selects the flavor; an optional `iksWorkerPoolID` supplies a flavor template. The provider checks the chosen flavor against the NodeClaim requirements and waits for the real worker's reported resources before completing launch.
+IKS provisioning requires `iksDynamicPools.enabled: true`, an explicit zone and subnet, and capacity for one dedicated pool per NodeClaim. Shared pools are not resized. `instanceProfile` selects the flavor; an optional `iksWorkerPoolID` supplies a flavor template. The provider checks the chosen flavor against the NodeClaim requirements and completes launch once the worker exists, reporting the flavor's catalog capacity until the Node registers its own resources.
 
 Allocations preserve their original account, cluster, pool, and worker identity. Ambiguous cloud responses retain their allocation finalizer until ownership and deletion can be verified. Existing pools without immutable cluster and NodeClass ownership are excluded from automatic cleanup.
 

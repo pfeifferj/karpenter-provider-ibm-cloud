@@ -19,6 +19,7 @@ package allocation
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -87,20 +88,11 @@ func TestCleanupControllerPreservesNormalTerminationAndTypedAbsence(t *testing.T
 			}
 			fresh := &v1.NodeClaim{}
 			require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
-			require.Equal(t, !test.release, contains(fresh.Finalizers, workerpool.AllocationFinalizer))
+			require.Equal(t, !test.release, slices.Contains(fresh.Finalizers, workerpool.AllocationFinalizer))
 			require.Contains(t, fresh.Finalizers, v1.TerminationFinalizer)
 			if test.result == nil {
 				require.Positive(t, result.RequeueAfter)
 			}
 		})
 	}
-}
-
-func contains(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
 }

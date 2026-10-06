@@ -25,7 +25,6 @@ import (
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/platform-services-go-sdk/globaltaggingv1"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
-	"github.com/go-logr/logr"
 	"github.com/go-openapi/strfmt"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -33,10 +32,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -130,7 +127,7 @@ func TestOwnershipRequiresImmutableClusterIdentity(t *testing.T) {
 				kubeClient = fake.NewClientBuilder().WithScheme(orphanScheme()).Build()
 			}
 			c := &Controller{kubeClient: kubeClient, apiReader: kubeClient, globalTagging: tagging}
-			require.Equal(t, scenario == "owned", c.hasKarpenterTags(context.Background(), ownedInstance(time.Hour).CRN, "instance", logr.Discard()))
+			require.Equal(t, scenario == "owned", owns(c, ownedInstance(time.Hour).CRN))
 		})
 	}
 }
@@ -142,7 +139,7 @@ func TestOwnershipReadsAllTagPages(t *testing.T) {
 	tagging := &mockGlobalTaggingAPI{pages: map[int64]*globaltaggingv1.TagList{0: first, 2: second}}
 	kubeClient := orphanClient()
 	c := &Controller{kubeClient: kubeClient, globalTagging: tagging}
-	require.True(t, c.hasKarpenterTags(context.Background(), ownedInstance(time.Hour).CRN, "instance", logr.Discard()))
+	require.True(t, owns(c, ownedInstance(time.Hour).CRN))
 	require.Equal(t, []int64{0, 2}, tagging.offsets)
 }
 
@@ -170,7 +167,11 @@ func TestOrphanInstanceDeletionRequiresProofAndAge(t *testing.T) {
 				objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}, Spec: corev1.NodeSpec{ProviderID: "ibm:///us-south/instance"}})
 			}
 			if scenario == "foreign tags" {
-				tagging.response = &globaltaggingv1.TagList{Items: []globaltaggingv1.Tag{{Name: core.StringPtr("karpenter.sh/cluster:other-cluster")}}}
+				for i := range tagging.response.Items {
+					if *tagging.response.Items[i].Name == ownership.ClusterUIDTag+":cluster-a-uid" {
+						tagging.response.Items[i].Name = core.StringPtr(ownership.ClusterUIDTag + ":cluster-b-uid")
+					}
+				}
 			}
 			if scenario == "tag error" {
 				tagging.err = context.DeadlineExceeded
@@ -210,54 +211,6 @@ func TestOrphanInstancePreservesFailedDeletionForRetry(t *testing.T) {
 	kubeClient := orphanClient()
 	c := &Controller{kubeClient: kubeClient, ibmClient: &mockVPCClientProvider{vpcClient: ibm.NewVPCClientWithMock(mockVPC)}, globalTagging: &mockGlobalTaggingAPI{response: ownershipTags()}, orphanTimeout: DefaultOrphanTimeout}
 	require.ErrorIs(t, c.processOrphanedInstance(context.Background(), "instance"), context.DeadlineExceeded)
-}
-
-func TestOrphanNodeDeletionPreservesTerminationFinalizer(t *testing.T) {
-	ctx := context.Background()
-	ctrl := gomock.NewController(t)
-	mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
-	mockVPC.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(nil, &core.DetailedResponse{StatusCode: 404}, &ibm.IBMError{StatusCode: 404}).Times(2)
-	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid", Labels: map[string]string{karpv1.NodePoolLabelKey: "pool"}, Finalizers: []string{karpv1.TerminationFinalizer, "example.com/finalizer"}},
-		Spec:       corev1.NodeSpec{ProviderID: "ibm:///us-south/missing"},
-		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse, LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Hour))}}},
-	}
-	calls := 0
-	kubeClient := fake.NewClientBuilder().WithScheme(orphanScheme()).WithObjects(node).WithInterceptorFuncs(interceptor.Funcs{
-		Delete: func(ctx context.Context, base client.WithWatch, object client.Object, options ...client.DeleteOption) error {
-			calls++
-			opts := (&client.DeleteOptions{}).ApplyOptions(options)
-			require.Equal(t, types.UID("node-uid"), *opts.Preconditions.UID)
-			require.Equal(t, object.GetResourceVersion(), *opts.Preconditions.ResourceVersion)
-			return base.Delete(ctx, object, options...)
-		},
-	}).Build()
-	c := &Controller{kubeClient: kubeClient, ibmClient: &mockVPCClientProvider{vpcClient: ibm.NewVPCClientWithMock(mockVPC)}, orphanTimeout: DefaultOrphanTimeout}
-	require.NoError(t, c.processOrphanedNode(ctx, *node))
-	updated := &corev1.Node{}
-	require.NoError(t, kubeClient.Get(ctx, client.ObjectKeyFromObject(node), updated))
-	require.Equal(t, node.Finalizers, updated.Finalizers)
-	require.False(t, updated.DeletionTimestamp.IsZero())
-	require.Equal(t, 1, calls)
-}
-
-func TestOrphanNodeFreshReadProtectsReplacement(t *testing.T) {
-	ctx := context.Background()
-	ctrl := gomock.NewController(t)
-	mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
-	mockVPC.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(nil, nil, &ibm.IBMError{StatusCode: 404})
-	candidate := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "old-uid", Labels: map[string]string{karpv1.NodePoolLabelKey: "pool"}},
-		Spec:       corev1.NodeSpec{ProviderID: "ibm:///us-south/old"},
-		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse, LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Hour))}}},
-	}
-	fresh := candidate.DeepCopy()
-	fresh.UID, fresh.Spec.ProviderID = "new-uid", "ibm:///us-south/new"
-	fresh.Status.Conditions[0].Status = corev1.ConditionTrue
-	kubeClient := orphanClient(candidate)
-	c := &Controller{kubeClient: kubeClient, apiReader: orphanClient(fresh), ibmClient: &mockVPCClientProvider{vpcClient: ibm.NewVPCClientWithMock(mockVPC)}, orphanTimeout: DefaultOrphanTimeout}
-	require.NoError(t, c.processOrphanedNode(ctx, *candidate))
-	require.NoError(t, kubeClient.Get(ctx, client.ObjectKeyFromObject(candidate), &corev1.Node{}))
 }
 
 func TestProviderIDExtractionRejectsIKSIdentity(t *testing.T) {
@@ -308,4 +261,13 @@ func TestReconcileRequiresClusterIdentity(t *testing.T) {
 	c := &Controller{kubeClient: kubeClient, ibmClient: &mockVPCClientProvider{vpcClient: ibm.NewVPCClientWithMock(mockVPC)}, globalTagging: &mockGlobalTaggingAPI{response: ownershipTags()}, orphanTimeout: DefaultOrphanTimeout}
 	_, err := c.Reconcile(context.Background())
 	require.Error(t, err)
+}
+
+func owns(c *Controller, crn *string) bool {
+	tags, err := c.instanceTags(context.Background(), crn)
+	if err != nil {
+		return false
+	}
+	owned, err := c.ownsTags(context.Background(), tags)
+	return owned && err == nil
 }

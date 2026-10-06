@@ -47,6 +47,7 @@ func getTestVPCInstance() *vpcv1.Instance {
 	zoneName := "us-south-1"
 
 	return &vpcv1.Instance{
+		CRN:  core.StringPtr(testInstanceCRN),
 		ID:   &instanceID,
 		Name: &instanceName,
 		Profile: &vpcv1.InstanceProfileReference{
@@ -191,6 +192,7 @@ func TestVPCClient_ListInstances(t *testing.T) {
 
 	testInstance1 := getTestVPCInstance()
 	testInstance2 := &vpcv1.Instance{
+		CRN:  core.StringPtr(testInstanceCRN),
 		ID:   ptrString("instance-2"),
 		Name: ptrString("instance-2-name"),
 	}
@@ -250,7 +252,9 @@ func TestVPCClient_CreateInstance_Failure(t *testing.T) {
 	vpcClient := ibm.NewVPCClientWithMock(mockVPC)
 
 	instancePrototype := &vpcv1.InstancePrototypeInstanceByImage{
-		Name: ptrString("test-instance"),
+		Name:  ptrString("test-instance"),
+		Image: &vpcv1.ImageIdentityByID{ID: ptrString("test-image-id")},
+		Zone:  &vpcv1.ZoneIdentityByName{Name: ptrString("us-south-1")},
 	}
 
 	instance, err := vpcClient.CreateInstance(ctx, instancePrototype)
@@ -357,6 +361,7 @@ func TestVPCInstanceProvider_List(t *testing.T) {
 
 	testInstance1 := getTestVPCInstance()
 	testInstance2 := &vpcv1.Instance{
+		CRN:  core.StringPtr(testInstanceCRN),
 		ID:   ptrString("instance-2"),
 		Name: ptrString("node-2"),
 		Profile: &vpcv1.InstanceProfileReference{
@@ -974,6 +979,7 @@ func TestProviderList_Success(t *testing.T) {
 
 	instance1 := getTestVPCInstance()
 	instance2 := &vpcv1.Instance{
+		CRN:  core.StringPtr(testInstanceCRN),
 		ID:   ptrString("instance-2"),
 		Name: ptrString("node-2"),
 		Profile: &vpcv1.InstanceProfileReference{
@@ -1878,6 +1884,7 @@ func TestProviderGet_DeletingInstanceNotCached(t *testing.T) {
 	zoneName := "us-south-1"
 
 	deletingInstance := &vpcv1.Instance{
+		CRN:    core.StringPtr(testInstanceCRN),
 		ID:     &instanceID,
 		Name:   &instanceName,
 		Status: &deletingStatus,
@@ -2039,6 +2046,7 @@ func TestProviderList_DeletingInstanceNotCached(t *testing.T) {
 	deletingStatus := vpcv1.InstanceStatusDeletingConst
 
 	runningInstance := vpcv1.Instance{
+		CRN:    core.StringPtr(testInstanceCRN),
 		ID:     &runningID,
 		Name:   &runningName,
 		Status: &runningStatus,
@@ -2048,6 +2056,7 @@ func TestProviderList_DeletingInstanceNotCached(t *testing.T) {
 	}
 
 	deletingInstance := vpcv1.Instance{
+		CRN:    core.StringPtr(testInstanceCRN),
 		ID:     &deletingID,
 		Name:   &deletingName,
 		Status: &deletingStatus,
@@ -2110,6 +2119,7 @@ func TestProviderList_CorrectRegionFromZone(t *testing.T) {
 	zoneName := "eu-de-2"
 
 	testInstance := &vpcv1.Instance{
+		CRN:  core.StringPtr(testInstanceCRN),
 		ID:   &instanceID,
 		Name: &instanceName,
 		Zone: &vpcv1.ZoneReference{

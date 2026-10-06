@@ -18,8 +18,11 @@ package ibm
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -37,36 +40,84 @@ func (c *VPCClient) ResolveAccountID(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("VPC credential account cannot be verified without an API key")
 	}
 	if c.identityService == nil {
-		service, err := core.NewBaseService(&core.ServiceOptions{
-			URL: "https://iam.cloud.ibm.com", Authenticator: NewIAMAuthenticator(c.apiKey),
-		})
+		service, err := newCredentialIdentityService()
 		if err != nil {
 			return "", fmt.Errorf("creating credential identity client: %w", err)
 		}
-		identityClient := service.GetHTTPClient()
-		identityClient.Timeout = 30 * time.Second
-		service.SetHTTPClient(httpclient.InstrumentHTTPClient(identityClient, "global"))
 		c.identityService = service
 	}
-	builder := core.NewRequestBuilder(core.GET).WithContext(ctx)
-	if _, err := builder.ResolveRequestURL(c.identityService.Options.URL, "/v1/apikeys/details", nil); err != nil {
+	builder := core.NewRequestBuilder(core.POST).WithContext(ctx)
+	if _, err := builder.ResolveRequestURL(c.identityService.Options.URL, "/identity/token", nil); err != nil {
 		return "", err
 	}
 	builder.AddHeader("Accept", "application/json")
-	builder.AddHeader(http.CanonicalHeaderKey("IAM-ApiKey"), c.apiKey)
+	builder.AddHeader("Content-Type", "application/x-www-form-urlencoded")
+	builder.AddFormData("grant_type", "", "", "urn:ibm:params:oauth:grant-type:apikey")
+	builder.AddFormData("response_type", "", "", "cloud_iam")
+	builder.AddFormData("apikey", "", "", c.apiKey)
 	request, err := builder.Build()
 	if err != nil {
 		return "", err
 	}
+	var tokenResponse core.IamTokenServerResponse
+	if response, requestErr := c.identityService.Request(request, &tokenResponse); requestErr != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("verifying VPC credential account: %w", ctx.Err())
+		}
+		if response != nil {
+			return "", fmt.Errorf("verifying VPC credential account: IAM token request failed with HTTP status %d", response.StatusCode)
+		}
+		return "", fmt.Errorf("verifying VPC credential account: IAM token request failed")
+	}
+	accountID, err := accountFromIAMToken(tokenResponse.AccessToken)
+	if err != nil {
+		return "", err
+	}
+	c.identityAccount = accountID
+	return c.identityAccount, nil
+}
+
+func newCredentialIdentityService() (*core.BaseService, error) {
+	service, err := core.NewBaseService(&core.ServiceOptions{
+		URL: "https://iam.cloud.ibm.com", Authenticator: &core.NoAuthAuthenticator{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	identityClient := service.GetHTTPClient()
+	identityClient.Timeout = 30 * time.Second
+	identityClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	service.SetHTTPClient(httpclient.InstrumentHTTPClient(identityClient, "global"))
+	return service, nil
+}
+
+// The token is accepted only from the fixed IAM HTTPS endpoint using this client's API key.
+func accountFromIAMToken(token string) (string, error) {
+	segments := strings.Split(token, ".")
+	if len(segments) != 3 || segments[0] == "" || segments[1] == "" || segments[2] == "" {
+		return "", fmt.Errorf("credential identity response has an invalid access token")
+	}
+	header, err := base64.RawURLEncoding.DecodeString(segments[0])
+	var tokenHeader struct {
+		Algorithm string `json:"alg"`
+	}
+	if err != nil || json.Unmarshal(header, &tokenHeader) != nil || tokenHeader.Algorithm == "" || strings.EqualFold(tokenHeader.Algorithm, "none") {
+		return "", fmt.Errorf("credential identity response has an invalid token header")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(segments[1])
+	if err != nil {
+		return "", fmt.Errorf("credential identity response has an invalid token payload")
+	}
+	if _, err := base64.RawURLEncoding.DecodeString(segments[2]); err != nil {
+		return "", fmt.Errorf("credential identity response has an invalid token signature")
+	}
 	var identity struct {
-		AccountID string `json:"account_id"`
+		Account struct {
+			ID string `json:"bss"`
+		} `json:"account"`
 	}
-	if _, err := c.identityService.Request(request, &identity); err != nil {
-		return "", fmt.Errorf("verifying VPC credential account: %w", err)
-	}
-	if !ibmAccountIDPattern.MatchString(identity.AccountID) {
+	if err := json.Unmarshal(payload, &identity); err != nil || !ibmAccountIDPattern.MatchString(identity.Account.ID) {
 		return "", fmt.Errorf("credential identity response has no valid account ID")
 	}
-	c.identityAccount = identity.AccountID
-	return c.identityAccount, nil
+	return identity.Account.ID, nil
 }

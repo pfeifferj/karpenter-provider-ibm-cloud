@@ -30,7 +30,8 @@ import (
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 
-	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers"
+	commonTypes "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/iks/workerpool"
 )
 
@@ -42,16 +43,17 @@ type Provider interface {
 type Controller struct {
 	kubeClient client.Client
 	apiReader  client.Reader
+	factory    *providers.ProviderFactory
 	provider   Provider
 }
 
-func NewController(kubeClient client.Client, apiReader client.Reader, ibmClient *ibm.Client) *Controller {
-	provider, _ := workerpool.NewIKSWorkerPoolProvider(ibmClient, kubeClient, workerpool.WithAPIReader(apiReader))
-	cleanupProvider, _ := provider.(Provider)
+// NewController shares the factory's IKS provider so allocation cleanup and launches
+// serialize on the same pool locks.
+func NewController(kubeClient client.Client, apiReader client.Reader, factory *providers.ProviderFactory) *Controller {
 	if apiReader == nil {
 		apiReader = kubeClient
 	}
-	return &Controller{kubeClient: kubeClient, apiReader: apiReader, provider: cleanupProvider}
+	return &Controller{kubeClient: kubeClient, apiReader: apiReader, factory: factory}
 }
 
 func (c *Controller) SetProvider(provider Provider) { c.provider = provider }
@@ -64,14 +66,25 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	if claim.DeletionTimestamp.IsZero() || !controllerutil.ContainsFinalizer(claim, workerpool.AllocationFinalizer) {
 		return reconcile.Result{}, nil
 	}
-	if c.provider == nil {
-		return reconcile.Result{}, fmt.Errorf("IKS allocation provider is unavailable")
+	provider := c.provider
+	if provider == nil {
+		if c.factory == nil {
+			return reconcile.Result{}, fmt.Errorf("IKS allocation provider is unavailable")
+		}
+		instanceProvider, err := c.factory.GetInstanceProviderForMode(commonTypes.IKSMode)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("building IKS allocation provider: %w", err)
+		}
+		var ok bool
+		if provider, ok = instanceProvider.(Provider); !ok {
+			return reconcile.Result{}, fmt.Errorf("IKS provider cannot release allocations")
+		}
 	}
 	var err error
 	if claim.Status.ProviderID == "" {
-		err = c.provider.Cleanup(ctx, claim)
+		err = provider.Cleanup(ctx, claim)
 	} else {
-		err = c.provider.ConfirmGone(ctx, claim)
+		err = provider.ConfirmGone(ctx, claim)
 	}
 	if err != nil && !cloudprovider.IsNodeClaimNotFoundError(err) {
 		return reconcile.Result{}, err

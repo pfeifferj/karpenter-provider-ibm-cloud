@@ -91,7 +91,7 @@ func cleanupFixture(t *testing.T) (*Controller, client.Client, *cleanupCloud, *v
 	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &v1.NodeClaim{}, &v1.NodeClaimList{})
 	nodeClass := &v1alpha1.IBMNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "class-uid"}, Spec: v1alpha1.IBMNodeClassSpec{Region: "us-south", IKSClusterID: "cluster", IKSDynamicPools: &v1alpha1.IKSDynamicPoolConfig{Enabled: true, CleanupPolicy: &v1alpha1.IKSPoolCleanupPolicy{EmptyPoolTTL: "0s"}}}}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system", UID: "cluster-uid"}}).Build()
-	cloud := &cleanupCloud{pool: &ibm.WorkerPool{ID: "pool-id", Name: "owned-pool", Labels: map[string]string{ownership.ManagedTag: "true", ownership.ProviderTag: "iks", ownership.ClusterUIDTag: "cluster-uid", ownership.NodeClassUIDTag: "class-uid"}}}
+	cloud := &cleanupCloud{pool: &ibm.WorkerPool{ID: "pool-id", Name: "owned-pool", Labels: map[string]string{ownership.ManagedLabel: "true", ownership.ProviderLabel: "iks", ownership.ClusterUIDLabel: "cluster-uid", ownership.NodeClassUIDLabel: "class-uid"}}}
 	controller := NewController(kubeClient, nil, kubeClient)
 	controller.SetIKSClient(cloud)
 	controller.poolTracking["cluster/pool-id"] = time.Now().Add(-time.Hour)
@@ -115,7 +115,7 @@ func TestCleanupDeletesOnlyOwnedEmptyPoolAndConfirmsAbsence(t *testing.T) {
 }
 
 func TestCleanupRejectsForeignClassUIDAndClaimPools(t *testing.T) {
-	for _, key := range []string{ownership.NodeClassUIDTag, ownership.ClusterUIDTag, ownership.ClaimUIDTag} {
+	for _, key := range []string{ownership.NodeClassUIDLabel, ownership.ClusterUIDLabel, ownership.ClaimUIDLabel} {
 		t.Run(key, func(t *testing.T) {
 			controller, _, cloud, nodeClass := cleanupFixture(t)
 			cloud.pool.Labels[key] = "different-owner"

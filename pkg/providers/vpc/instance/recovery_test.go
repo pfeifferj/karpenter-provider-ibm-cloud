@@ -55,6 +55,8 @@ const testAccountID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func testAccountResolver(context.Context) (string, error) { return testAccountID, nil }
 
+const testInstanceCRN = "crn:v1:bluemix:public:is:us-south:a/" + testAccountID + "::instance:test"
+
 func (t *recordingTagger) AttachTagWithContext(_ context.Context, options *globaltaggingv1.AttachTagOptions) (*globaltaggingv1.TagResults, *core.DetailedResponse, error) {
 	t.names = append(t.names, options.TagNames...)
 	return &globaltaggingv1.TagResults{Results: []globaltaggingv1.TagResultsItem{{ResourceID: options.Resources[0].ResourceID}}}, &core.DetailedResponse{StatusCode: 200}, nil
@@ -67,7 +69,7 @@ func launchFixture(t *testing.T) (*VPCInstanceProvider, *karpv1.NodeClaim, *laun
 	require.NoError(t, corev1.AddToScheme(scheme))
 	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 	claim := &karpv1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim", UID: types.UID("claim-uid")}, Spec: karpv1.NodeClaimSpec{NodeClassRef: &karpv1.NodeClassReference{Name: "removed-class"}}}
-	config := &launchConfig{Name: ownership.InstanceName("cluster-uid", string(claim.UID)), ClusterUID: "cluster-uid", ClaimUID: string(claim.UID), ClassUID: "class-uid", AccountID: testAccountID, Region: "us-south", ResourceGroup: "resource-group", VPC: "vpc", Profile: "bx2-2x8", Zone: "us-south-1", Subnet: "subnet", Image: "image", Submitted: true}
+	config := &launchConfig{Name: ownership.InstanceName("cluster-uid", string(claim.UID)), ClusterUID: "cluster-uid", ClaimUID: string(claim.UID), ClassUID: "class-uid", AccountID: testAccountID, Region: "us-south", ResourceGroup: "resource-group", VPC: "vpc", Profile: "bx2-2x8", Zone: "us-south-1", Subnet: "subnet", Image: "image", Submitted: true, SubmittedAt: time.Now().UTC()}
 	value, err := json.Marshal(config)
 	require.NoError(t, err)
 	claim.Annotations = map[string]string{LaunchAnnotation: string(value), ownership.BackendAnnotation: "vpc"}
@@ -92,8 +94,8 @@ func TestCreateRecoversSubmittedInstanceWithoutNodeClass(t *testing.T) {
 	claim.Annotations[LaunchAnnotation] = string(value)
 	require.NoError(t, provider.kubeClient.Update(context.Background(), claim))
 	instance := matchingInstance(config)
-	mock.EXPECT().ListInstancesWithContext(gomock.Any(), gomock.Any()).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{*instance}}, nil, nil)
-	mock.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(instance, nil, nil).Times(2)
+	mock.EXPECT().ListInstancesWithContext(gomock.Any(), listByName(config.Name)).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{*instance}}, nil, nil)
+	mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(instance, nil, nil).Times(2)
 	node, err := provider.Create(context.Background(), claim, nil)
 	require.NoError(t, err)
 	require.Equal(t, "ibm:///us-south/instance", node.Spec.ProviderID)
@@ -103,8 +105,8 @@ func TestCreateRecoversSubmittedInstanceWithoutNodeClass(t *testing.T) {
 }
 
 func TestCreateDoesNotRetryUncertainSubmission(t *testing.T) {
-	provider, claim, _, mock, _ := launchFixture(t)
-	mock.EXPECT().ListInstancesWithContext(gomock.Any(), gomock.Any()).Return(&vpcv1.InstanceCollection{}, nil, nil).Times(2)
+	provider, claim, config, mock, _ := launchFixture(t)
+	mock.EXPECT().ListInstancesWithContext(gomock.Any(), listByName(config.Name)).Return(&vpcv1.InstanceCollection{}, nil, nil).Times(2)
 	for range 2 {
 		_, err := provider.Create(context.Background(), claim, nil)
 		require.Error(t, err)
@@ -122,7 +124,7 @@ func TestPendingCleanupPreservesUncertainAndUnrelatedResources(t *testing.T) {
 			value, err := json.Marshal(config)
 			require.NoError(t, err)
 			claim.Annotations[LaunchAnnotation] = string(value)
-			mock.EXPECT().ListInstancesWithContext(gomock.Any(), gomock.Any()).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{{Name: core.StringPtr("claim")}}}, nil, nil)
+			mock.EXPECT().ListInstancesWithContext(gomock.Any(), listByName(config.Name)).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{{Name: core.StringPtr("claim")}}}, nil, nil)
 			complete, err := provider.CleanupPending(context.Background(), claim)
 			require.NoError(t, err)
 			require.Equal(t, rejected, complete)
@@ -138,8 +140,8 @@ func TestPendingCleanupRefusesChangedConfiguration(t *testing.T) {
 		provider, claim, config, mock, _ := launchFixture(t)
 		instance := matchingInstance(config)
 		mutate(instance)
-		mock.EXPECT().ListInstancesWithContext(gomock.Any(), gomock.Any()).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{*instance}}, nil, nil)
-		mock.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(instance, nil, nil)
+		mock.EXPECT().ListInstancesWithContext(gomock.Any(), listByName(config.Name)).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{*instance}}, nil, nil)
+		mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(instance, nil, nil)
 		complete, err := provider.CleanupPending(context.Background(), claim)
 		require.Error(t, err)
 		require.False(t, complete)
@@ -211,7 +213,7 @@ func TestFreshInstanceProofRejectsForeignAccountCRN(t *testing.T) {
 	provider, _, config, mock, _ := launchFixture(t)
 	instance := matchingInstance(config)
 	instance.CRN = core.StringPtr("crn:v1:bluemix:public:is:us-south:a/" + strings.Repeat("b", 32) + "::instance:instance")
-	mock.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(instance, nil, nil)
+	mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(instance, nil, nil)
 	_, err := provider.GetFresh(context.Background(), "ibm:///us-south/instance")
 	require.ErrorContains(t, err, "instance CRN")
 }
@@ -221,8 +223,8 @@ func TestPendingCleanupWaitsForGracefulNodeTermination(t *testing.T) {
 		t.Run(fmt.Sprint(finalizer), func(t *testing.T) {
 			provider, claim, config, mock, _ := launchFixture(t)
 			instance := matchingInstance(config)
-			mock.EXPECT().ListInstancesWithContext(gomock.Any(), gomock.Any()).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{*instance}}, nil, nil)
-			mock.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(instance, nil, nil)
+			mock.EXPECT().ListInstancesWithContext(gomock.Any(), listByName(config.Name)).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{*instance}}, nil, nil)
+			mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(instance, nil, nil)
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "registered", UID: "node-uid"}, Spec: corev1.NodeSpec{ProviderID: "ibm:///us-south/instance"}}
 			if finalizer {
 				node.Finalizers = []string{karpv1.TerminationFinalizer}
@@ -248,7 +250,7 @@ func TestFreshLookupBypassesCacheAndReturnsIndependentNodes(t *testing.T) {
 	provider, _, config, mock, _ := launchFixture(t)
 	instance := matchingInstance(config)
 	providerID := "ibm:///us-south/instance"
-	mock.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(instance, nil, nil).Times(2)
+	mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(instance, nil, nil).Times(2)
 	first, err := provider.Get(context.Background(), providerID)
 	require.NoError(t, err)
 	first.Labels[corev1.LabelInstanceTypeStable] = "mutated"
@@ -314,7 +316,7 @@ func TestCreateRecoversLostResponseAndPreservesRetainedVolumes(t *testing.T) {
 			require.NotContains(t, volume["name"], claim.Name)
 			require.Contains(t, volume["user_tags"], ownership.ClusterUIDTag+":cluster-uid")
 			require.NotContains(t, volume["user_tags"], ownership.ClusterUIDTag+":foreign")
-			require.Contains(t, volume["user_tags"], "karpenter-ibm.sh/retain:true")
+			require.Contains(t, volume["user_tags"], ownership.RetainTag+":true")
 			created = true
 			posts++
 			status = http.StatusInternalServerError
@@ -334,4 +336,157 @@ func TestCreateRecoversLostResponseAndPreservesRetainedVolumes(t *testing.T) {
 	_, err = provider.Create(ctx, claim, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, posts)
+}
+
+func TestCreateValidatesCloudTagsBeforeCheckpointAndPersistsRemoteRejection(t *testing.T) {
+	for _, fixture := range []string{"invalid-volume-tag", "invalid-instance-tag", "remote-rejection"} {
+		t.Run(fixture, func(t *testing.T) {
+			t.Setenv("IBM_ACCOUNT_ID", "")
+			ctx := context.Background()
+			scheme := runtime.NewScheme()
+			require.NoError(t, corev1.AddToScheme(scheme))
+			scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
+			require.NoError(t, v1alpha1.AddToScheme(scheme))
+			claim := &karpv1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim", UID: "claim-uid"}, Spec: karpv1.NodeClaimSpec{NodeClassRef: &karpv1.NodeClassReference{Name: "class"}}}
+			class := &v1alpha1.IBMNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "class-uid", Generation: 1}, Spec: v1alpha1.IBMNodeClassSpec{Region: "us-south", Zone: "us-south-1", Subnet: "subnet", VPC: "vpc", ResourceGroup: strings.Repeat("a", 32), SecurityGroups: []string{"security-group"}, Image: "image", UserData: "#!/bin/sh\ntrue"}, Status: v1alpha1.IBMNodeClassStatus{ResolvedImageID: "image", Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1}}}}
+			if fixture == "invalid-volume-tag" {
+				class.Spec.BlockDeviceMappings = []v1alpha1.BlockDeviceMapping{{RootVolume: true, VolumeSpec: &v1alpha1.VolumeSpec{Tags: []string{"custom:invalid/value"}}}}
+			}
+			if fixture == "invalid-instance-tag" {
+				class.Spec.Tags = map[string]string{"custom": "invalid/value"}
+			}
+			kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(class).WithObjects(claim, class, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system", UID: "cluster-uid"}}).Build()
+			sdk, sdkErr := vpcv1.NewVpcV1(&vpcv1.VpcV1Options{URL: "https://test.iaas.cloud.ibm.com/v1", Authenticator: &core.NoAuthAuthenticator{}})
+			require.NoError(t, sdkErr)
+			posts := 0
+			sdk.Service.SetHTTPClient(&http.Client{Transport: launchTransport(func(request *http.Request) (*http.Response, error) {
+				status := http.StatusOK
+				body := `{"instances":[]}`
+				switch request.Method {
+				case http.MethodGet:
+					require.Equal(t, "/v1/instances", request.URL.Path)
+				case http.MethodPost:
+					posts++
+					require.Equal(t, "/v1/instances", request.URL.Path)
+					payload := map[string]any{}
+					require.NoError(t, json.NewDecoder(request.Body).Decode(&payload))
+					volume := payload["boot_volume_attachment"].(map[string]any)["volume"].(map[string]any)
+					for _, tag := range volume["user_tags"].([]any) {
+						require.NoError(t, ownership.ValidateTag(tag.(string)))
+						require.NotContains(t, tag, "/")
+					}
+					status = http.StatusBadRequest
+					body = `{"errors":[{"code":"validation_failed","message":"Expected only one oneOf fields to be set: got 0"}]}`
+				default:
+					t.Fatalf("unexpected cloud operation: %s", request.Method)
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})})
+			vpc := ibm.NewVPCClientWithMock(sdk, &recordingTagger{})
+			provider := &VPCInstanceProvider{kubeClient: kube, apiReader: kube, vpcClientManager: vpcclient.NewManagerWithMockClient(vpc), instanceCache: cache.New(time.Hour), accountResolver: testAccountResolver}
+			_, err := provider.Create(ctx, claim, []*cloudprovider.InstanceType{{Name: "bx2-2x8", Overhead: &cloudprovider.InstanceTypeOverhead{}}})
+			require.Error(t, err)
+			fresh := &karpv1.NodeClaim{}
+			require.NoError(t, kube.Get(ctx, client.ObjectKeyFromObject(claim), fresh))
+			if fixture != "remote-rejection" {
+				require.Zero(t, posts)
+				require.Empty(t, fresh.Annotations[LaunchAnnotation])
+				require.NotContains(t, fresh.Finalizers, LaunchFinalizer)
+				return
+			}
+			require.Equal(t, 1, posts)
+			checkpoint, checkpointErr := decodeLaunch(fresh.Annotations[LaunchAnnotation])
+			require.NoError(t, checkpointErr)
+			require.True(t, checkpoint.Submitted)
+			require.True(t, checkpoint.Rejected)
+			completed, cleanupErr := provider.CleanupPending(ctx, fresh)
+			require.NoError(t, cleanupErr)
+			require.True(t, completed)
+		})
+	}
+}
+
+func getInstance(id string) gomock.Matcher {
+	return gomock.Cond(func(options *vpcv1.GetInstanceOptions) bool {
+		return options != nil && options.ID != nil && *options.ID == id
+	})
+}
+
+func listByName(name string) gomock.Matcher {
+	return gomock.Cond(func(options *vpcv1.ListInstancesOptions) bool {
+		return options != nil && options.Name != nil && *options.Name == name
+	})
+}
+
+func storeLaunch(t *testing.T, provider *VPCInstanceProvider, claim *karpv1.NodeClaim, config *launchConfig) {
+	t.Helper()
+	value, err := json.Marshal(config)
+	require.NoError(t, err)
+	claim.Annotations[LaunchAnnotation] = string(value)
+	require.NoError(t, provider.kubeClient.Update(context.Background(), claim))
+}
+
+func TestCreateDiscardsCheckpointsThatCreatedNothing(t *testing.T) {
+	for name, mutate := range map[string]func(*launchConfig){
+		"unsubmitted": func(config *launchConfig) { config.Submitted = false },
+		"rejected":    func(config *launchConfig) { config.Rejected = true },
+		"abandoned":   func(config *launchConfig) { config.SubmittedAt = time.Now().Add(-2 * launchResolutionWindow) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider, claim, config, mock, _ := launchFixture(t)
+			mutate(config)
+			storeLaunch(t, provider, claim, config)
+			if config.Submitted && !config.Rejected {
+				mock.EXPECT().ListInstancesWithContext(gomock.Any(), listByName(config.Name)).Return(&vpcv1.InstanceCollection{}, nil, nil)
+			}
+			_, err := provider.Create(context.Background(), claim, nil)
+			require.ErrorContains(t, err, "retrying")
+			fresh := &karpv1.NodeClaim{}
+			require.NoError(t, provider.kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
+			require.Empty(t, fresh.Annotations[LaunchAnnotation])
+			require.Empty(t, fresh.Annotations[ownership.BackendAnnotation])
+			require.NotContains(t, fresh.Finalizers, LaunchFinalizer)
+		})
+	}
+}
+
+func TestPendingCleanupReleasesAbandonedSubmission(t *testing.T) {
+	provider, claim, config, mock, _ := launchFixture(t)
+	config.SubmittedAt = time.Now().Add(-2 * launchResolutionWindow)
+	storeLaunch(t, provider, claim, config)
+	mock.EXPECT().ListInstancesWithContext(gomock.Any(), listByName(config.Name)).Return(&vpcv1.InstanceCollection{}, nil, nil)
+	complete, err := provider.CleanupPending(context.Background(), claim)
+	require.NoError(t, err)
+	require.True(t, complete)
+}
+
+func TestPendingCleanupDeletesUnregisteredInstance(t *testing.T) {
+	provider, claim, config, mock, _ := launchFixture(t)
+	instance := matchingInstance(config)
+	mock.EXPECT().ListInstancesWithContext(gomock.Any(), listByName(config.Name)).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{*instance}}, nil, nil)
+	gomock.InOrder(
+		mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(instance, nil, nil),
+		mock.EXPECT().DeleteInstanceWithContext(gomock.Any(), gomock.Cond(func(options *vpcv1.DeleteInstanceOptions) bool { return *options.ID == "instance" })).Return(nil, nil),
+		mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(nil, nil, &ibm.IBMError{StatusCode: 404}),
+	)
+	complete, err := provider.CleanupPending(context.Background(), claim)
+	require.NoError(t, err)
+	require.True(t, complete)
+}
+
+func TestMarkLaunchRejectedSurvivesConflict(t *testing.T) {
+	provider, claim, config, _, _ := launchFixture(t)
+	stale := claim.DeepCopy()
+	claim.Labels = map[string]string{"unrelated": "write"}
+	require.NoError(t, provider.kubeClient.Update(context.Background(), claim))
+	require.NoError(t, provider.markLaunchRejected(context.Background(), stale, config))
+	fresh := &karpv1.NodeClaim{}
+	require.NoError(t, provider.kubeClient.Get(context.Background(), client.ObjectKeyFromObject(claim), fresh))
+	stored, err := decodeLaunch(fresh.Annotations[LaunchAnnotation])
+	require.NoError(t, err)
+	require.True(t, stored.Rejected)
+}
+
+func TestInstanceWithoutCRNFailsAccountProof(t *testing.T) {
+	require.Error(t, verifyInstanceAccount(&vpcv1.Instance{}, testAccountID))
 }

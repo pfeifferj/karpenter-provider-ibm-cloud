@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,11 +35,17 @@ const (
 	PoolIDAnnotation    = "karpenter-ibm.sh/worker-pool-id"
 	WorkerIDAnnotation  = "karpenter-ibm.sh/worker-id"
 	AccountIDAnnotation = "karpenter-ibm.sh/account-id"
-	ClusterUIDTag       = "karpenter-ibm.sh/cluster-uid"
-	ClaimUIDTag         = "karpenter-ibm.sh/nodeclaim-uid"
-	NodeClassUIDTag     = "karpenter-ibm.sh/nodeclass-uid"
-	ProviderTag         = "karpenter-ibm.sh/provider"
-	ManagedTag          = "karpenter.sh/managed"
+	ClusterUIDLabel     = "karpenter-ibm.sh/cluster-uid"
+	ClaimUIDLabel       = "karpenter-ibm.sh/nodeclaim-uid"
+	NodeClassUIDLabel   = "karpenter-ibm.sh/nodeclass-uid"
+	ProviderLabel       = "karpenter-ibm.sh/provider"
+	ManagedLabel        = "karpenter.sh/managed"
+	ClusterUIDTag       = "karpenter-ibm.sh.cluster-uid"
+	ClaimUIDTag         = "karpenter-ibm.sh.nodeclaim-uid"
+	NodeClassUIDTag     = "karpenter-ibm.sh.nodeclass-uid"
+	ProviderTag         = "karpenter-ibm.sh.provider"
+	ManagedTag          = "karpenter.sh.managed"
+	RetainTag           = "karpenter-ibm.sh.retain"
 )
 
 func ClusterUID(ctx context.Context, reader client.Reader) (string, error) {
@@ -65,8 +72,45 @@ func VPCTags(clusterUID, claimUID, classUID string) map[string]string {
 	}
 }
 
+// ReservedTag reports whether a tag key is owned by Karpenter and must not come from user configuration.
+// "managed-by" is included because earlier releases used it to mark owned instances.
 func ReservedTag(key string) bool {
-	return strings.HasPrefix(key, "karpenter.sh/") || strings.HasPrefix(key, "karpenter-ibm.sh/")
+	key = strings.ToLower(key)
+	return key == "managed-by" || strings.HasPrefix(key, "karpenter.sh/") || strings.HasPrefix(key, "karpenter-ibm.sh/") ||
+		strings.HasPrefix(key, "karpenter.sh.") || strings.HasPrefix(key, "karpenter-ibm.sh.")
+}
+
+func FormatTags(tags map[string]string) ([]string, error) {
+	formatted := make([]string, 0, len(tags))
+	for key, value := range tags {
+		if key == "" || strings.Contains(key, ":") {
+			return nil, fmt.Errorf("cloud tag keys must be nonempty and must not contain colons")
+		}
+		tag := key + ":" + value
+		if err := ValidateTag(tag); err != nil {
+			return nil, err
+		}
+		formatted = append(formatted, tag)
+	}
+	sort.Strings(formatted)
+	return formatted, nil
+}
+
+func ValidateTag(tag string) error {
+	if len(tag) == 0 || len(tag) > 128 {
+		return fmt.Errorf("cloud tags must contain between 1 and 128 ASCII characters")
+	}
+	for _, character := range tag {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+			continue
+		}
+		switch character {
+		case ' ', '_', '-', '.', ':':
+		default:
+			return fmt.Errorf("cloud tags permit only ASCII letters, digits, spaces, underscores, hyphens, periods, and colons")
+		}
+	}
+	return nil
 }
 
 func InstanceName(clusterUID, claimUID string) string {

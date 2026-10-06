@@ -19,6 +19,7 @@ package instance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -222,13 +223,18 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		if err != nil {
 			return nil, err
 		}
-		if !config.Submitted {
-			if err := p.resetPreparedLaunch(ctx, freshClaim); err != nil {
-				return nil, err
+		if config.Submitted && !config.Rejected {
+			node, recoverErr := p.recoverLaunch(ctx, freshClaim, config)
+			if !errors.Is(recoverErr, errLaunchUnresolved) || !config.abandoned(time.Now()) {
+				return node, recoverErr
 			}
-			return p.Create(ctx, freshClaim, instanceTypes)
 		}
-		return p.recoverLaunch(ctx, freshClaim, config)
+		// The checkpoint was bound to instance types chosen for an earlier attempt, so the
+		// launch restarts from a fresh Create call rather than reusing them.
+		if err := p.resetPreparedLaunch(ctx, freshClaim); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("discarded launch checkpoint %s that created no instance; retrying", config.Name)
 	}
 
 	// Start timing for provisioning duration
@@ -458,7 +464,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 
 	// Create primary network attachment with VNI
 	// VPC resource names have a max length of 63 characters
-	// The suffix "-primary" is 8 chars, leaving 55 chars for the nodeclaim name
+	// The suffix "-primary" is 8 chars, leaving 55 chars for the instance name
 	attachmentName := cloudName
 	if len(attachmentName) > 55 {
 		attachmentName = attachmentName[:55]
@@ -547,7 +553,13 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	if err != nil {
 		return nil, fmt.Errorf("building volume attachments: %w", err)
 	}
-	tagVolumeAttachments(bootVolumeAttachment, additionalVolumes, ownership.VPCTags(clusterUID, string(nodeClaim.UID), string(nodeClass.UID)))
+	if tagErr := tagVolumeAttachments(bootVolumeAttachment, additionalVolumes, ownership.VPCTags(clusterUID, string(nodeClaim.UID), string(nodeClass.UID))); tagErr != nil {
+		return nil, tagErr
+	}
+	cloudTags, tagErr := instanceCloudTags(nodeClass, nodeClaim, clusterUID)
+	if tagErr != nil {
+		return nil, tagErr
+	}
 
 	// Debug log the instance profile value before VPC instance creation
 	logger.V(1).Info("Logged VPC instance creation profile details",
@@ -678,6 +690,9 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		Protocol:         &[]string{"http"}[0],
 		ResponseHopLimit: &[]int64{2}[0],
 	}
+	if validationErr := vpcClient.ValidateCreateInstance(instancePrototype); validationErr != nil {
+		return nil, validationErr
+	}
 
 	// Debug logging: COMPREHENSIVE struct validation
 	logger.Info("Validated VPC instance prototype",
@@ -727,7 +742,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 	if err != nil {
 		return nil, err
 	}
-	config := &launchConfig{Name: cloudName, ClusterUID: clusterUID, ClaimUID: string(nodeClaim.UID), ClassUID: string(nodeClass.UID), AccountID: accountID, Region: nodeClass.Spec.Region, ResourceGroup: resourceGroup, VPC: nodeClass.Spec.VPC, Profile: instanceProfile, Zone: zone, Subnet: subnet, Image: imageID, SecurityGroups: actualSecurityGroups, CapacityType: capacityType, Hash: hash, HashVersion: v1alpha1.IBMNodeClassHashVersion, Capacity: selectedInstanceType.Capacity.DeepCopy(), Allocatable: selectedInstanceType.Allocatable().DeepCopy()}
+	config := &launchConfig{Name: cloudName, ClusterUID: clusterUID, ClaimUID: string(nodeClaim.UID), ClassUID: string(nodeClass.UID), AccountID: accountID, Region: nodeClass.Spec.Region, ResourceGroup: resourceGroup, VPC: nodeClass.Spec.VPC, Profile: instanceProfile, Zone: zone, Subnet: subnet, Image: imageID, SecurityGroups: actualSecurityGroups, CapacityType: capacityType, Hash: hash, HashVersion: v1alpha1.IBMNodeClassHashVersion, Capacity: selectedInstanceType.Capacity.DeepCopy(), Allocatable: selectedInstanceType.Allocatable().DeepCopy(), Tags: cloudTags}
 	if checkpointErr := p.checkpointLaunch(ctx, freshClaim, config); checkpointErr != nil {
 		return nil, checkpointErr
 	}
@@ -737,6 +752,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		return p.recoverLaunch(ctx, freshClaim, config)
 	}
 	config.Submitted = true
+	config.SubmittedAt = time.Now().UTC()
 	if checkpointErr := p.updateLaunch(ctx, freshClaim, config); checkpointErr != nil {
 		return nil, checkpointErr
 	}
@@ -866,10 +882,9 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 			"nodeclass_instance_profile", nodeClass.Spec.InstanceProfile,
 			"is_dynamic_selection", nodeClass.Spec.InstanceProfile == "")
 
-		if rejectedCreate(ibmErr) {
-			config.Rejected = true
-			if checkpointErr := p.updateLaunch(ctx, freshClaim, config); checkpointErr != nil {
-				return nil, checkpointErr
+		if ibm.IsCreateInstanceNotSent(err) || rejectedCreate(ibmErr) {
+			if checkpointErr := p.markLaunchRejected(ctx, freshClaim, config); checkpointErr != nil {
+				return nil, fmt.Errorf("recording rejected launch after %w: %v", err, checkpointErr)
 			}
 		}
 		if recovered, recoverErr := p.recoverLaunch(ctx, freshClaim, config); recoverErr == nil {
@@ -935,7 +950,7 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		return nil, err
 	}
 	node := config.node(freshClaim, *instance.ID)
-	if err := p.addKarpenterTags(ctx, vpcClient, *instance.ID, nodeClass, nodeClaim); err != nil {
+	if err := vpcClient.UpdateInstanceTags(ctx, *instance.ID, config.Tags); err != nil {
 		return nil, fmt.Errorf("attaching instance ownership tags: %w", err)
 	}
 
@@ -1645,17 +1660,15 @@ func (p *VPCInstanceProvider) selectSubnetFromMultiZoneList(subnets []subnet.Sub
 	return bestSubnet
 }
 
-// addKarpenterTags adds Karpenter-specific tags to an instance for identification during orphan cleanup
-func (p *VPCInstanceProvider) addKarpenterTags(ctx context.Context, vpcClient *ibm.VPCClient, instanceID string, nodeClass *v1alpha1.IBMNodeClass, nodeClaim *karpv1.NodeClaim) error {
-	clusterUID, err := ownership.ClusterUID(ctx, p.reader())
-	if err != nil {
-		return err
-	}
+func instanceCloudTags(nodeClass *v1alpha1.IBMNodeClass, nodeClaim *karpv1.NodeClaim, clusterUID string) (map[string]string, error) {
 	tags := ownership.VPCTags(clusterUID, string(nodeClaim.UID), string(nodeClass.UID))
 	for key, value := range nodeClass.Spec.Tags {
-		if !ownership.ReservedTag(key) && key != "managed-by" {
+		if !ownership.ReservedTag(key) {
 			tags[key] = value
 		}
 	}
-	return vpcClient.UpdateInstanceTags(ctx, instanceID, tags)
+	if _, err := ownership.FormatTags(tags); err != nil {
+		return nil, err
+	}
+	return tags, nil
 }

@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	KarpenterManagedLabel = ownership.ManagedTag
+	KarpenterManagedLabel = ownership.ManagedLabel
 	DefaultEmptyPoolTTL   = 15 * time.Minute
 )
 
@@ -117,8 +117,8 @@ func (c *Controller) cleanupEmptyPools(ctx context.Context, iksClient ibm.IKSCli
 	}
 	var failures []error
 	for _, pool := range pools {
-		if pool == nil || !c.isKarpenterManaged(pool) || pool.Labels[ownership.ProviderTag] != "iks" || pool.Labels[ownership.ClusterUIDTag] != clusterUID ||
-			nodeClass.UID == "" || pool.Labels[ownership.NodeClassUIDTag] != string(nodeClass.UID) || pool.Labels[ownership.ClaimUIDTag] != "" {
+		if pool == nil || !c.isKarpenterManaged(pool) || pool.Labels[ownership.ProviderLabel] != "iks" || pool.Labels[ownership.ClusterUIDLabel] != clusterUID ||
+			nodeClass.UID == "" || pool.Labels[ownership.NodeClassUIDLabel] != string(nodeClass.UID) || pool.Labels[ownership.ClaimUIDLabel] != "" {
 			continue
 		}
 		key := clusterID + "/" + pool.ID
@@ -166,18 +166,18 @@ func (c *Controller) releaseDeletedReservations(ctx context.Context, iksClient i
 		return err
 	}
 	reservations := &corev1.ConfigMapList{}
-	if operationErr := c.apiReader.List(ctx, reservations, client.InNamespace(c.namespace()), client.MatchingLabels{ownership.ClusterUIDTag: clusterUID, ownership.ProviderTag: "iks"}); operationErr != nil {
+	if operationErr := c.apiReader.List(ctx, reservations, client.InNamespace(c.namespace()), client.MatchingLabels{ownership.ClusterUIDLabel: clusterUID, ownership.ProviderLabel: "iks"}); operationErr != nil {
 		return operationErr
 	}
 	for i := range reservations.Items {
 		reservation := &reservations.Items[i]
-		if reservation.Data["cleanup"] != "true" || reservation.Data["phase"] != "deleting" || reservation.Data["clusterID"] == "" || reservation.Data["poolID"] == "" {
+		if reservation.Data[workerpool.ReservationCleanupKey] != "true" || reservation.Data[workerpool.ReservationPhaseKey] != "deleting" || reservation.Data[workerpool.ReservationClusterIDKey] == "" || reservation.Data[workerpool.ReservationPoolIDKey] == "" {
 			continue
 		}
-		if reservation.Data["accountID"] != accountID || reservation.Data["region"] != region {
+		if reservation.Data[workerpool.ReservationAccountIDKey] != accountID || reservation.Data[workerpool.ReservationRegionKey] != region {
 			return fmt.Errorf("IKS pool cleanup target changed; retaining reservation")
 		}
-		_, err := iksClient.GetWorkerPool(ctx, reservation.Data["clusterID"], reservation.Data["poolID"])
+		_, err := iksClient.GetWorkerPool(ctx, reservation.Data[workerpool.ReservationClusterIDKey], reservation.Data[workerpool.ReservationPoolIDKey])
 		if workerpool.IsNotFound(err) {
 			if operationErr := c.kubeClient.Delete(ctx, reservation, client.Preconditions{UID: &reservation.UID, ResourceVersion: &reservation.ResourceVersion}); client.IgnoreNotFound(operationErr) != nil {
 				return operationErr

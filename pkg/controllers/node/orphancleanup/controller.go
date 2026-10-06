@@ -29,10 +29,8 @@ import (
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/awslabs/operatorpkg/reconciler"
 	"github.com/awslabs/operatorpkg/singleton"
-	"github.com/go-logr/logr"
 	"go.uber.org/multierr"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -254,19 +252,6 @@ func (c *Controller) ownsTags(ctx context.Context, tags map[string]string) (bool
 	return tags[ownership.ClusterUIDTag] == clusterUID, nil
 }
 
-func (c *Controller) hasKarpenterTags(ctx context.Context, crn *string, instanceID string, logger logr.Logger) bool {
-	tags, err := c.instanceTags(ctx, crn)
-	if err != nil {
-		logger.Error(err, "Cannot prove instance ownership", "instance-id", instanceID)
-		return false
-	}
-	owned, err := c.ownsTags(ctx, tags)
-	if err != nil {
-		logger.Error(err, "Cannot determine cluster identity", "instance-id", instanceID)
-	}
-	return owned && err == nil
-}
-
 func (c *Controller) processOrphanedInstance(ctx context.Context, instanceID string) error {
 	vpcClient, err := c.ibmClient.GetVPCClient(ctx)
 	if err != nil {
@@ -316,52 +301,6 @@ func (c *Controller) processOrphanedInstance(ctx context.Context, instanceID str
 	}
 	log.FromContext(ctx).Info("Deleted orphaned instance", "instance-id", instanceID)
 	return nil
-}
-
-func (c *Controller) processOrphanedNode(ctx context.Context, candidate corev1.Node) error {
-	if !c.isNodeManagedByKarpenter(candidate) || !c.isNodeOrphanedLongEnough(candidate) {
-		return nil
-	}
-	id := c.extractInstanceIDFromProviderID(candidate.Spec.ProviderID)
-	if id == "" || c.ibmClient == nil {
-		return nil
-	}
-	vpcClient, err := c.ibmClient.GetVPCClient(ctx)
-	if err != nil {
-		return err
-	}
-	if _, err := vpcClient.GetInstance(ctx, id); !ibm.IsNotFound(err) {
-		return err
-	}
-	node := &corev1.Node{}
-	if err := c.reader().Get(ctx, client.ObjectKeyFromObject(&candidate), node); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-	if node.UID != candidate.UID || node.Spec.ProviderID != candidate.Spec.ProviderID || !node.DeletionTimestamp.IsZero() || !c.isNodeManagedByKarpenter(*node) || !c.isNodeOrphanedLongEnough(*node) {
-		return nil
-	}
-	if _, err := vpcClient.GetInstance(ctx, id); !ibm.IsNotFound(err) {
-		return err
-	}
-	uid, version := node.UID, node.ResourceVersion
-	return client.IgnoreNotFound(c.kubeClient.Delete(ctx, node, &client.DeleteOptions{
-		Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &version},
-	}))
-}
-
-func (c *Controller) isNodeManagedByKarpenter(node corev1.Node) bool {
-	_, hasPool := node.Labels[karpv1.NodePoolLabelKey]
-	_, hasClass := node.Labels["karpenter-ibm.sh/ibmnodeclass"]
-	return hasPool || hasClass
-}
-
-func (c *Controller) isNodeOrphanedLongEnough(node corev1.Node) bool {
-	for _, condition := range node.Status.Conditions {
-		if condition.Type == corev1.NodeReady {
-			return condition.Status != corev1.ConditionTrue && !condition.LastTransitionTime.IsZero() && time.Since(condition.LastTransitionTime.Time) >= c.orphanTimeout
-		}
-	}
-	return !node.CreationTimestamp.IsZero() && time.Since(node.CreationTimestamp.Time) >= c.orphanTimeout
 }
 
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {

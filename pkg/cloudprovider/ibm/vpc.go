@@ -17,11 +17,11 @@ package ibm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 
@@ -31,6 +31,7 @@ import (
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/httpclient"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/logging"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 )
 
 const defaultPageLimit = 100
@@ -152,20 +153,45 @@ func NewVPCClientWithMock(mockClient vpcClientInterface, tagging ...globalTaggin
 }
 
 func (c *VPCClient) CreateInstance(ctx context.Context, instancePrototype vpcv1.InstancePrototypeIntf) (*vpcv1.Instance, error) {
-	if c.client == nil {
-		return nil, fmt.Errorf("VPC client not initialized")
+	if err := c.ValidateCreateInstance(instancePrototype); err != nil {
+		return nil, err
 	}
-
-	options := &vpcv1.CreateInstanceOptions{
-		InstancePrototype: instancePrototype,
-	}
-
-	instance, _, err := c.client.CreateInstanceWithContext(ctx, options)
+	options := &vpcv1.CreateInstanceOptions{InstancePrototype: instancePrototype}
+	instance, response, err := c.client.CreateInstanceWithContext(ctx, options)
 	if err != nil {
+		if response != nil && response.StatusCode >= 400 {
+			return nil, ParseErrorResponse(err, response)
+		}
 		return nil, fmt.Errorf("creating instance: %w", err)
 	}
-
 	return instance, nil
+}
+
+type CreateInstanceNotSentError struct{ cause error }
+
+func (e *CreateInstanceNotSentError) Error() string {
+	return fmt.Sprintf("instance request was not sent: %v", e.cause)
+}
+func (e *CreateInstanceNotSentError) Unwrap() error { return e.cause }
+
+func IsCreateInstanceNotSent(err error) bool {
+	var notSent *CreateInstanceNotSentError
+	return errors.As(err, &notSent)
+}
+
+// ValidateCreateInstance checks the SDK's request validation and JSON encoding before submission is persisted.
+func (c *VPCClient) ValidateCreateInstance(instancePrototype vpcv1.InstancePrototypeIntf) error {
+	if c.client == nil {
+		return &CreateInstanceNotSentError{cause: fmt.Errorf("VPC client not initialized")}
+	}
+	options := &vpcv1.CreateInstanceOptions{InstancePrototype: instancePrototype}
+	if err := core.ValidateStruct(options, "createInstanceOptions"); err != nil {
+		return &CreateInstanceNotSentError{cause: err}
+	}
+	if _, err := core.NewRequestBuilder(core.POST).SetBodyContentJSON(instancePrototype); err != nil {
+		return &CreateInstanceNotSentError{cause: err}
+	}
+	return nil
 }
 
 func (c *VPCClient) DeleteInstance(ctx context.Context, id string) error {
@@ -273,6 +299,11 @@ func (c *VPCClient) listInstances(ctx context.Context, options *vpcv1.ListInstan
 	)
 }
 
+// ListInstancesByName returns the instances whose name matches exactly.
+func (c *VPCClient) ListInstancesByName(ctx context.Context, name string) ([]vpcv1.Instance, error) {
+	return c.listInstances(ctx, &vpcv1.ListInstancesOptions{Name: &name}, "instances")
+}
+
 func (c *VPCClient) ListSpotInstances(ctx context.Context) ([]vpcv1.Instance, error) {
 	return c.listInstances(ctx, &vpcv1.ListInstancesOptions{
 		AvailabilityClass: core.StringPtr(vpcv1.InstanceAvailabilityPrototypeClassSpotConst),
@@ -286,6 +317,10 @@ func (c *VPCClient) UpdateInstanceTags(ctx context.Context, id string, tags map[
 	if len(tags) == 0 {
 		return nil
 	}
+	names, err := ownership.FormatTags(tags)
+	if err != nil {
+		return err
+	}
 	if c.tagging == nil {
 		return fmt.Errorf("tagging client not initialized")
 	}
@@ -296,11 +331,6 @@ func (c *VPCClient) UpdateInstanceTags(ctx context.Context, id string, tags map[
 	if instance == nil || instance.CRN == nil || *instance.CRN == "" {
 		return fmt.Errorf("instance %s has no CRN", id)
 	}
-	names := make([]string, 0, len(tags))
-	for key, value := range tags {
-		names = append(names, key+":"+value)
-	}
-	sort.Strings(names)
 	results, _, err := c.tagging.AttachTagWithContext(ctx, &globaltaggingv1.AttachTagOptions{
 		Resources: []globaltaggingv1.Resource{{ResourceID: instance.CRN}}, TagNames: names, TagType: core.StringPtr("user"), Update: core.BoolPtr(true),
 	})

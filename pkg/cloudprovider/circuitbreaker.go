@@ -81,6 +81,7 @@ type CircuitBreaker struct {
 	state    CircuitBreakerState
 	failures []FailureRecord
 	enabled  bool
+	now      func() time.Time
 
 	// State tracking
 	lastStateChange     time.Time
@@ -88,6 +89,7 @@ type CircuitBreaker struct {
 	concurrentInstances int
 	instancesThisMinute int
 	lastMinuteReset     time.Time
+	openFailureSummary  string
 }
 
 // NewCircuitBreaker creates a new circuit breaker with the given configuration
@@ -98,14 +100,16 @@ func NewCircuitBreaker(config *CircuitBreakerConfig, logger logr.Logger) *Circui
 		config = DefaultCircuitBreakerConfig()
 	}
 
+	now := time.Now()
 	return &CircuitBreaker{
 		config:          config,
 		logger:          logger,
 		state:           CircuitBreakerClosed,
 		failures:        make([]FailureRecord, 0),
 		enabled:         enabled,
-		lastStateChange: time.Now(),
-		lastMinuteReset: time.Now(),
+		now:             time.Now,
+		lastStateChange: now,
+		lastMinuteReset: now,
 	}
 }
 
@@ -125,11 +129,12 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 	// Check circuit breaker state
 	switch cb.state {
 	case CircuitBreakerOpen:
-		if time.Since(cb.lastStateChange) >= cb.config.RecoveryTimeout {
+		elapsed := cb.now().Sub(cb.lastStateChange)
+		if elapsed >= cb.config.RecoveryTimeout {
 			cb.transitionToHalfOpen()
 		} else {
 			// Include recent failure context for better troubleshooting
-			recentFailures := cb.getRecentFailuresSummary()
+			recentFailures := cb.openFailureSummary
 			failureContext := ""
 			if len(recentFailures) > 0 {
 				failureContext = fmt.Sprintf(" Recent failures: %s", recentFailures)
@@ -137,7 +142,7 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 			return &CircuitBreakerError{
 				State:      cb.state,
 				Message:    fmt.Sprintf("Circuit breaker is OPEN - provisioning blocked due to recent failures.%s", failureContext),
-				TimeToWait: cb.config.RecoveryTimeout - time.Since(cb.lastStateChange),
+				TimeToWait: cb.config.RecoveryTimeout - elapsed,
 			}
 		}
 
@@ -155,7 +160,7 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 		return &RateLimitError{
 			Limit:       cb.config.RateLimitPerMinute,
 			Current:     cb.instancesThisMinute,
-			TimeToReset: time.Minute - time.Since(cb.lastMinuteReset),
+			TimeToReset: time.Minute - cb.now().Sub(cb.lastMinuteReset),
 		}
 	}
 
@@ -240,7 +245,7 @@ func (cb *CircuitBreaker) RecordFailure(nodeClass, region string, err error) {
 
 	// Add failure record
 	failure := FailureRecord{
-		Timestamp: time.Now(),
+		Timestamp: cb.now(),
 		Error:     err.Error(),
 		NodeClass: nodeClass,
 		Region:    region,
@@ -267,7 +272,7 @@ func (cb *CircuitBreaker) RecordFailure(nodeClass, region string, err error) {
 			// Include recent failure details for better debugging
 			recentErrors := make([]string, 0, len(cb.failures))
 			for _, f := range cb.failures {
-				if f.Timestamp.After(time.Now().Add(-cb.config.FailureWindow)) {
+				if f.Timestamp.After(cb.now().Add(-cb.config.FailureWindow)) {
 					recentErrors = append(recentErrors, fmt.Sprintf("%s: %s", f.Timestamp.Format("15:04:05"), f.Error))
 				}
 			}
@@ -307,7 +312,7 @@ func (cb *CircuitBreaker) GetState() (*CircuitBreakerStatus, error) {
 // Helper methods
 
 func (cb *CircuitBreaker) resetCountersIfNeeded() {
-	now := time.Now()
+	now := cb.now()
 
 	// Reset minute counter
 	if now.Sub(cb.lastMinuteReset) >= time.Minute {
@@ -318,25 +323,26 @@ func (cb *CircuitBreaker) resetCountersIfNeeded() {
 
 func (cb *CircuitBreaker) transitionToClosed() {
 	cb.state = CircuitBreakerClosed
-	cb.lastStateChange = time.Now()
+	cb.lastStateChange = cb.now()
 	cb.halfOpenRequests = 0
 	// Keep failures for historical analysis but don't clear them
 }
 
 func (cb *CircuitBreaker) transitionToOpen() {
 	cb.state = CircuitBreakerOpen
-	cb.lastStateChange = time.Now()
+	cb.lastStateChange = cb.now()
 	cb.halfOpenRequests = 0
+	cb.openFailureSummary = cb.getRecentFailuresSummary()
 }
 
 func (cb *CircuitBreaker) transitionToHalfOpen() {
 	cb.state = CircuitBreakerHalfOpen
-	cb.lastStateChange = time.Now()
+	cb.lastStateChange = cb.now()
 	cb.halfOpenRequests = 0
 }
 
 func (cb *CircuitBreaker) cleanOldFailures() {
-	cutoff := time.Now().Add(-cb.config.FailureWindow)
+	cutoff := cb.now().Add(-cb.config.FailureWindow)
 	validFailures := make([]FailureRecord, 0, len(cb.failures))
 
 	for _, failure := range cb.failures {
@@ -349,7 +355,7 @@ func (cb *CircuitBreaker) cleanOldFailures() {
 }
 
 func (cb *CircuitBreaker) countRecentFailures() int {
-	cutoff := time.Now().Add(-cb.config.FailureWindow)
+	cutoff := cb.now().Add(-cb.config.FailureWindow)
 	count := 0
 	for _, failure := range cb.failures {
 		if failure.Timestamp.After(cutoff) {
@@ -363,7 +369,7 @@ func (cb *CircuitBreaker) getTimeToRecovery() time.Duration {
 	if cb.state != CircuitBreakerOpen {
 		return 0
 	}
-	elapsed := time.Since(cb.lastStateChange)
+	elapsed := cb.now().Sub(cb.lastStateChange)
 	if elapsed >= cb.config.RecoveryTimeout {
 		return 0
 	}
@@ -372,7 +378,7 @@ func (cb *CircuitBreaker) getTimeToRecovery() time.Duration {
 
 // getRecentFailuresSummary returns a summary of recent failures for better troubleshooting
 func (cb *CircuitBreaker) getRecentFailuresSummary() string {
-	cutoff := time.Now().Add(-cb.config.FailureWindow)
+	cutoff := cb.now().Add(-cb.config.FailureWindow)
 	var recentErrors []string
 
 	// Group similar errors and show the most recent ones with actual details
@@ -489,7 +495,7 @@ func (cb *CircuitBreaker) getTimestampFromExample(example string) time.Time {
 		timeStr := strings.TrimSuffix(example[idx+1:], ")")
 		if t, err := time.Parse("15:04:05", timeStr); err == nil {
 			// Use today's date with the parsed time
-			now := time.Now()
+			now := cb.now()
 			return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
 		}
 	}
@@ -506,9 +512,6 @@ type CircuitBreakerError struct {
 }
 
 func (e *CircuitBreakerError) Error() string {
-	if e.TimeToWait > 0 {
-		return fmt.Sprintf("circuit breaker %s: %s (retry in %v)", e.State, e.Message, e.TimeToWait)
-	}
 	return fmt.Sprintf("circuit breaker %s: %s", e.State, e.Message)
 }
 
@@ -520,8 +523,7 @@ type RateLimitError struct {
 }
 
 func (e *RateLimitError) Error() string {
-	return fmt.Sprintf("rate limit exceeded: %d/%d instances this minute (reset in %v)",
-		e.Current, e.Limit, e.TimeToReset)
+	return fmt.Sprintf("rate limit exceeded: %d/%d instances this minute", e.Current, e.Limit)
 }
 
 // ConcurrencyLimitError is returned when too many concurrent operations
