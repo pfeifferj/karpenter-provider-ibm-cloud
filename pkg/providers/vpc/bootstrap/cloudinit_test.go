@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,35 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestCalicoNodeNameFileContainsExactNodeName(t *testing.T) {
+	const nodeName = "karpenter-worker.us-south-1.example"
+	provider := NewVPCBootstrapProvider(&ibm.Client{}, nil, nil)
+	script, err := provider.generateCloudInitScript(context.Background(), commonTypes.Options{
+		NodeName:  nodeName,
+		CNIPlugin: "calico",
+	})
+	require.NoError(t, err)
+
+	var writes []string
+	for _, line := range strings.Split(script, "\n") {
+		if strings.Contains(line, "> /var/lib/calico/nodename") {
+			writes = append(writes, line)
+		}
+	}
+	require.Len(t, writes, 1)
+	command := strings.ReplaceAll(writes[0], "/var/lib/calico/nodename", `"$CALICO_NODE_NAME_FILE"`)
+	nodeNameFile := filepath.Join(t.TempDir(), "nodename")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	cmd.Env = append(os.Environ(), "HOSTNAME="+nodeName, "CALICO_NODE_NAME_FILE="+nodeNameFile)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	contents, err := os.ReadFile(nodeNameFile)
+	require.NoError(t, err)
+	require.Equal(t, []byte(nodeName), contents)
+}
 
 func TestGenerateCloudInitScript(t *testing.T) {
 	client := &ibm.Client{}

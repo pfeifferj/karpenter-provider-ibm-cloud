@@ -665,9 +665,8 @@ case "$CNI_PLUGIN" in
   "calico")
     echo "$(date): Installing Calico CNI configuration..."
 
-    # Create nodename file - this is critical for Calico CNI to work
-    # This prevents the race condition where CNI is invoked before the DaemonSet creates this file
-    echo "$HOSTNAME" > /var/lib/calico/nodename
+    # Calico reads this file verbatim before its DaemonSet starts.
+    printf '%s' "$HOSTNAME" > /var/lib/calico/nodename
     echo "$(date): Created Calico nodename file: $HOSTNAME"
 
     cat > /etc/cni/net.d/10-calico.conflist << 'EOF'
