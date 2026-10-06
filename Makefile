@@ -97,6 +97,10 @@ ci: ensure-hooks vendor unit lint ## Run all CI checks (tests + linting)
 unit:
 	go test $(GTEST_ARGS) ./...
 
+.PHONY: test-alerts
+test-alerts: ## Test rendered Prometheus alerts (requires Helm and promtool)
+	hack/test-prometheus-rules.sh
+
 .PHONY: e2e
 e2e: ## Run e2e tests against real cluster (requires env vars)
 	@echo "Running E2E tests..."

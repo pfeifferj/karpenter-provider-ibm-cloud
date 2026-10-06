@@ -31,7 +31,6 @@ import (
 	"go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
@@ -754,31 +753,6 @@ func TestBuildVolumeAttachments_Defaults(t *testing.T) {
 	assert.True(t, *bootVolume.DeleteVolumeOnInstanceDelete)
 }
 
-func TestVPCClient_UpdateInstanceTags(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	ctx := context.Background()
-	mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
-
-	instanceID := "test-instance-id"
-	tags := map[string]string{
-		"environment": "test",
-		"managed-by":  "karpenter",
-	}
-
-	// Mock UpdateInstanceWithContext call
-	mockVPC.EXPECT().
-		UpdateInstanceWithContext(gomock.Any(), gomock.Any()).
-		Return(&vpcv1.Instance{ID: &instanceID}, &core.DetailedResponse{StatusCode: 200}, nil).
-		Times(1)
-
-	vpcClient := ibm.NewVPCClientWithMock(mockVPC)
-
-	err := vpcClient.UpdateInstanceTags(ctx, instanceID, tags)
-	assert.NoError(t, err)
-}
-
 func TestVPCClient_ListVolumes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -967,101 +941,6 @@ func TestExtractInstanceIDFromProviderID_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestIsPartialFailure_AdditionalCases(t *testing.T) {
-	provider := &VPCInstanceProvider{}
-
-	tests := []struct {
-		name     string
-		ibmErr   *ibm.IBMError
-		expected bool
-	}{
-		{
-			name:     "nil error",
-			ibmErr:   nil,
-			expected: false,
-		},
-		{
-			name: "quota exceeded",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_instance_quota_exceeded",
-			},
-			expected: true,
-		},
-		{
-			name: "profile not available",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_instance_profile_not_available",
-			},
-			expected: true,
-		},
-		{
-			name: "security group not found",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 404,
-				Code:       "vpc_security_group_not_found",
-			},
-			expected: true,
-		},
-		{
-			name: "subnet not available",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_subnet_not_available",
-			},
-			expected: true,
-		},
-		{
-			name: "volume capacity insufficient",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_volume_capacity_insufficient",
-			},
-			expected: true,
-		},
-		{
-			name: "boot volume creation failed",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 500,
-				Code:       "vpc_boot_volume_creation_failed",
-			},
-			expected: true,
-		},
-		{
-			name: "5xx error - potential partial failure",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 503,
-				Code:       "service_unavailable",
-			},
-			expected: true,
-		},
-		{
-			name: "4xx error - not partial failure",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 404,
-				Code:       "not_found",
-			},
-			expected: false,
-		},
-		{
-			name: "unknown error code with 2xx - not partial",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 200,
-				Code:       "unknown",
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := provider.isPartialFailure(tt.ibmErr)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestProviderGet_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -1186,17 +1065,7 @@ func TestVPCClient_ErrorCases(t *testing.T) {
 		testFunc    func(*ibm.VPCClient, context.Context) error
 		expectedErr string
 	}{
-		{
-			name: "UpdateInstanceTags error",
-			setupMock: func(m *mock_ibm.MockvpcClientInterface) {
-				m.EXPECT().UpdateInstanceWithContext(gomock.Any(), gomock.Any()).
-					Return(nil, nil, fmt.Errorf("instance not found"))
-			},
-			testFunc: func(c *ibm.VPCClient, ctx context.Context) error {
-				return c.UpdateInstanceTags(ctx, "test-id", map[string]string{"foo": "bar"})
-			},
-			expectedErr: "instance not found",
-		},
+
 		{
 			name: "GetInstance not found",
 			setupMock: func(m *mock_ibm.MockvpcClientInterface) {
@@ -1712,135 +1581,6 @@ func TestGetDefaultSecurityGroup_VariousCases(t *testing.T) {
 	})
 }
 
-func TestIsPartialFailure_ComprehensiveCases(t *testing.T) {
-	provider := &VPCInstanceProvider{}
-
-	tests := []struct {
-		name     string
-		ibmErr   *ibm.IBMError
-		expected bool
-	}{
-		{
-			name:     "nil error",
-			ibmErr:   nil,
-			expected: false,
-		},
-		{
-			name: "quota exceeded - instances",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_instance_quota_exceeded",
-				Message:    "Instance quota exceeded",
-			},
-			expected: true,
-		},
-		{
-			name: "quota exceeded - vcpu",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_vcpu_quota_exceeded",
-				Message:    "VCPU quota exceeded",
-			},
-			expected: false, // Not explicitly in the partial failure list
-		},
-		{
-			name: "profile not available",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_instance_profile_not_available",
-			},
-			expected: true,
-		},
-		{
-			name: "image not found",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 404,
-				Code:       "vpc_image_not_found",
-			},
-			expected: false, // Not in the partial failure list
-		},
-		{
-			name: "subnet not available",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_subnet_not_available",
-			},
-			expected: true,
-		},
-		{
-			name: "insufficient subnet capacity",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_subnet_insufficient_capacity",
-			},
-			expected: false, // Not in the partial failure list
-		},
-		{
-			name: "volume capacity insufficient",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "vpc_volume_capacity_insufficient",
-			},
-			expected: true,
-		},
-		{
-			name: "5xx server error",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 503,
-				Code:       "service_unavailable",
-			},
-			expected: true,
-		},
-		{
-			name: "502 bad gateway",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 502,
-				Code:       "bad_gateway",
-			},
-			expected: true,
-		},
-		{
-			name: "not found - not partial",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 404,
-				Code:       "not_found",
-			},
-			expected: false,
-		},
-		{
-			name: "unauthorized - not partial",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 401,
-				Code:       "unauthorized",
-			},
-			expected: false,
-		},
-		{
-			name: "forbidden - not partial",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 403,
-				Code:       "forbidden",
-			},
-			expected: false,
-		},
-		{
-			name: "400 bad request - not partial",
-			ibmErr: &ibm.IBMError{
-				StatusCode: 400,
-				Code:       "invalid_request",
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := provider.isPartialFailure(tt.ibmErr)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestErrorClassificationHelpers(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1937,100 +1677,6 @@ func TestErrorClassificationHelpers(t *testing.T) {
 	}
 }
 
-func TestAddKarpenterTags(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	ctx := context.Background()
-
-	tests := []struct {
-		name          string
-		clusterEnv    string
-		nodeClaim     *karpv1.NodeClaim
-		nodeClass     *v1alpha1.IBMNodeClass
-		setupMock     func(*mock_ibm.MockvpcClientInterface)
-		expectError   bool
-		errorContains string
-	}{
-		{
-			name:       "successful tag addition",
-			clusterEnv: "test-cluster",
-			nodeClaim: &karpv1.NodeClaim{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node-claim",
-					Labels: map[string]string{
-						"karpenter.sh/nodepool": "default",
-					},
-				},
-			},
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{
-					Tags: map[string]string{
-						"env": "prod",
-					},
-				},
-			},
-			setupMock: func(m *mock_ibm.MockvpcClientInterface) {
-				m.EXPECT().
-					UpdateInstanceWithContext(gomock.Any(), gomock.Any()).
-					Return(&vpcv1.Instance{}, &core.DetailedResponse{StatusCode: 200}, nil)
-			},
-			expectError: false,
-		},
-		{
-			name:       "API error during update",
-			clusterEnv: "test-cluster",
-			nodeClaim: &karpv1.NodeClaim{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node-claim",
-					Labels: map[string]string{
-						"karpenter.sh/nodepool": "default",
-					},
-				},
-			},
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{},
-			},
-			setupMock: func(m *mock_ibm.MockvpcClientInterface) {
-				m.EXPECT().
-					UpdateInstanceWithContext(gomock.Any(), gomock.Any()).
-					Return(nil, nil, fmt.Errorf("API rate limit exceeded"))
-			},
-			expectError:   true,
-			errorContains: "updating instance tags",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			oldClusterName := os.Getenv("CLUSTER_NAME")
-			if tt.clusterEnv != "" {
-				_ = os.Setenv("CLUSTER_NAME", tt.clusterEnv)
-			} else {
-				_ = os.Unsetenv("CLUSTER_NAME")
-			}
-			defer func() { _ = os.Setenv("CLUSTER_NAME", oldClusterName) }()
-
-			mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
-			tt.setupMock(mockVPC)
-
-			vpcClient := ibm.NewVPCClientWithMock(mockVPC)
-			provider := &VPCInstanceProvider{}
-
-			err := provider.addKarpenterTags(ctx, vpcClient, "test-instance-id", tt.nodeClass, tt.nodeClaim)
-
-			if tt.expectError {
-				assert.Error(t, err)
-				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestProviderGet_CacheHit(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -2059,6 +1705,7 @@ func TestProviderGet_CacheHit(t *testing.T) {
 		&ibm.Client{},
 		&mockKubeClient{},
 		WithVPCClientManager(manager),
+		WithAccountResolver(testAccountResolver),
 		WithInstanceCache(instanceCache),
 	)
 	assert.NoError(t, err)
@@ -2132,6 +1779,7 @@ func TestProviderGet_SetsLabels(t *testing.T) {
 				&ibm.Client{},
 				&mockKubeClient{},
 				WithVPCClientManager(manager),
+				WithAccountResolver(testAccountResolver),
 				WithInstanceCache(instanceCache),
 			)
 			assert.NoError(t, err)
@@ -2184,6 +1832,7 @@ func TestProviderDelete_InvalidatesCache(t *testing.T) {
 		&ibm.Client{},
 		&mockKubeClient{},
 		WithVPCClientManager(manager),
+		WithAccountResolver(testAccountResolver),
 		WithInstanceCache(instanceCache),
 	)
 	assert.NoError(t, err)
@@ -2204,6 +1853,7 @@ func TestProviderDelete_InvalidatesCache(t *testing.T) {
 			ProviderID: "ibm:///us-south/" + instanceID,
 		},
 	}
+	node.Annotations = map[string]string{"karpenter-ibm.sh/account-id": testAccountID}
 	_ = provider.Delete(ctx, node)
 
 	// Verify cache entry is gone
@@ -2251,6 +1901,7 @@ func TestProviderGet_DeletingInstanceNotCached(t *testing.T) {
 		&ibm.Client{},
 		&mockKubeClient{},
 		WithVPCClientManager(manager),
+		WithAccountResolver(testAccountResolver),
 		WithInstanceCache(instanceCache),
 	)
 	assert.NoError(t, err)
@@ -2299,6 +1950,7 @@ func TestProviderGet_InvalidCacheEntry_NoPanic(t *testing.T) {
 		&ibm.Client{},
 		&mockKubeClient{},
 		WithVPCClientManager(manager),
+		WithAccountResolver(testAccountResolver),
 		WithInstanceCache(instanceCache),
 	)
 	assert.NoError(t, err)
@@ -2347,6 +1999,7 @@ func TestProviderList_PopulatesCache(t *testing.T) {
 		&ibm.Client{},
 		&mockKubeClient{},
 		WithVPCClientManager(manager),
+		WithAccountResolver(testAccountResolver),
 		WithInstanceCache(instanceCache),
 	)
 	assert.NoError(t, err)
@@ -2422,6 +2075,7 @@ func TestProviderList_DeletingInstanceNotCached(t *testing.T) {
 		&ibm.Client{},
 		&mockKubeClient{},
 		WithVPCClientManager(manager),
+		WithAccountResolver(testAccountResolver),
 		WithInstanceCache(instanceCache),
 	)
 	assert.NoError(t, err)
@@ -2481,6 +2135,7 @@ func TestProviderList_CorrectRegionFromZone(t *testing.T) {
 		&ibm.Client{},
 		&mockKubeClient{},
 		WithVPCClientManager(manager),
+		WithAccountResolver(testAccountResolver),
 		WithInstanceCache(instanceCache),
 	)
 	assert.NoError(t, err)

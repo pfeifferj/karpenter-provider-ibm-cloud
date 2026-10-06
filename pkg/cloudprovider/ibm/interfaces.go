@@ -29,6 +29,8 @@ type IKSClientInterface interface {
 
 	// GetWorkerDetails retrieves detailed information about an IKS worker
 	GetWorkerDetails(ctx context.Context, clusterID, workerID string) (*IKSWorkerDetails, error)
+	ListWorkers(ctx context.Context, clusterID string) ([]*IKSWorkerDetails, error)
+	RemoveWorker(ctx context.Context, clusterID, workerID string) error
 
 	// GetVPCInstanceIDFromWorker extracts the VPC instance ID from worker details
 	GetVPCInstanceIDFromWorker(ctx context.Context, clusterID, workerID string) (string, error)

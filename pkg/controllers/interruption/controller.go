@@ -18,7 +18,12 @@ package interruption
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"net/http"
 	"strings"
 	"time"
@@ -96,9 +101,10 @@ const (
 	StorageFailure       InterruptionReason = "storage-failure"
 
 	// Node annotations for IBM Cloud interruption info
-	InterruptionAnnotation       = "karpenter-ibm.sh/interruption-detected"
-	InterruptionReasonAnnotation = "karpenter-ibm.sh/interruption-reason"
-	InterruptionTimeAnnotation   = "karpenter-ibm.sh/interruption-time"
+	InterruptionAnnotation          = "karpenter-ibm.sh/interruption-detected"
+	InterruptionReasonAnnotation    = "karpenter-ibm.sh/interruption-reason"
+	InterruptionTimeAnnotation      = "karpenter-ibm.sh/interruption-time"
+	InterruptionCompletedAnnotation = "karpenter-ibm.sh/interruption-completed"
 )
 
 // NewController constructs a controller instance
@@ -124,28 +130,29 @@ func (c *Controller) Reconcile(ctx context.Context) (reconciler.Result, error) {
 		return reconciler.Result{}, err
 	}
 
+	var failures []error
 	for _, node := range nodeList.Items {
-		// Check if node is being interrupted
+		if node.Labels[karpv1.NodePoolLabelKey] == "" || !strings.HasPrefix(node.Spec.ProviderID, "ibm://") {
+			continue
+		}
 		interrupted, reason := c.isNodeInterrupted(ctx, &node)
 		if !interrupted {
 			continue
 		}
-
-		// Add interruption annotations to the node
-		if err := c.markNodeAsInterrupted(ctx, &node, reason); err != nil {
-			log.FromContext(ctx).Error(err, "Failed to mark node as interrupted", "node", node.Name)
-			continue
-		}
-
-		// Record interruption event
-		c.recorder.Event(&node, v1.EventTypeWarning, "Interruption",
-			fmt.Sprintf("Node is being interrupted by IBM Cloud: %s", reason))
-
-		// Handle interruption based on deployment mode (VPC vs IKS)
 		if err := c.handleInterruption(ctx, &node, reason); err != nil {
-			log.FromContext(ctx).Error(err, "Failed to handle interruption", "node", node.Name, "reason", reason)
+			failures = append(failures, fmt.Errorf("handling interruption for %s: %w", node.Name, err))
 			continue
 		}
+		if err := c.markNodeAsInterrupted(ctx, &node, reason); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if c.recorder != nil {
+			c.recorder.Event(&node, v1.EventTypeWarning, "Interruption", fmt.Sprintf("Node interruption handled: %s", reason))
+		}
+	}
+	if len(failures) != 0 {
+		return reconciler.Result{}, errors.Join(failures...)
 	}
 
 	return reconciler.Result{RequeueAfter: time.Minute}, nil
@@ -156,10 +163,13 @@ func (c *Controller) isNodeInterrupted(ctx context.Context, node *v1.Node) (bool
 	logger := log.FromContext(ctx).WithValues("node", node.Name)
 
 	// Check if node already has interruption annotation (avoid duplicate processing)
-	if _, exists := node.Annotations[InterruptionAnnotation]; exists {
+	if node.Annotations[InterruptionCompletedAnnotation] == "true" {
 		return false, ""
 	}
 
+	if reason := node.Annotations[InterruptionReasonAnnotation]; node.Annotations[InterruptionAnnotation] == "true" && reason != "" {
+		return true, InterruptionReason(reason)
+	}
 	// 1. Check node readiness and health conditions
 	if reason := c.checkNodeConditions(node); reason != "" {
 		logger.V(1).Info("Detecting interruption from node conditions", "reason", reason)
@@ -204,16 +214,24 @@ func (c *Controller) Name() string {
 // Register registers the controller with the manager
 // markNodeAsInterrupted adds interruption annotations to the node
 func (c *Controller) markNodeAsInterrupted(ctx context.Context, node *v1.Node, reason InterruptionReason) error {
-	nodeCopy := node.DeepCopy()
-	if nodeCopy.Annotations == nil {
-		nodeCopy.Annotations = make(map[string]string)
-	}
-
-	nodeCopy.Annotations[InterruptionAnnotation] = "true"
-	nodeCopy.Annotations[InterruptionReasonAnnotation] = string(reason)
-	nodeCopy.Annotations[InterruptionTimeAnnotation] = time.Now().Format(time.RFC3339)
-
-	return c.kubeClient.Update(ctx, nodeCopy)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &v1.Node{}
+		if err := c.kubeClient.Get(ctx, client.ObjectKeyFromObject(node), current); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if current.UID != node.UID {
+			return fmt.Errorf("node UID changed while handling interruption")
+		}
+		stored := current.DeepCopy()
+		if current.Annotations == nil {
+			current.Annotations = map[string]string{}
+		}
+		current.Annotations[InterruptionAnnotation] = "true"
+		current.Annotations[InterruptionCompletedAnnotation] = "true"
+		current.Annotations[InterruptionReasonAnnotation] = string(reason)
+		current.Annotations[InterruptionTimeAnnotation] = time.Now().Format(time.RFC3339)
+		return c.kubeClient.Patch(ctx, current, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))
+	})
 }
 
 // checkNodeConditions examines standard Kubernetes node conditions for health issues
@@ -418,36 +436,13 @@ func (c *Controller) hasCapacityPressure(node *v1.Node) bool {
 
 // handleInterruption processes an interruption event based on the deployment mode
 func (c *Controller) handleInterruption(ctx context.Context, node *v1.Node, reason InterruptionReason) error {
-	logger := log.FromContext(ctx).WithValues("node", node.Name, "reason", reason)
-
-	// Get the node class to determine deployment mode
-	nodeClass, err := c.getNodeClassForNode(ctx, node)
-	if err != nil {
-		logger.V(1).Info("Failing to determine node class, defaulting to VPC mode handling", "error", err)
-		// Default to VPC mode handling if we can't determine the mode
-		return c.handleVPCInterruption(ctx, node, reason)
-	}
-
-	// Determine provider mode
-	var mode types.ProviderMode
-	if c.providerFactory != nil {
-		mode = c.providerFactory.GetProviderMode(nodeClass)
-	} else {
-		// Fallback: try to infer from node labels/annotations
-		mode = c.inferModeFromNode(node)
-	}
-
-	logger.V(1).Info("Handling interruption", "mode", mode)
-
-	// Handle based on deployment mode
-	switch mode {
+	switch c.inferModeFromNode(node) {
 	case types.IKSMode:
 		return c.handleIKSInterruption(ctx, node, reason)
 	case types.VPCMode:
 		return c.handleVPCInterruption(ctx, node, reason)
 	default:
-		logger.Info("Unknown deployment mode was encountered, defaulted to VPC handling", "mode", mode)
-		return c.handleVPCInterruption(ctx, node, reason)
+		return fmt.Errorf("cannot determine node backend")
 	}
 }
 
@@ -463,7 +458,7 @@ func (c *Controller) handleVPCInterruption(ctx context.Context, node *v1.Node, r
 		if capacityType == "" {
 			capacityType = karpv1.CapacityTypeOnDemand
 		}
-		if instanceType != "" && zone != "" {
+		if instanceType != "" && zone != "" && c.unavailableOfferings != nil {
 			c.unavailableOfferings.Add(instanceType+":"+zone+":"+capacityType, time.Now().Add(time.Hour))
 			logger.Info("Marked instance type as unavailable due to capacity issue",
 				"instanceType", instanceType, "zone", zone, "capacityType", capacityType)
@@ -471,17 +466,12 @@ func (c *Controller) handleVPCInterruption(ctx context.Context, node *v1.Node, r
 	}
 
 	// Cordon the node first
-	if !node.Spec.Unschedulable {
-		nodeCopy := node.DeepCopy()
-		nodeCopy.Spec.Unschedulable = true
-		if err := c.kubeClient.Update(ctx, nodeCopy); err != nil {
-			return fmt.Errorf("failed to cordon node: %w", err)
-		}
-		logger.Info("Cordoned node for interruption")
+	if err := c.cordon(ctx, node); err != nil {
+		return err
 	}
 
 	// Delete the node to trigger immediate replacement
-	if err := c.kubeClient.Delete(ctx, node); err != nil {
+	if err := c.kubeClient.Delete(ctx, node, client.Preconditions{UID: &node.UID}); err != nil {
 		if client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("failed to delete node: %w", err)
 		}
@@ -506,7 +496,7 @@ func (c *Controller) handleIKSInterruption(ctx context.Context, node *v1.Node, r
 		if capacityType == "" {
 			capacityType = karpv1.CapacityTypeOnDemand
 		}
-		if instanceType != "" && zone != "" {
+		if instanceType != "" && zone != "" && c.unavailableOfferings != nil {
 			c.unavailableOfferings.Add(instanceType+":"+zone+":"+capacityType, time.Now().Add(time.Hour))
 			logger.Info("Marked instance type as unavailable due to capacity issue",
 				"instanceType", instanceType, "zone", zone, "capacityType", capacityType)
@@ -514,20 +504,15 @@ func (c *Controller) handleIKSInterruption(ctx context.Context, node *v1.Node, r
 	}
 
 	// Cordon the node to prevent new pods from being scheduled
-	if !node.Spec.Unschedulable {
-		nodeCopy := node.DeepCopy()
-		nodeCopy.Spec.Unschedulable = true
-		if err := c.kubeClient.Update(ctx, nodeCopy); err != nil {
-			return fmt.Errorf("failed to cordon node: %w", err)
-		}
-		logger.Info("Cordoned node for interruption and left replacement to IKS worker pool management")
+	if err := c.cordon(ctx, node); err != nil {
+		return err
 	}
 
 	// For non-capacity issues (like maintenance), we might want to delete the node
 	// to trigger faster replacement, but for capacity issues, cordoning is sufficient
 	if !c.isCapacityRelated(node, reason) {
 		// For infrastructure/maintenance issues, trigger replacement
-		if err := c.kubeClient.Delete(ctx, node); err != nil {
+		if err := c.kubeClient.Delete(ctx, node, client.Preconditions{UID: &node.UID}); err != nil {
 			if client.IgnoreNotFound(err) != nil {
 				return fmt.Errorf("failed to delete node: %w", err)
 			}
@@ -562,21 +547,38 @@ func (c *Controller) getNodeClassForNode(ctx context.Context, node *v1.Node) (*v
 
 // inferModeFromNode attempts to infer the deployment mode from node characteristics
 func (c *Controller) inferModeFromNode(node *v1.Node) types.ProviderMode {
-	// Check for IKS-specific labels or annotations
-	if _, exists := node.Labels["ibm-cloud.kubernetes.io/iks-cluster-id"]; exists {
+	if node.Spec.ProviderID == "" && (node.Labels["ibm-cloud.kubernetes.io/iks-cluster-id"] != "" || node.Annotations["ibm-cloud.kubernetes.io/iks-worker-pool"] != "") {
 		return types.IKSMode
 	}
-	if _, exists := node.Annotations["ibm-cloud.kubernetes.io/iks-worker-pool"]; exists {
-		return types.IKSMode
-	}
-
-	// Check provider ID format
-	if strings.Contains(node.Spec.ProviderID, "iks://") {
+	if strings.HasPrefix(node.Spec.ProviderID, "iks://") {
 		return types.IKSMode
 	}
 
-	// Default to VPC mode
+	if node.Annotations[ownership.BackendAnnotation] == string(types.IKSMode) || (strings.HasPrefix(node.Spec.ProviderID, "ibm://") && !strings.HasPrefix(node.Spec.ProviderID, "ibm:///")) {
+		return types.IKSMode
+	}
 	return types.VPCMode
+}
+
+func (c *Controller) cordon(ctx context.Context, node *v1.Node) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &v1.Node{}
+		if err := c.kubeClient.Get(ctx, k8stypes.NamespacedName{Name: node.Name}, current); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		if current.UID != node.UID {
+			return fmt.Errorf("node UID changed before cordon")
+		}
+		if current.Spec.Unschedulable {
+			return nil
+		}
+		stored := current.DeepCopy()
+		current.Spec.Unschedulable = true
+		return c.kubeClient.Patch(ctx, current, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{}))
+	})
 }
 
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {

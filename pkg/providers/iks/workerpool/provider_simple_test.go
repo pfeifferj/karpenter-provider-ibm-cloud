@@ -334,22 +334,22 @@ func TestIKSWorkerPoolProvider_DeleteMethodSignature(t *testing.T) {
 	assert.Contains(t, err.Error(), "cluster ID or pool ID not found")
 }
 
-func TestIKSWorkerPoolProvider_GetMethodNotImplemented(t *testing.T) {
+func TestIKSWorkerPoolProvider_GetRejectsInvalidProviderID(t *testing.T) {
 	provider := &IKSWorkerPoolProvider{}
 
 	result, err := provider.Get(context.Background(), "test-provider-id")
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get operation not implemented")
+	assert.Contains(t, err.Error(), "invalid IKS provider ID")
 }
 
-func TestIKSWorkerPoolProvider_ListMethodNotImplemented(t *testing.T) {
+func TestIKSWorkerPoolProvider_ListRequiresClient(t *testing.T) {
 	provider := &IKSWorkerPoolProvider{}
 
 	result, err := provider.List(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list operation not implemented")
+	assert.Contains(t, err.Error(), "kubernetes client not set")
 }
 
 func TestIKSWorkerPoolProvider_ResizePoolNilClient(t *testing.T) {

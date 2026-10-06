@@ -185,6 +185,17 @@ func (cb *CircuitBreaker) CanProvision(ctx context.Context, nodeClass, region st
 	return nil
 }
 
+func (cb *CircuitBreaker) RecordPending() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if cb.concurrentInstances > 0 {
+		cb.concurrentInstances--
+	}
+	if cb.state == CircuitBreakerHalfOpen && cb.halfOpenRequests > 0 {
+		cb.halfOpenRequests--
+	}
+}
+
 // RecordSuccess records a successful provisioning operation
 func (cb *CircuitBreaker) RecordSuccess(nodeClass, region string) {
 	// If circuit breaker is disabled, do nothing

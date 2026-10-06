@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
@@ -39,6 +40,7 @@ func TestNewIKSWorkerPoolProvider_Unit(t *testing.T) {
 	t.Run("successful creation", func(t *testing.T) {
 		scheme := runtime.NewScheme()
 		require.NoError(t, v1alpha1.AddToScheme(scheme))
+		scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 		client := &ibm.Client{}
@@ -51,6 +53,7 @@ func TestNewIKSWorkerPoolProvider_Unit(t *testing.T) {
 	t.Run("nil client", func(t *testing.T) {
 		scheme := runtime.NewScheme()
 		require.NoError(t, v1alpha1.AddToScheme(scheme))
+		scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 		provider, err := NewIKSWorkerPoolProvider(nil, kubeClient)
@@ -97,6 +100,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 		// Create fake kubernetes client without the nodeclass
 		scheme := runtime.NewScheme()
 		require.NoError(t, v1alpha1.AddToScheme(scheme))
+		scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 		provider := &IKSWorkerPoolProvider{
@@ -128,6 +132,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 
 		scheme := runtime.NewScheme()
 		require.NoError(t, v1alpha1.AddToScheme(scheme))
+		scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
 
 		provider := &IKSWorkerPoolProvider{
@@ -168,6 +173,7 @@ func TestIKSWorkerPoolProvider_Create_ErrorCases(t *testing.T) {
 
 		scheme := runtime.NewScheme()
 		require.NoError(t, v1alpha1.AddToScheme(scheme))
+		scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 		kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
 
 		// Use nil client to avoid panic from empty struct
@@ -207,17 +213,17 @@ func TestIKSWorkerPoolProvider_Delete_ErrorCases(t *testing.T) {
 		{
 			name:          "missing cluster ID label",
 			nodeLabels:    map[string]string{"karpenter-ibm.sh/worker-pool-id": "pool-123"},
-			expectedError: "cluster ID or pool ID not found in node labels",
+			expectedError: "refusing shared-pool deletion",
 		},
 		{
 			name:          "missing pool ID label",
 			nodeLabels:    map[string]string{"karpenter-ibm.sh/cluster-id": "cluster-123"},
-			expectedError: "cluster ID or pool ID not found in node labels",
+			expectedError: "refusing shared-pool deletion",
 		},
 		{
 			name:          "both labels missing",
 			nodeLabels:    map[string]string{},
-			expectedError: "cluster ID or pool ID not found in node labels",
+			expectedError: "refusing shared-pool deletion",
 		},
 	}
 
@@ -225,6 +231,7 @@ func TestIKSWorkerPoolProvider_Delete_ErrorCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
 			require.NoError(t, v1alpha1.AddToScheme(scheme))
+			scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 			provider := &IKSWorkerPoolProvider{
@@ -288,23 +295,23 @@ func TestIKSWorkerPoolProvider_ListPools_NilClient(t *testing.T) {
 }
 
 // Test Get method - not implemented
-func TestIKSWorkerPoolProvider_Get_NotImplemented(t *testing.T) {
+func TestIKSWorkerPoolProvider_Get_InvalidProviderID(t *testing.T) {
 	provider := &IKSWorkerPoolProvider{}
 
 	node, err := provider.Get(context.Background(), "test-provider-id")
 	assert.Error(t, err)
 	assert.Nil(t, node)
-	assert.Contains(t, err.Error(), "not implemented")
+	assert.Contains(t, err.Error(), "invalid IKS provider ID")
 }
 
 // Test List method - not implemented
-func TestIKSWorkerPoolProvider_List_NotImplemented(t *testing.T) {
+func TestIKSWorkerPoolProvider_List_MissingClient(t *testing.T) {
 	provider := &IKSWorkerPoolProvider{}
 
 	nodes, err := provider.List(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, nodes)
-	assert.Contains(t, err.Error(), "not implemented")
+	assert.Contains(t, err.Error(), "kubernetes client not set")
 }
 
 // Test node label based deletion logic
@@ -322,25 +329,25 @@ func TestIKSWorkerPoolProvider_NodeLabelDeletion(t *testing.T) {
 				"karpenter-ibm.sh/worker-pool-id": "pool-456",
 			},
 			expectsError:  true, // Will error due to nil client
-			expectedError: "IBM client is not initialized",
+			expectedError: "refusing shared-pool deletion",
 		},
 		{
 			name:          "missing cluster label",
 			nodeLabels:    map[string]string{"karpenter-ibm.sh/worker-pool-id": "pool-456"},
 			expectsError:  true,
-			expectedError: "cluster ID or pool ID not found in node labels",
+			expectedError: "refusing shared-pool deletion",
 		},
 		{
 			name:          "missing pool label",
 			nodeLabels:    map[string]string{"karpenter-ibm.sh/cluster-id": "cluster-123"},
 			expectsError:  true,
-			expectedError: "cluster ID or pool ID not found in node labels",
+			expectedError: "refusing shared-pool deletion",
 		},
 		{
 			name:          "no labels",
 			nodeLabels:    map[string]string{},
 			expectsError:  true,
-			expectedError: "cluster ID or pool ID not found in node labels",
+			expectedError: "refusing shared-pool deletion",
 		},
 	}
 
@@ -348,6 +355,7 @@ func TestIKSWorkerPoolProvider_NodeLabelDeletion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
 			require.NoError(t, v1alpha1.AddToScheme(scheme))
+			scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 			provider := &IKSWorkerPoolProvider{
@@ -612,6 +620,7 @@ func TestClusterIDResolution_Unit(t *testing.T) {
 
 			scheme := runtime.NewScheme()
 			require.NoError(t, v1alpha1.AddToScheme(scheme))
+			scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeClass).Build()
 
 			provider := &IKSWorkerPoolProvider{

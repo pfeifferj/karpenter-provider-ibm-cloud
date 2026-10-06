@@ -22,6 +22,14 @@ import (
 )
 
 var (
+	CacheHitsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "karpenter_ibm_cache_hits_total",
+		Help: "Cache lookups returning unexpired entries.",
+	}, []string{"cache"})
+	CacheMissesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "karpenter_ibm_cache_misses_total",
+		Help: "Cache lookups without an unexpired entry.",
+	}, []string{"cache"})
 	ApiRequests = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "karpenter_ibm_api_requests_total",
@@ -118,6 +126,8 @@ var (
 
 func init() {
 	metrics.Registry.MustRegister(
+		CacheHitsTotal,
+		CacheMissesTotal,
 		ApiRequests,
 		ProvisioningDuration,
 		CostPerHour,

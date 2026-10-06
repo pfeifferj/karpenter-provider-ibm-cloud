@@ -21,187 +21,68 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestOneOfValidation(t *testing.T) {
 	ctx := context.Background()
-
 	tests := []struct {
-		name           string
-		nodeClass      *IBMNodeClass
-		expectErrors   bool
-		expectWarnings bool
-		errorContains  string
+		name            string
+		configure       func(*IBMNodeClass)
+		errorContains   string
+		warningContains string
 	}{
+		{name: "valid configuration with static instance profile"},
 		{
-			name: "Valid configuration with static instance profile",
-			nodeClass: &IBMNodeClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-static"},
-				Spec: IBMNodeClassSpec{
-					InstanceProfile:   "bx2-2x8",
-					Image:             "r010-test-image",
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-test-vpc",
-					Subnet:            "0717-test-subnet",
-					ResourceGroup:     "test-resource-group-id",
-					SecurityGroups:    []string{"r010-test-sg"},
-					SSHKeys:           []string{"r010-test-key"},
-					APIServerEndpoint: "https://test.example.com:6443",
-					BootstrapMode:     stringPtr("cloud-init"),
-				},
-			},
-			expectErrors:   false,
-			expectWarnings: false,
+			name:            "dynamic instance type selection",
+			configure:       func(nc *IBMNodeClass) { nc.Spec.InstanceProfile = "" },
+			warningContains: "Dynamic instance type selection detected",
 		},
 		{
-			name: "Dynamic instance type selection (should warn)",
-			nodeClass: &IBMNodeClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-dynamic"},
-				Spec: IBMNodeClassSpec{
-					// No InstanceProfile - enables dynamic selection
-					Image:             "r010-test-image",
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-test-vpc",
-					Subnet:            "0717-test-subnet",
-					ResourceGroup:     "test-resource-group-id",
-					SecurityGroups:    []string{"r010-test-sg"},
-					SSHKeys:           []string{"r010-test-key"},
-					APIServerEndpoint: "https://test.example.com:6443",
-					BootstrapMode:     stringPtr("cloud-init"),
-				},
-			},
-			expectErrors:   false,
-			expectWarnings: true,
-		},
-		{
-			name: "Missing resource group (should error)",
-			nodeClass: &IBMNodeClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-missing-rg"},
-				Spec: IBMNodeClassSpec{
-					InstanceProfile: "bx2-2x8",
-					Image:           "r010-test-image",
-					Region:          "us-south",
-					Zone:            "us-south-1",
-					VPC:             "r010-test-vpc",
-					Subnet:          "0717-test-subnet",
-					// ResourceGroup missing
-					SecurityGroups:    []string{"r010-test-sg"},
-					SSHKeys:           []string{"r010-test-key"},
-					APIServerEndpoint: "https://test.example.com:6443",
-					BootstrapMode:     stringPtr("cloud-init"),
-				},
-			},
-			expectErrors:  true,
+			name:          "missing resource group",
+			configure:     func(nc *IBMNodeClass) { nc.Spec.ResourceGroup = "" },
 			errorContains: "resourceGroup is required",
 		},
 		{
-			name: "Invalid block device mapping (multiple root volumes)",
-			nodeClass: &IBMNodeClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-invalid-bdm"},
-				Spec: IBMNodeClassSpec{
-					InstanceProfile:   "bx2-2x8",
-					Image:             "r010-test-image",
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-test-vpc",
-					Subnet:            "0717-test-subnet",
-					ResourceGroup:     "test-resource-group-id",
-					SecurityGroups:    []string{"r010-test-sg"},
-					SSHKeys:           []string{"r010-test-key"},
-					APIServerEndpoint: "https://test.example.com:6443",
-					BootstrapMode:     stringPtr("cloud-init"),
-					BlockDeviceMappings: []BlockDeviceMapping{
-						{
-							RootVolume: true,
-							VolumeSpec: &VolumeSpec{
-								Capacity: &[]int64{100}[0],
-							},
-						},
-						{
-							RootVolume: true, // ERROR: Second root volume
-							VolumeSpec: &VolumeSpec{
-								Capacity: &[]int64{200}[0],
-							},
-						},
-					},
-				},
+			name: "multiple root volumes",
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.BlockDeviceMappings = []BlockDeviceMapping{
+					{RootVolume: true, VolumeSpec: &VolumeSpec{Capacity: &[]int64{100}[0]}},
+					{RootVolume: true, VolumeSpec: &VolumeSpec{Capacity: &[]int64{200}[0]}},
+				}
 			},
-			expectErrors:  true,
 			errorContains: "multiple root volumes specified",
 		},
 		{
-			name: "Invalid zone format",
-			nodeClass: &IBMNodeClass{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-invalid-zone"},
-				Spec: IBMNodeClassSpec{
-					InstanceProfile:   "bx2-2x8",
-					Image:             "r010-test-image",
-					Region:            "us-south",
-					Zone:              "eu-de-1", // Wrong region for zone
-					VPC:               "r010-test-vpc",
-					Subnet:            "0717-test-subnet",
-					ResourceGroup:     "test-resource-group-id",
-					SecurityGroups:    []string{"r010-test-sg"},
-					SSHKeys:           []string{"r010-test-key"},
-					APIServerEndpoint: "https://test.example.com:6443",
-					BootstrapMode:     stringPtr("cloud-init"),
-				},
-			},
-			expectErrors:  true,
+			name:          "zone from another region",
+			configure:     func(nc *IBMNodeClass) { nc.Spec.Zone = "eu-de-1" },
 			errorContains: "zone 'eu-de-1' does not match region 'us-south'",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			warnings, err := tt.nodeClass.ValidateCreate(ctx, tt.nodeClass)
-
-			if tt.expectErrors {
-				assert.Error(t, err, "Expected validation errors but got none")
-				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains, "Error should contain expected text")
-				}
+			nc := validWebhookNodeClass()
+			if tt.configure != nil {
+				tt.configure(nc)
+			}
+			warnings, err := nc.ValidateCreate(ctx, nc)
+			if tt.errorContains != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorContains)
 			} else {
-				assert.NoError(t, err, "Expected no validation errors but got: %v", err)
+				assert.NoError(t, err)
 			}
-
-			if tt.expectWarnings {
-				assert.NotEmpty(t, warnings, "Expected validation warnings but got none")
+			if tt.warningContains != "" {
+				require.Len(t, warnings, 1)
+				assert.Contains(t, warnings[0], tt.warningContains)
 			} else {
-				assert.Empty(t, warnings, "Expected no validation warnings but got: %v", warnings)
-			}
-
-			t.Logf("Validation result: errors=%v, warnings=%v", err != nil, len(warnings) > 0)
-			if err != nil {
-				t.Logf("Error: %s", err.Error())
-			}
-			for i, warning := range warnings {
-				t.Logf("Warning %d: %s", i+1, warning)
+				assert.Empty(t, warnings)
 			}
 		})
 	}
 }
 
 func TestBlockDeviceMappingValidation(t *testing.T) {
-	nodeClass := &IBMNodeClass{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-bdm"},
-		Spec: IBMNodeClassSpec{
-			InstanceProfile:   "bx2-2x8",
-			Image:             "r010-test-image",
-			Region:            "us-south",
-			Zone:              "us-south-1",
-			VPC:               "r010-test-vpc",
-			Subnet:            "0717-test-subnet",
-			ResourceGroup:     "test-resource-group-id",
-			SecurityGroups:    []string{"r010-test-sg"},
-			SSHKeys:           []string{"r010-test-key"},
-			APIServerEndpoint: "https://test.example.com:6443",
-			BootstrapMode:     stringPtr("cloud-init"),
-		},
-	}
+	nodeClass := validWebhookNodeClass()
 
 	tests := []struct {
 		name                string

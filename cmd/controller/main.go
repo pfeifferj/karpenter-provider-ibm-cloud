@@ -61,7 +61,9 @@ func main() {
 		op.ProviderFactory.GetInstanceTypeProvider(),
 		op.ProviderFactory.GetSubnetProvider(),
 		circuitBreakerConfig,
+		op.ProviderFactory,
 	)
+	ibmCloudProvider.SetAPIReader(op.GetAPIReader())
 	cloudProvider := metrics.Decorate(ibmCloudProvider)
 	clusterState := state.NewCluster(op.Clock, op.GetClient(), cloudProvider)
 
@@ -96,6 +98,7 @@ func main() {
 			op.ProviderFactory.GetInstanceTypeProvider(),
 			op.ProviderFactory.GetSubnetProvider(),
 			op.ProviderFactory.GetClient(),
+			op.ProviderFactory,
 		)...).
 		Start(ctx)
 }

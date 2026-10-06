@@ -56,7 +56,7 @@ func NewIBMPricingProvider(ctx context.Context, client *ibm.Client, region strin
 		pricingBatcher: pricingBatcher,
 		pricingMap:     make(map[string]map[string]float64),
 		ttl:            12 * time.Hour,
-		priceCache:     cache.New(12 * time.Hour),
+		priceCache:     cache.NewNamed("prices", 12*time.Hour),
 		logger:         logging.PricingLogger(),
 	}
 }

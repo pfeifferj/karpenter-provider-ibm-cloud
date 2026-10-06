@@ -18,6 +18,8 @@ package cache
 import (
 	"sync"
 	"time"
+
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/metrics"
 )
 
 // Entry represents a cached entry with expiration
@@ -28,25 +30,23 @@ type Entry struct {
 
 // Cache is a generic TTL-based cache
 type Cache struct {
-	mu       sync.RWMutex
-	items    map[string]*Entry
-	ttl      time.Duration
-	stopChan chan struct{}
-	stopOnce sync.Once
+	mu        sync.RWMutex
+	name      string
+	items     map[string]*Entry
+	ttl       time.Duration
+	nextSweep time.Time
 }
 
-// New creates a new cache with the specified TTL
+// New creates a new cache with the specified TTL, reported in metrics as "default".
 func New(ttl time.Duration) *Cache {
-	c := &Cache{
-		items:    make(map[string]*Entry),
-		ttl:      ttl,
-		stopChan: make(chan struct{}),
-	}
+	return NewNamed("default", ttl)
+}
 
-	// Start cleanup goroutine
-	go c.cleanup()
-
-	return c
+// NewNamed creates a new cache whose hit and miss metrics carry the given cache label.
+func NewNamed(name string, ttl time.Duration) *Cache {
+	metrics.CacheHitsTotal.WithLabelValues(name).Add(0)
+	metrics.CacheMissesTotal.WithLabelValues(name).Add(0)
+	return &Cache{name: name, items: make(map[string]*Entry), ttl: ttl}
 }
 
 // Get retrieves a value from the cache
@@ -56,12 +56,14 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 	entry, exists := c.items[key]
 	if !exists {
 		c.mu.RUnlock()
+		metrics.CacheMissesTotal.WithLabelValues(c.name).Inc()
 		return nil, false
 	}
 
 	now := time.Now()
 	if !now.After(entry.Expiration) {
 		defer c.mu.RUnlock()
+		metrics.CacheHitsTotal.WithLabelValues(c.name).Inc()
 		return entry.Value, true
 	}
 
@@ -75,6 +77,7 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 	if exists && now.After(entry.Expiration) {
 		delete(c.items, key)
 	}
+	metrics.CacheMissesTotal.WithLabelValues(c.name).Inc()
 	return nil, false
 }
 
@@ -88,6 +91,11 @@ func (c *Cache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	now := time.Now()
+	if !now.Before(c.nextSweep) {
+		c.removeExpiredLocked(now)
+		c.nextSweep = now.Add(min(time.Minute, max(time.Millisecond, c.ttl/2)))
+	}
 	c.items[key] = &Entry{
 		Value:      value,
 		Expiration: time.Now().Add(ttl),
@@ -101,16 +109,19 @@ func (c *Cache) Delete(key string) {
 	delete(c.items, key)
 }
 
-// Has checks if a key exists in the cache (and is not expired)
+// Has checks if a key exists in the cache (and is not expired) without counting as a hit or miss.
 func (c *Cache) Has(key string) bool {
-	_, exists := c.Get(key)
-	return exists
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, exists := c.items[key]
+	return exists && !time.Now().After(entry.Expiration)
 }
 
 // Size returns the number of items in the cache
 func (c *Cache) Size() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.removeExpiredLocked(time.Now())
 	return len(c.items)
 }
 
@@ -121,34 +132,10 @@ func (c *Cache) Clear() {
 	c.items = make(map[string]*Entry)
 }
 
-// Stop stops the cleanup goroutine
-func (c *Cache) Stop() {
-	c.stopOnce.Do(func() {
-		close(c.stopChan)
-	})
-}
+// Stop is a no-op; expired entries are swept on write, so the cache owns no goroutine.
+func (c *Cache) Stop() {}
 
-// cleanup periodically removes expired entries
-func (c *Cache) cleanup() {
-	ticker := time.NewTicker(c.ttl / 2) // Cleanup every half TTL period
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.removeExpired()
-		case <-c.stopChan:
-			return
-		}
-	}
-}
-
-// removeExpired removes all expired entries
-func (c *Cache) removeExpired() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := time.Now()
+func (c *Cache) removeExpiredLocked(now time.Time) {
 	for key, entry := range c.items {
 		if now.After(entry.Expiration) {
 			delete(c.items, key)

@@ -19,16 +19,23 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
 
 	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/platform-services-go-sdk/globaltaggingv1"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/httpclient"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/logging"
 )
 
 const defaultPageLimit = 100
 
-//go:generate go run go.uber.org/mock/mockgen@latest -source=./vpc.go -destination=./mock/vpc_generated.go -package=mock
+//go:generate go run go.uber.org/mock/mockgen@latest -source=./vpc.go -destination=./mock/vpc_generated.go -package=mock -exclude_interfaces=globalTaggingAPI
 
 // vpcClientInterface defines the interface for the VPC client
 type vpcClientInterface interface {
@@ -68,6 +75,10 @@ type vpcClientInterface interface {
 	ListRegions(*vpcv1.ListRegionsOptions) (*vpcv1.RegionCollection, *core.DetailedResponse, error)
 }
 
+type globalTaggingAPI interface {
+	AttachTagWithContext(context.Context, *globaltaggingv1.AttachTagOptions) (*globaltaggingv1.TagResults, *core.DetailedResponse, error)
+}
+
 // VPCClient handles interactions with the IBM Cloud VPC API
 type VPCClient struct {
 	baseURL         string
@@ -76,6 +87,17 @@ type VPCClient struct {
 	region          string
 	resourceGroupID string
 	client          vpcClientInterface
+	tagging         globalTaggingAPI
+	regionMu        sync.Mutex
+	regionClients   map[string]*VPCClient
+	identityMu      sync.Mutex
+	identityService *core.BaseService
+	identityAccount string
+}
+
+func init() {
+	logger := log.New(log.Writer(), "", log.LstdFlags)
+	core.SetLogger(core.NewLogger(core.LevelError, logger, logger))
 }
 
 // GetSDKClient returns the underlying VPC SDK client
@@ -84,9 +106,7 @@ func (c *VPCClient) GetSDKClient() vpcClientInterface {
 }
 
 func NewVPCClient(baseURL, authType, apiKey, region, resourceGroupID string) (*VPCClient, error) {
-	authenticator := &core.IamAuthenticator{
-		ApiKey: apiKey,
-	}
+	authenticator := NewIAMAuthenticator(apiKey)
 
 	options := &vpcv1.VpcV1Options{
 		Authenticator: authenticator,
@@ -98,10 +118,12 @@ func NewVPCClient(baseURL, authType, apiKey, region, resourceGroupID string) (*V
 		return nil, fmt.Errorf("creating VPC client: %w", err)
 	}
 
-	// Configure IBM SDK logging level
-	logDestination := log.Writer()
-	goLogger := log.New(logDestination, "", log.LstdFlags)
-	core.SetLogger(core.NewLogger(core.LevelError, goLogger, goLogger))
+	client.Service.SetHTTPClient(httpclient.InstrumentHTTPClient(client.Service.GetHTTPClient(), region))
+	tagging, err := globaltaggingv1.NewGlobalTaggingV1(&globaltaggingv1.GlobalTaggingV1Options{Authenticator: authenticator})
+	if err != nil {
+		return nil, fmt.Errorf("creating tagging client: %w", err)
+	}
+	tagging.Service.SetHTTPClient(httpclient.InstrumentHTTPClient(tagging.Service.GetHTTPClient(), "global"))
 
 	return &VPCClient{
 		baseURL:         baseURL,
@@ -110,18 +132,23 @@ func NewVPCClient(baseURL, authType, apiKey, region, resourceGroupID string) (*V
 		region:          region,
 		resourceGroupID: resourceGroupID,
 		client:          client,
+		tagging:         tagging,
 	}, nil
 }
 
 // NewVPCClientWithMock creates a VPC client with a mock SDK client for testing
-func NewVPCClientWithMock(mockClient vpcClientInterface) *VPCClient {
-	return &VPCClient{
+func NewVPCClientWithMock(mockClient vpcClientInterface, tagging ...globalTaggingAPI) *VPCClient {
+	client := &VPCClient{
 		baseURL:  "test",
 		authType: "test",
 		apiKey:   "test",
 		region:   "test",
 		client:   mockClient,
 	}
+	if len(tagging) > 0 {
+		client.tagging = tagging[0]
+	}
+	return client
 }
 
 func (c *VPCClient) CreateInstance(ctx context.Context, instancePrototype vpcv1.InstancePrototypeIntf) (*vpcv1.Instance, error) {
@@ -175,6 +202,40 @@ func (c *VPCClient) GetInstance(ctx context.Context, id string) (*vpcv1.Instance
 	return instance, nil
 }
 
+var regionPattern = regexp.MustCompile(`^[a-z]{2}-[a-z]+$`)
+
+func (c *VPCClient) ForRegion(region string) (*VPCClient, error) {
+	if region != "" && !regionPattern.MatchString(region) {
+		return nil, fmt.Errorf("invalid IBM region")
+	}
+	if region == "" || region == c.region || c.region == "test" {
+		return c, nil
+	}
+	c.regionMu.Lock()
+	defer c.regionMu.Unlock()
+	if c.regionClients == nil {
+		c.regionClients = map[string]*VPCClient{}
+	}
+	if client := c.regionClients[region]; client != nil {
+		return client, nil
+	}
+	endpoint, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid VPC endpoint: %w", err)
+	}
+	host := endpoint.Hostname()
+	if host != c.region+".iaas.cloud.ibm.com" && host != c.region+".private.iaas.cloud.ibm.com" {
+		return nil, fmt.Errorf("custom VPC endpoint cannot be routed to another region")
+	}
+	endpoint.Host = strings.Replace(endpoint.Host, c.region+".", region+".", 1)
+	regional, err := NewVPCClient(endpoint.String(), c.authType, c.apiKey, region, c.resourceGroupID)
+	if err != nil {
+		return nil, err
+	}
+	c.regionClients[region] = regional
+	return regional, nil
+}
+
 func (c *VPCClient) ListInstances(ctx context.Context) ([]vpcv1.Instance, error) {
 	return c.listInstances(ctx, nil, "instances")
 }
@@ -198,6 +259,9 @@ func (c *VPCClient) listInstances(ctx context.Context, options *vpcv1.ListInstan
 			if err != nil {
 				return nil, nil, fmt.Errorf("listing %s: %w", resourceType, err)
 			}
+			if page == nil {
+				return nil, nil, fmt.Errorf("listing %s returned no collection", resourceType)
+			}
 
 			next, err := page.GetNextStart()
 			if err != nil {
@@ -219,25 +283,39 @@ func (c *VPCClient) UpdateInstanceTags(ctx context.Context, id string, tags map[
 	if c.client == nil {
 		return fmt.Errorf("VPC client not initialized")
 	}
-
-	// Convert tags map to patch data
-	patchData := make(map[string]interface{})
-	tagsList := make([]string, 0, len(tags))
-	for key, value := range tags {
-		tagsList = append(tagsList, fmt.Sprintf("%s:%s", key, value))
+	if len(tags) == 0 {
+		return nil
 	}
-	patchData["user_tags"] = tagsList
-
-	options := &vpcv1.UpdateInstanceOptions{
-		ID:            &id,
-		InstancePatch: patchData,
+	if c.tagging == nil {
+		return fmt.Errorf("tagging client not initialized")
 	}
-
-	_, _, err := c.client.UpdateInstanceWithContext(ctx, options)
+	instance, err := c.GetInstance(ctx, id)
 	if err != nil {
-		return fmt.Errorf("updating instance tags: %w", err)
+		return err
 	}
-
+	if instance == nil || instance.CRN == nil || *instance.CRN == "" {
+		return fmt.Errorf("instance %s has no CRN", id)
+	}
+	names := make([]string, 0, len(tags))
+	for key, value := range tags {
+		names = append(names, key+":"+value)
+	}
+	sort.Strings(names)
+	results, _, err := c.tagging.AttachTagWithContext(ctx, &globaltaggingv1.AttachTagOptions{
+		Resources: []globaltaggingv1.Resource{{ResourceID: instance.CRN}}, TagNames: names, TagType: core.StringPtr("user"), Update: core.BoolPtr(true),
+	})
+	if err != nil {
+		return fmt.Errorf("attaching instance tags: %w", err)
+	}
+	if results == nil || len(results.Results) != 1 {
+		return fmt.Errorf("tagging instance %s returned no resource result", id)
+	}
+	if results.Results[0].ResourceID == nil || *results.Results[0].ResourceID != *instance.CRN {
+		return fmt.Errorf("tagging returned another resource")
+	}
+	if results.Results[0].IsError != nil && *results.Results[0].IsError {
+		return fmt.Errorf("tagging instance %s failed", id)
+	}
 	return nil
 }
 

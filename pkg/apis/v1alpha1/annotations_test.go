@@ -22,8 +22,8 @@ import (
 )
 
 func TestIBMNodeClassHashVersion(t *testing.T) {
-	if IBMNodeClassHashVersion != "1" {
-		t.Errorf("IBMNodeClassHashVersion = %v, want %v", IBMNodeClassHashVersion, "1")
+	if IBMNodeClassHashVersion != "2" {
+		t.Errorf("IBMNodeClassHashVersion = %v, want %v", IBMNodeClassHashVersion, "2")
 	}
 }
 

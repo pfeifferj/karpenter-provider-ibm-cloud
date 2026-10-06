@@ -188,7 +188,7 @@ func TestIKSClient_GetWorkerDetails(t *testing.T) {
 			// Create test server
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// Verify request
-				expectedPath := "/clusters/" + tt.clusterID + "/workers/" + tt.workerID
+				expectedPath := "/vpc/getWorker"
 				assert.Equal(t, expectedPath, r.URL.Path)
 				assert.Equal(t, "GET", r.Method)
 				assert.Contains(t, r.Header.Get("Authorization"), "Bearer")
@@ -951,4 +951,87 @@ func TestIKSClient_ConcurrentIncrements(t *testing.T) {
 		resultSet[r] = true
 	}
 	assert.Equal(t, numGoroutines, len(resultSet), "each increment should return a unique size")
+}
+
+func TestIKSClientV2LifecycleContract(t *testing.T) {
+	clusterID := "cluster with/slash"
+	poolID := "real-pool"
+	workerID := "real-worker"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/vpc/createWorkerPool":
+			assert.Equal(t, http.MethodPost, r.Method)
+			var body map[string]interface{}
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, clusterID, body["cluster"])
+			assert.Equal(t, "owned-pool", body["name"])
+			assert.Equal(t, "bx2-4x16", body["flavor"])
+			assert.Equal(t, float64(1), body["workerCount"])
+			assert.Equal(t, []interface{}{map[string]interface{}{"id": "us-south-1"}}, body["zones"])
+			_, _ = w.Write([]byte(`{"workerPoolID":"real-pool"}`))
+		case "/vpc/getWorkerPool":
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.Equal(t, clusterID, r.URL.Query().Get("cluster"))
+			assert.Equal(t, poolID, r.URL.Query().Get("workerpool"))
+			_, _ = w.Write([]byte(`{"id":"real-pool","poolName":"owned-pool","flavor":"bx2-4x16","workerCount":1,"zones":[{"id":"us-south-1"}],"autoscaleEnabled":false}`))
+		case "/vpc/getWorkerPools":
+			assert.Equal(t, clusterID, r.URL.Query().Get("cluster"))
+			_, _ = w.Write([]byte(`[{"id":"real-pool","poolName":"owned-pool","workerCount":1,"zones":[{"id":"us-south-1"}]}]`))
+		case "/vpc/getWorkers":
+			assert.Equal(t, clusterID, r.URL.Query().Get("cluster"))
+			assert.Equal(t, "false", r.URL.Query().Get("showDeleted"))
+			_, _ = w.Write([]byte(`[{"id":"real-worker","poolID":"real-pool","location":"us-south-1","flavor":"bx2-4x16"}]`))
+		case "/removeWorker":
+			assert.Equal(t, http.MethodPost, r.Method)
+			var body map[string]string
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, map[string]string{"cluster": clusterID, "workerID": workerID}, body)
+			w.WriteHeader(http.StatusNoContent)
+		case "/removeWorkerPool":
+			assert.Equal(t, http.MethodPost, r.Method)
+			var body map[string]string
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, map[string]string{"cluster": clusterID, "workerpool": poolID}, body)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected endpoint %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := &Client{iamClient: &IAMClient{Authenticator: &mockAuthenticator{token: "token"}}}
+	httpClient := httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) })
+	iksClient := NewIKSClientWithHTTPClient(client, httpClient)
+	created, err := iksClient.CreateWorkerPool(context.Background(), clusterID, &WorkerPoolCreateRequest{Name: "owned-pool", Flavor: "bx2-4x16", SizePerZone: 1, Zones: []WorkerPoolZone{{ID: "us-south-1", SubnetID: "inherited-cluster-subnet"}}})
+	require.NoError(t, err)
+	require.Equal(t, poolID, created.ID)
+	pool, err := iksClient.GetWorkerPool(context.Background(), clusterID, poolID)
+	require.NoError(t, err)
+	require.Equal(t, "us-south-1", pool.Zone)
+	require.Equal(t, 1, pool.SizePerZone)
+	pools, err := iksClient.ListWorkerPools(context.Background(), clusterID)
+	require.NoError(t, err)
+	require.Len(t, pools, 1)
+	workers, err := iksClient.ListWorkers(context.Background(), clusterID)
+	require.NoError(t, err)
+	require.Equal(t, workerID, workers[0].ID)
+	require.NoError(t, iksClient.RemoveWorker(context.Background(), clusterID, workerID))
+	require.NoError(t, iksClient.DeleteWorkerPool(context.Background(), clusterID, poolID))
+}
+
+func TestIKSClientPreservesTypedPoolLookupAndDeleteErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":"E0001","description":"not found"}`))
+	}))
+	defer server.Close()
+	client := &Client{iamClient: &IAMClient{Authenticator: &mockAuthenticator{token: "token"}}}
+	iksClient := NewIKSClientWithHTTPClient(client, httpclient.NewIBMCloudHTTPClient(server.URL, nil))
+	_, err := iksClient.GetWorkerPool(context.Background(), "cluster", "pool")
+	var cloudError *httpclient.IBMCloudError
+	require.ErrorAs(t, err, &cloudError)
+	require.Equal(t, http.StatusNotFound, cloudError.StatusCode)
+	err = iksClient.DeleteWorkerPool(context.Background(), "cluster", "pool")
+	require.ErrorAs(t, err, &cloudError)
+	require.Equal(t, http.StatusNotFound, cloudError.StatusCode)
 }

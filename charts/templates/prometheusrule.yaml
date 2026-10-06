@@ -38,11 +38,11 @@ spec:
             service: karpenter-ibm
           annotations:
             summary: "Karpenter IBM Cloud Provider has high error rate"
-            description: "Karpenter IBM Cloud Provider error rate is {{`{{ $value | humanizePercentage }}`}} over the last 5 minutes"
+            description: "Karpenter IBM Cloud Provider has {{`{{ $value | humanize }}`}} reconciliation errors per second over the last 5 minutes"
             runbook_url: "{{ .Values.metrics.prometheusRule.runbookUrl | default "https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md" }}"
 
         - alert: KarpenterIBMSlowReconciliation
-          expr: histogram_quantile(0.99, rate(controller_runtime_reconcile_duration_seconds_bucket{job="{{ include "karpenter.fullname" . }}"}[5m])) > {{ .Values.metrics.prometheusRule.alerts.slowReconciliation.threshold | default "60" }}
+          expr: histogram_quantile(0.99, sum by (le) (rate(controller_runtime_reconcile_duration_seconds_bucket{job="{{ include "karpenter.fullname" . }}"}[5m]))) > {{ .Values.metrics.prometheusRule.alerts.slowReconciliation.threshold | default "60" }}
           for: {{ .Values.metrics.prometheusRule.alerts.slowReconciliation.for | default "15m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.slowReconciliation.severity | default "warning" }}
@@ -54,30 +54,30 @@ spec:
 
         # IBM Cloud API specific alerts
         - alert: KarpenterIBMAPIErrors
-          expr: rate(karpenter_ibm_api_requests_total{status!~"2.."}[5m]) > {{ .Values.metrics.prometheusRule.alerts.apiErrors.threshold | default "0.05" }}
+          expr: sum without (status) (rate(karpenter_ibm_api_requests_total{job="{{ include "karpenter.fullname" . }}",status!~"2..|404"}[5m])) / sum without (status) (rate(karpenter_ibm_api_requests_total{job="{{ include "karpenter.fullname" . }}"}[5m])) > {{ .Values.metrics.prometheusRule.alerts.apiErrors.threshold | default "0.05" }}
           for: {{ .Values.metrics.prometheusRule.alerts.apiErrors.for | default "5m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.apiErrors.severity | default "warning" }}
             service: karpenter-ibm
           annotations:
             summary: "High IBM Cloud API error rate"
-            description: "IBM Cloud API error rate is {{`{{ $value | humanizePercentage }}`}} for {{`{{ $labels.service }}`}} operations"
+            description: "IBM Cloud API error rate is {{`{{ $value | humanizePercentage }}`}} for {{`{{ $labels.operation }}`}} operations"
             runbook_url: "{{ .Values.metrics.prometheusRule.runbookUrl | default "https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md" }}"
 
         - alert: KarpenterIBMAPIRateLimit
-          expr: rate(karpenter_ibm_api_requests_total{status="429"}[5m]) > {{ .Values.metrics.prometheusRule.alerts.apiRateLimit.threshold | default "0.01" }}
+          expr: sum without (status) (rate(karpenter_ibm_api_requests_total{job="{{ include "karpenter.fullname" . }}",status="429"}[5m])) / sum without (status) (rate(karpenter_ibm_api_requests_total{job="{{ include "karpenter.fullname" . }}"}[5m])) > {{ .Values.metrics.prometheusRule.alerts.apiRateLimit.threshold | default "0.01" }}
           for: {{ .Values.metrics.prometheusRule.alerts.apiRateLimit.for | default "2m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.apiRateLimit.severity | default "warning" }}
             service: karpenter-ibm
           annotations:
             summary: "IBM Cloud API rate limiting detected"
-            description: "IBM Cloud API rate limiting is occurring at {{`{{ $value | humanizePercentage }}`}} for {{`{{ $labels.service }}`}} operations"
+            description: "IBM Cloud API rate limiting is occurring at {{`{{ $value | humanizePercentage }}`}} for {{`{{ $labels.operation }}`}} operations"
             runbook_url: "{{ .Values.metrics.prometheusRule.runbookUrl | default "https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md" }}"
 
         # Node provisioning alerts
         - alert: KarpenterIBMNoNodeProvisioning
-          expr: rate(karpenter_nodes_total[30m]) == 0 and on() karpenter_unschedulable_pods > {{ .Values.metrics.prometheusRule.alerts.noNodeProvisioning.podThreshold | default "0" }}
+          expr: (sum(karpenter_scheduler_unschedulable_pods_count{job="{{ include "karpenter.fullname" . }}"}) > {{ .Values.metrics.prometheusRule.alerts.noNodeProvisioning.podThreshold | default "0" }}) and on() ((sum(increase(karpenter_nodes_created_total{job="{{ include "karpenter.fullname" . }}"}[30m])) or on() vector(0)) == 0)
           for: {{ .Values.metrics.prometheusRule.alerts.noNodeProvisioning.for | default "10m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.noNodeProvisioning.severity | default "critical" }}
@@ -88,7 +88,7 @@ spec:
             runbook_url: "{{ .Values.metrics.prometheusRule.runbookUrl | default "https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md" }}"
 
         - alert: KarpenterIBMSlowNodeProvisioning
-          expr: histogram_quantile(0.99, rate(karpenter_ibm_provisioning_duration_seconds_bucket[10m])) > {{ .Values.metrics.prometheusRule.alerts.slowNodeProvisioning.threshold | default "600" }}
+          expr: histogram_quantile(0.99, sum by (le) (rate(karpenter_ibm_provisioning_duration_seconds_bucket{job="{{ include "karpenter.fullname" . }}"}[10m]))) > {{ .Values.metrics.prometheusRule.alerts.slowNodeProvisioning.threshold | default "600" }}
           for: {{ .Values.metrics.prometheusRule.alerts.slowNodeProvisioning.for | default "15m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.slowNodeProvisioning.severity | default "warning" }}
@@ -100,14 +100,14 @@ spec:
 
         # Cache performance alerts
         - alert: KarpenterIBMLowCacheHitRate
-          expr: karpenter_ibm_cache_hit_rate < {{ .Values.metrics.prometheusRule.alerts.lowCacheHitRate.threshold | default "80" }}
+          expr: sum by (cache) (rate(karpenter_ibm_cache_hits_total{job="{{ include "karpenter.fullname" . }}"}[5m])) / (sum by (cache) (rate(karpenter_ibm_cache_hits_total{job="{{ include "karpenter.fullname" . }}"}[5m])) + sum by (cache) (rate(karpenter_ibm_cache_misses_total{job="{{ include "karpenter.fullname" . }}"}[5m]))) < ({{ .Values.metrics.prometheusRule.alerts.lowCacheHitRate.threshold | default "80" }} / 100)
           for: {{ .Values.metrics.prometheusRule.alerts.lowCacheHitRate.for | default "30m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.lowCacheHitRate.severity | default "info" }}
             service: karpenter-ibm
           annotations:
             summary: "Low cache hit rate detected"
-            description: "{{`{{ $labels.cache_type }}`}} cache hit rate is {{`{{ $value | humanizePercentage }}`}}"
+            description: "{{`{{ $labels.cache }}`}} cache hit rate is {{`{{ $value | humanizePercentage }}`}}"
             runbook_url: "{{ .Values.metrics.prometheusRule.runbookUrl | default "https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md" }}"
 
         # Resource utilization alerts
@@ -123,7 +123,7 @@ spec:
             runbook_url: "{{ .Values.metrics.prometheusRule.runbookUrl | default "https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md" }}"
 
         - alert: KarpenterIBMHighCPUUsage
-          expr: rate(process_cpu_seconds_total{job="{{ include "karpenter.fullname" . }}"}[5m]) * 100 > {{ .Values.metrics.prometheusRule.alerts.highCPUUsage.threshold | default "80" }}
+          expr: rate(process_cpu_seconds_total{job="{{ include "karpenter.fullname" . }}"}[5m]) > ({{ .Values.metrics.prometheusRule.alerts.highCPUUsage.threshold | default "80" }} / 100)
           for: {{ .Values.metrics.prometheusRule.alerts.highCPUUsage.for | default "30m" }}
           labels:
             severity: {{ .Values.metrics.prometheusRule.alerts.highCPUUsage.severity | default "warning" }}

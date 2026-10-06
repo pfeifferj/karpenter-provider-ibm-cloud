@@ -59,7 +59,7 @@ func TestNewIBMCloudHTTPClient(t *testing.T) {
 	assert.NotNil(t, client.setHeaders)
 
 	// Verify connection pooling is configured
-	transport := client.client.Transport.(*http.Transport)
+	transport := client.client.Transport.(*metricsTransport).base.(*http.Transport)
 	assert.Equal(t, 100, transport.MaxIdleConns)
 	assert.Equal(t, 10, transport.MaxIdleConnsPerHost)
 	assert.Equal(t, 30*time.Second, transport.IdleConnTimeout)
@@ -72,7 +72,8 @@ func TestNewIBMCloudHTTPClientWithClient(t *testing.T) {
 
 	assert.NotNil(t, client)
 	assert.Equal(t, baseURL, client.baseURL)
-	assert.Equal(t, customClient, client.client)
+	assert.Equal(t, customClient.Timeout, client.client.Timeout)
+	assert.Nil(t, customClient.Transport)
 	assert.NotNil(t, client.setHeaders)
 }
 

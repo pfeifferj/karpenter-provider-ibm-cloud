@@ -79,6 +79,18 @@ func (m *NodeClassCircuitBreakerManager) CanProvision(ctx context.Context, nodeC
 	return breaker.CanProvision(ctx, nodeClass, region, 0)
 }
 
+func (m *NodeClassCircuitBreakerManager) RecordPending(nodeClass, region string) {
+	if m.config == nil {
+		return
+	}
+	m.mu.RLock()
+	breaker := m.breakers[m.getKey(nodeClass, region)]
+	m.mu.RUnlock()
+	if breaker != nil {
+		breaker.RecordPending()
+	}
+}
+
 // RecordSuccess records a successful provisioning operation for the NodeClass-Region
 func (m *NodeClassCircuitBreakerManager) RecordSuccess(nodeClass, region string) {
 	if m.config == nil {

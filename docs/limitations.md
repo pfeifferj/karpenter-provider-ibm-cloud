@@ -52,35 +52,21 @@ spec:
 
 ### Bootstrap Mode Limitations
 
-#### IKS Mode Instance Type Constraints {#iks-mode-instance-type-constraints}
-- **Impact**: When using IKS mode (when `iksClusterID` is specified or `bootstrapMode: "iks-api"`), the provisioner cannot dynamically select instance types based on pod requirements
-- **Root Cause**: IKS Worker Pool Resize API (`PATCH /v1/clusters/{id}/workerpools/{poolId}`) adds nodes with instance types pre-configured in the worker pool
-- **Current Behavior**:
-  - `instanceProfile` and `instanceRequirements` fields in IBMNodeClass are ignored in IKS mode
-  - All new nodes use the instance type configured in the existing worker pool
-- **Workarounds**:
-  - Pre-create separate worker pools for different instance types
-  - Use multiple NodeClasses targeting different worker pools
+#### VPC Launch Recovery
 
-```yaml
-# Example: Multiple NodeClasses for different instance types in IKS mode
----
-apiVersion: karpenter-ibm.sh/v1alpha1
-kind: IBMNodeClass
-metadata:
-  name: small-instances
-spec:
-  iksClusterID: "cluster-id"
-  iksWorkerPoolID: "worker-pool-small"  # Pre-configured with small instances
----
-apiVersion: karpenter-ibm.sh/v1alpha1
-kind: IBMNodeClass
-metadata:
-  name: large-instances
-spec:
-  iksClusterID: "cluster-id"
-  iksWorkerPoolID: "worker-pool-large"  # Pre-configured with large instances
-```
+VPC launches store their original configuration and use a name derived from the cluster and NodeClaim UIDs. Retries adopt a matching instance after a lost response. An uncertain submission with no visible instance remains pending instead of issuing another create request, including a crash between checkpointing and submission. Restore access to the original account and region and investigate the launch checkpoint before intervening in the claim's finalizer.
+
+New VPC launches resolve and record the account from the VPC API key. Helm's optional `credentials.accountId` checks that the credential belongs to the expected account. Credential changes to another account block recovery and deletion instead of treating that account's 404 as proof of absence.
+
+Older claims record account identity after a successful lookup of their exact instance. If that instance is already absent and the claim has no recorded account, it remains quarantined until an operator verifies the original account and records its ID in the `karpenter-ibm.sh/account-id` annotation. Existing resources without immutable ownership tags are excluded from automatic orphan deletion. Retained volumes are not removed by launch rollback.
+
+#### IKS Mode Instance Type Constraints {#iks-mode-instance-type-constraints}
+
+IKS provisioning requires `iksDynamicPools.enabled: true`, an explicit zone and subnet, and capacity for one dedicated pool per NodeClaim. Shared pools are not resized. `instanceProfile` selects the flavor; an optional `iksWorkerPoolID` supplies a flavor template. The provider checks the chosen flavor against the NodeClaim requirements and waits for the real worker's reported resources before completing launch.
+
+Allocations preserve their original account, cluster, pool, and worker identity. Ambiguous cloud responses retain their allocation finalizer until ownership and deletion can be verified. Existing pools without immutable cluster and NodeClass ownership are excluded from automatic cleanup.
+
+See [IKS integration](iks-integration.md) for configuration and recovery behavior.
 
 ### Tagging and Metadata
 

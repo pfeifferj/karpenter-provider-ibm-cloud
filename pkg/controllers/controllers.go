@@ -25,7 +25,8 @@ package controllers
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
-//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;patch;delete
 //+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
@@ -58,9 +59,11 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cache"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/bootstrap"
+	iksallocation "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/iks/allocation"
 	ikspoolcleanup "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/iks/poolcleanup"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/interruption"
 	nodeorphancleanup "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/node/orphancleanup"
+	vpcallocation "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/allocation"
 	nodeclaimgc "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/garbagecollection"
 	nodeclaimloadbalancer "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/loadbalancer"
 	nodeclaimregistration "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/nodeclaim/registration"
@@ -126,6 +129,7 @@ func NewControllers(
 	instanceTypeProvider instancetype.Provider,
 	subnetProvider subnet.Provider,
 	ibmClient *ibm.Client,
+	factories ...*providers.ProviderFactory,
 ) []controller.Controller {
 	// Create event recorder adapter
 	recorderAdapter := &RecorderAdapter{recorder}
@@ -134,7 +138,7 @@ func NewControllers(
 	controllers := []controller.Controller{}
 
 	// Add IBM-specific controllers
-	if hashCtrl, err := nodeclasshash.NewController(kubeClient); err != nil {
+	if hashCtrl, err := nodeclasshash.NewController(kubeClient, mgr.GetAPIReader()); err != nil {
 		logger.Error(err, "failed to create hash controller")
 	} else {
 		controllers = append(controllers, hashCtrl)
@@ -161,18 +165,18 @@ func NewControllers(
 	}
 
 	// Add garbage collection controller
-	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, cloudProvider)
+	garbageCollectionCtrl := nodeclaimgc.NewController(kubeClient, cloudProvider, mgr.GetAPIReader())
 	controllers = append(controllers, garbageCollectionCtrl)
 
-	// Add NodeClaim registration controller for proper labeling and status management
-	if registrationCtrl, err := nodeclaimregistration.NewController(kubeClient); err != nil {
+	// Migrates nodes registered by the removed provider registration controller onto core lifecycle ownership
+	if registrationCtrl, err := nodeclaimregistration.NewController(kubeClient, mgr.GetAPIReader()); err != nil {
 		logger.Error(err, "failed to create registration controller")
 	} else {
 		controllers = append(controllers, registrationCtrl)
 	}
 
-	// Add startup taint lifecycle controller for proper taint sequencing
-	startupTaintCtrl := nodeclaimstartuptaint.NewController(kubeClient)
+	// Removes finalizers and labels left by the removed startup taint controller
+	startupTaintCtrl := nodeclaimstartuptaint.NewController(kubeClient, mgr.GetAPIReader())
 	if err := startupTaintCtrl.Register(ctx, mgr); err != nil {
 		logger.Error(err, "failed to register startup taint lifecycle controller")
 	} else {
@@ -180,7 +184,7 @@ func NewControllers(
 	}
 
 	// Add tagging controller (VPC mode only)
-	if taggingCtrl, err := nodeclaimtagging.NewController(kubeClient); err != nil {
+	if taggingCtrl, err := nodeclaimtagging.NewController(kubeClient, ibmClient); err != nil {
 		logger.Error(err, "failed to create tagging controller")
 	} else {
 		controllers = append(controllers, taggingCtrl)
@@ -213,7 +217,14 @@ func NewControllers(
 	// - IKS Mode: Node cordoning + IKS worker pool management hybrid approach
 	var providerFactory *providers.ProviderFactory
 	if ibmClient != nil {
-		providerFactory = providers.NewProviderFactory(ctx, ibmClient, kubeClient, kubernetesClient, unavailableOfferings)
+		if len(factories) != 0 && factories[0] != nil {
+			providerFactory = factories[0]
+		} else {
+			providerFactory = providers.NewProviderFactory(ctx, ibmClient, kubeClient, kubernetesClient, unavailableOfferings, providers.WithAPIReader(mgr.GetAPIReader()))
+		}
+	}
+	if providerFactory != nil {
+		controllers = append(controllers, vpcallocation.NewController(kubeClient, mgr.GetAPIReader(), providerFactory))
 	}
 	interruptionCtrl := interruption.NewController(kubeClient, recorderAdapter, unavailableOfferings, providerFactory)
 	controllers = append(controllers, interruptionCtrl)
@@ -236,7 +247,7 @@ func NewControllers(
 
 	// Add orphaned node cleanup controller (only if enabled and IBM client available)
 	if ibmClient != nil && isOrphanCleanupEnabled() {
-		orphanCleanupCtrl := nodeorphancleanup.NewController(kubeClient, ibmClient)
+		orphanCleanupCtrl := nodeorphancleanup.NewController(kubeClient, ibmClient, mgr.GetAPIReader())
 		controllers = append(controllers, orphanCleanupCtrl)
 		logger.Info("Enabled orphaned node cleanup controller")
 	} else if ibmClient == nil {
@@ -247,7 +258,8 @@ func NewControllers(
 
 	// Add IKS pool cleanup controller for dynamic pool lifecycle management
 	if ibmClient != nil {
-		poolCleanupCtrl := ikspoolcleanup.NewController(kubeClient, ibmClient)
+		controllers = append(controllers, iksallocation.NewController(kubeClient, mgr.GetAPIReader(), ibmClient))
+		poolCleanupCtrl := ikspoolcleanup.NewController(kubeClient, ibmClient, mgr.GetAPIReader())
 		if err := poolCleanupCtrl.Register(ctx, mgr); err != nil {
 			logger.Error(err, "failed to register IKS pool cleanup controller")
 		} else {

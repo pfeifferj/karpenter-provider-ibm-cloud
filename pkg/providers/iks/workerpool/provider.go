@@ -21,13 +21,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -35,6 +32,7 @@ import (
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
 	commonTypes "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 )
 
@@ -53,180 +51,50 @@ var poolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$`)
 
 // IKSWorkerPoolProvider implements IKS-specific worker pool provisioning
 type IKSWorkerPoolProvider struct {
-	client     *ibm.Client
-	kubeClient client.Client
+	client               *ibm.Client
+	kubeClient           client.Client
+	apiReader            client.Reader
+	iksClient            ibm.IKSClientInterface
+	allocationNamespace  string
+	instanceTypeProvider instancetype.Provider
 }
 
 // NewIKSWorkerPoolProvider creates a new IKS worker pool provider
-func NewIKSWorkerPoolProvider(client *ibm.Client, kubeClient client.Client) (commonTypes.IKSWorkerPoolProvider, error) {
+func NewIKSWorkerPoolProvider(client *ibm.Client, kubeClient client.Client, options ...Option) (commonTypes.IKSWorkerPoolProvider, error) {
 	if client == nil {
 		return nil, fmt.Errorf("IBM client cannot be nil")
 	}
 
-	return &IKSWorkerPoolProvider{
-		client:     client,
-		kubeClient: kubeClient,
-	}, nil
+	p := &IKSWorkerPoolProvider{client: client, kubeClient: kubeClient, apiReader: kubeClient, allocationNamespace: ""}
+	for _, option := range options {
+		option(p)
+	}
+	return p, nil
 }
 
-// Create provisions a new worker by resizing an IKS worker pool
-// Note: instanceTypes parameter is ignored for IKS (compatibility with VPC interface)
 func (p *IKSWorkerPoolProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim, instanceTypes []*cloudprovider.InstanceType) (*corev1.Node, error) {
-	logger := log.FromContext(ctx)
-
-	if p.kubeClient == nil {
-		return nil, fmt.Errorf("kubernetes client not set")
-	}
-
-	// Get the NodeClass to extract configuration
-	nodeClass := &v1alpha1.IBMNodeClass{}
-	if getErr := p.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); getErr != nil {
-		return nil, fmt.Errorf("getting NodeClass %s: %w", nodeClaim.Spec.NodeClassRef.Name, getErr)
-	}
-
-	// Get cluster ID from NodeClass or environment
-	clusterID := nodeClass.Spec.IKSClusterID
-	if clusterID == "" {
-		clusterID = os.Getenv("IKS_CLUSTER_ID")
-	}
-	if clusterID == "" {
-		return nil, fmt.Errorf("IKS cluster ID not found in nodeClass.spec.iksClusterID or IKS_CLUSTER_ID environment variable")
-	}
-
-	// Check if client is initialized
-	if p.client == nil {
-		return nil, fmt.Errorf("IBM client is not initialized")
-	}
-
-	// Get IKS client
-	iksClient, err := p.client.GetIKSClient()
-	if err != nil {
-		return nil, fmt.Errorf("getting IKS client: %w", err)
-	}
-
-	// Extract requested instance type using same logic as VPC mode
-	requestedInstanceType := nodeClass.Spec.InstanceProfile
-	if requestedInstanceType == "" {
-		requestedInstanceType = nodeClaim.Labels["node.kubernetes.io/instance-type"]
-	}
-
-	logger.Info("Initiated IKS worker creation", "cluster_id", clusterID, "requested_instance_type", requestedInstanceType)
-
-	// Find or select appropriate worker pool
-	poolID, selectedInstanceType, err := p.findOrSelectWorkerPool(ctx, iksClient, clusterID, nodeClass, requestedInstanceType)
-	if err != nil {
-		return nil, fmt.Errorf("finding worker pool: %w", err)
-	}
-
-	logger.Info("Incremented worker pool", "pool_id", poolID, "instance_type", selectedInstanceType)
-
-	// Atomically increment the worker pool size
-	// This prevents race conditions where concurrent requests could read the same
-	// pool size and both increment to the same value
-	newSize, err := iksClient.IncrementWorkerPool(ctx, clusterID, poolID)
-	if err != nil {
-		return nil, fmt.Errorf("incrementing worker pool %s: %w", poolID, err)
-	}
-
-	logger.Info("Worker pool incremented", "pool_id", poolID, "new_size", newSize)
-
-	// Create a placeholder node representation
-	// The actual node will be created by IKS and joined to the cluster
-	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: nodeClaim.Name,
-			Labels: map[string]string{
-				"karpenter.sh/managed":             "true",
-				"karpenter-ibm.sh/cluster-id":      clusterID,
-				"karpenter-ibm.sh/worker-pool-id":  poolID,
-				"karpenter-ibm.sh/zone":            nodeClass.Spec.Zone,
-				"karpenter-ibm.sh/region":          nodeClass.Spec.Region,
-				"karpenter-ibm.sh/instance-type":   selectedInstanceType,
-				"node.kubernetes.io/instance-type": selectedInstanceType,
-				"topology.kubernetes.io/zone":      nodeClass.Spec.Zone,
-				"topology.kubernetes.io/region":    nodeClass.Spec.Region,
-				"karpenter.sh/capacity-type":       "on-demand",
-				"karpenter.sh/nodepool":            nodeClaim.Labels["karpenter.sh/nodepool"],
-			},
-		},
-		Spec: corev1.NodeSpec{
-			ProviderID: fmt.Sprintf("ibm:///%s/%s", nodeClass.Spec.Region, nodeClaim.Name),
-		},
-		Status: corev1.NodeStatus{
-			Phase: corev1.NodePending,
-			Conditions: []corev1.NodeCondition{
-				{
-					Type:               corev1.NodeReady,
-					Status:             corev1.ConditionUnknown,
-					LastHeartbeatTime:  metav1.Now(),
-					LastTransitionTime: metav1.Now(),
-					Reason:             "NodeCreating",
-					Message:            "Node is being created via IKS worker pool resize",
-				},
-			},
-		},
-	}
-
-	logger.Info("IKS worker pool resize initiated", "pool_id", poolID, "new_size", newSize)
-	return node, nil
+	return p.createAllocation(ctx, nodeClaim)
 }
 
-// Delete removes a worker by resizing down the IKS worker pool
 func (p *IKSWorkerPoolProvider) Delete(ctx context.Context, node *corev1.Node) error {
-	logger := log.FromContext(ctx)
-
-	// Extract cluster and pool information from node labels
-	clusterID := node.Labels["karpenter-ibm.sh/cluster-id"]
-	poolID := node.Labels["karpenter-ibm.sh/worker-pool-id"]
-
-	if clusterID == "" || poolID == "" {
-		return fmt.Errorf("cluster ID or pool ID not found in node labels")
-	}
-
-	// Check if client is initialized
-	if p.client == nil {
-		return fmt.Errorf("IBM client is not initialized")
-	}
-
-	// Get IKS client
-	iksClient, err := p.client.GetIKSClient()
-	if err != nil {
-		return fmt.Errorf("getting IKS client: %w", err)
-	}
-
-	logger.Info("Decremented worker pool", "pool_id", poolID)
-
-	// Atomically decrement the worker pool size
-	newSize, err := iksClient.DecrementWorkerPool(ctx, clusterID, poolID)
-	if err != nil {
-		return fmt.Errorf("decrementing worker pool %s: %w", poolID, err)
-	}
-
-	logger.Info("Worker pool decremented successfully", "pool_id", poolID, "new_size", newSize)
-	return nil
+	return p.deleteAllocation(ctx, node)
 }
 
-// Get retrieves information about a worker (not applicable for IKS worker pools)
 func (p *IKSWorkerPoolProvider) Get(ctx context.Context, providerID string) (*corev1.Node, error) {
-	// For IKS mode, individual worker tracking is handled by IKS
-	// This method would need to query IKS APIs to find the specific worker
-	return nil, fmt.Errorf("get operation not implemented for IKS worker pool provider")
+	return p.getWorker(ctx, providerID)
 }
 
-// List returns all workers (not directly applicable for IKS worker pools)
 func (p *IKSWorkerPoolProvider) List(ctx context.Context) ([]*corev1.Node, error) {
-	// For IKS mode, worker listing would need to enumerate all clusters and their workers
-	// This is complex and may not be needed for normal Karpenter operations
-	return nil, fmt.Errorf("list operation not implemented for IKS worker pool provider")
+	return p.listAllocations(ctx)
 }
 
 // ResizePool resizes a worker pool to the specified size
 func (p *IKSWorkerPoolProvider) ResizePool(ctx context.Context, clusterID, poolID string, newSize int) error {
-	if p.client == nil {
+	if p.client == nil && p.iksClient == nil {
 		return fmt.Errorf("IBM client is not initialized")
 	}
 
-	iksClient, err := p.client.GetIKSClient()
+	iksClient, err := p.getIKSClient()
 	if err != nil {
 		return fmt.Errorf("getting IKS client: %w", err)
 	}
@@ -236,11 +104,11 @@ func (p *IKSWorkerPoolProvider) ResizePool(ctx context.Context, clusterID, poolI
 
 // GetPool retrieves information about a worker pool
 func (p *IKSWorkerPoolProvider) GetPool(ctx context.Context, clusterID, poolID string) (*commonTypes.WorkerPool, error) {
-	if p.client == nil {
+	if p.client == nil && p.iksClient == nil {
 		return nil, fmt.Errorf("IBM client is not initialized")
 	}
 
-	iksClient, err := p.client.GetIKSClient()
+	iksClient, err := p.getIKSClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting IKS client: %w", err)
 	}
@@ -265,11 +133,11 @@ func (p *IKSWorkerPoolProvider) GetPool(ctx context.Context, clusterID, poolID s
 
 // ListPools returns all worker pools for a cluster
 func (p *IKSWorkerPoolProvider) ListPools(ctx context.Context, clusterID string) ([]*commonTypes.WorkerPool, error) {
-	if p.client == nil {
+	if p.client == nil && p.iksClient == nil {
 		return nil, fmt.Errorf("IBM client is not initialized")
 	}
 
-	iksClient, err := p.client.GetIKSClient()
+	iksClient, err := p.getIKSClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting IKS client: %w", err)
 	}
@@ -301,11 +169,11 @@ func (p *IKSWorkerPoolProvider) ListPools(ctx context.Context, clusterID string)
 func (p *IKSWorkerPoolProvider) CreatePool(ctx context.Context, clusterID string, request *commonTypes.CreatePoolRequest) (*commonTypes.WorkerPool, error) {
 	logger := log.FromContext(ctx)
 
-	if p.client == nil {
+	if p.client == nil && p.iksClient == nil {
 		return nil, fmt.Errorf("IBM client is not initialized")
 	}
 
-	iksClient, err := p.client.GetIKSClient()
+	iksClient, err := p.getIKSClient()
 	if err != nil {
 		return nil, fmt.Errorf("getting IKS client: %w", err)
 	}
@@ -358,11 +226,11 @@ func (p *IKSWorkerPoolProvider) CreatePool(ctx context.Context, clusterID string
 func (p *IKSWorkerPoolProvider) DeletePool(ctx context.Context, clusterID, poolID string) error {
 	logger := log.FromContext(ctx)
 
-	if p.client == nil {
+	if p.client == nil && p.iksClient == nil {
 		return fmt.Errorf("IBM client is not initialized")
 	}
 
-	iksClient, err := p.client.GetIKSClient()
+	iksClient, err := p.getIKSClient()
 	if err != nil {
 		return fmt.Errorf("getting IKS client: %w", err)
 	}
