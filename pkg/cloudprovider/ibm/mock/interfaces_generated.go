@@ -71,21 +71,6 @@ func (mr *MockIKSClientInterfaceMockRecorder) CreateWorkerPool(ctx, clusterID, r
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWorkerPool", reflect.TypeOf((*MockIKSClientInterface)(nil).CreateWorkerPool), ctx, clusterID, request)
 }
 
-// DecrementWorkerPool mocks base method.
-func (m *MockIKSClientInterface) DecrementWorkerPool(ctx context.Context, clusterID, poolID string) (int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DecrementWorkerPool", ctx, clusterID, poolID)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// DecrementWorkerPool indicates an expected call of DecrementWorkerPool.
-func (mr *MockIKSClientInterfaceMockRecorder) DecrementWorkerPool(ctx, clusterID, poolID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementWorkerPool", reflect.TypeOf((*MockIKSClientInterface)(nil).DecrementWorkerPool), ctx, clusterID, poolID)
-}
-
 // DeleteWorkerPool mocks base method.
 func (m *MockIKSClientInterface) DeleteWorkerPool(ctx context.Context, clusterID, poolID string) error {
 	m.ctrl.T.Helper()
@@ -160,21 +145,6 @@ func (mr *MockIKSClientInterfaceMockRecorder) GetWorkerPool(ctx, clusterID, pool
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkerPool", reflect.TypeOf((*MockIKSClientInterface)(nil).GetWorkerPool), ctx, clusterID, poolID)
 }
 
-// IncrementWorkerPool mocks base method.
-func (m *MockIKSClientInterface) IncrementWorkerPool(ctx context.Context, clusterID, poolID string) (int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IncrementWorkerPool", ctx, clusterID, poolID)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// IncrementWorkerPool indicates an expected call of IncrementWorkerPool.
-func (mr *MockIKSClientInterfaceMockRecorder) IncrementWorkerPool(ctx, clusterID, poolID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementWorkerPool", reflect.TypeOf((*MockIKSClientInterface)(nil).IncrementWorkerPool), ctx, clusterID, poolID)
-}
-
 // ListWorkerPools mocks base method.
 func (m *MockIKSClientInterface) ListWorkerPools(ctx context.Context, clusterID string) ([]*ibm.WorkerPool, error) {
 	m.ctrl.T.Helper()
@@ -188,6 +158,21 @@ func (m *MockIKSClientInterface) ListWorkerPools(ctx context.Context, clusterID 
 func (mr *MockIKSClientInterfaceMockRecorder) ListWorkerPools(ctx, clusterID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListWorkerPools", reflect.TypeOf((*MockIKSClientInterface)(nil).ListWorkerPools), ctx, clusterID)
+}
+
+// ListWorkers mocks base method.
+func (m *MockIKSClientInterface) ListWorkers(ctx context.Context, clusterID string) ([]*ibm.IKSWorkerDetails, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListWorkers", ctx, clusterID)
+	ret0, _ := ret[0].([]*ibm.IKSWorkerDetails)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListWorkers indicates an expected call of ListWorkers.
+func (mr *MockIKSClientInterfaceMockRecorder) ListWorkers(ctx, clusterID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListWorkers", reflect.TypeOf((*MockIKSClientInterface)(nil).ListWorkers), ctx, clusterID)
 }
 
 // ResizeWorkerPool mocks base method.

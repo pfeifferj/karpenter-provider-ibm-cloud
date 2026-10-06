@@ -18,867 +18,256 @@ package orphancleanup
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"strings"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/platform-services-go-sdk/globaltaggingv1"
-	"github.com/go-logr/logr"
-	"github.com/stretchr/testify/assert"
+	"github.com/IBM/vpc-go-sdk/vpcv1"
+	"github.com/go-openapi/strfmt"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
+	mock_ibm "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm/mock"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 )
 
-func TestOrphanCleanupController(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	t.Run("should skip cleanup when disabled", func(t *testing.T) {
-		// Ensure orphan cleanup is disabled
-		_ = os.Setenv("KARPENTER_ENABLE_ORPHAN_CLEANUP", "false")
-		defer func() { _ = os.Unsetenv("KARPENTER_ENABLE_ORPHAN_CLEANUP") }()
-
-		client := clientfake.NewClientBuilder().WithScheme(scheme).Build()
-		controller := NewController(client, nil)
-
-		result, err := controller.Reconcile(context.Background())
-		assert.NoError(t, err)
-		assert.Equal(t, OrphanCheckInterval, result.RequeueAfter)
-	})
-
-	t.Run("should skip cleanup when orphan cleanup is enabled but no IBM client", func(t *testing.T) {
-		_ = os.Setenv("KARPENTER_ENABLE_ORPHAN_CLEANUP", "true")
-		defer func() { _ = os.Unsetenv("KARPENTER_ENABLE_ORPHAN_CLEANUP") }()
-
-		client := clientfake.NewClientBuilder().WithScheme(scheme).Build()
-		controller := NewController(client, nil)
-
-		result, err := controller.Reconcile(context.Background())
-		assert.NoError(t, err)
-		assert.Equal(t, OrphanCheckInterval, result.RequeueAfter)
-	})
-
-	t.Run("should skip non-Karpenter nodes", func(t *testing.T) {
-		_ = os.Setenv("KARPENTER_ENABLE_ORPHAN_CLEANUP", "true")
-		defer func() { _ = os.Unsetenv("KARPENTER_ENABLE_ORPHAN_CLEANUP") }()
-
-		// Create a node without Karpenter labels
-		node := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-node",
-				Labels: map[string]string{
-					"node-role.kubernetes.io/worker": "true",
-				},
-			},
-			Spec: corev1.NodeSpec{
-				ProviderID: "ibm:///us-south/instance-123",
-			},
-		}
-
-		client := clientfake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
-		ibmClient := &ibm.Client{} // Mock IBM client
-		controller := NewController(client, ibmClient)
-
-		result, err := controller.Reconcile(context.Background())
-		assert.NoError(t, err)
-		assert.Equal(t, OrphanCheckInterval, result.RequeueAfter)
-	})
-
-	t.Run("should process Karpenter-managed nodes", func(t *testing.T) {
-		_ = os.Setenv("KARPENTER_ENABLE_ORPHAN_CLEANUP", "true")
-		defer func() { _ = os.Unsetenv("KARPENTER_ENABLE_ORPHAN_CLEANUP") }()
-
-		// Create a node with Karpenter labels
-		node := &corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-node",
-				Labels: map[string]string{
-					"karpenter.sh/nodepool": "test-nodepool",
-				},
-			},
-			Spec: corev1.NodeSpec{
-				ProviderID: "ibm:///us-south/instance-123",
-			},
-			Status: corev1.NodeStatus{
-				Conditions: []corev1.NodeCondition{
-					{
-						Type:               corev1.NodeReady,
-						Status:             corev1.ConditionFalse,
-						LastTransitionTime: metav1.Time{Time: time.Now().Add(-15 * time.Minute)},
-					},
-				},
-			},
-		}
-
-		client := clientfake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
-		// Don't use IBM client in test - the controller will skip API calls if client is nil
-		controller := NewController(client, nil)
-
-		result, err := controller.Reconcile(context.Background())
-		assert.NoError(t, err)
-		assert.Equal(t, OrphanCheckInterval, result.RequeueAfter)
-	})
-}
-
-func TestIsNodeManagedByKarpenter(t *testing.T) {
-	controller := &Controller{}
-
-	testCases := []struct {
-		name     string
-		node     corev1.Node
-		expected bool
-	}{
-		{
-			name: "node with karpenter.sh/nodepool label",
-			node: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"karpenter.sh/nodepool": "test-nodepool",
-					},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "node with karpenter.sh/provisioner label",
-			node: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"karpenter.sh/provisioner": "test-provisioner",
-					},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "node with karpenter-ibm.sh/ibmnodeclass label",
-			node: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"karpenter-ibm.sh/ibmnodeclass": "test-nodeclass",
-					},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "node with karpenter.sh/managed annotation",
-			node: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{
-						"karpenter.sh/managed": "true",
-					},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "node without Karpenter labels or annotations",
-			node: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"node-role.kubernetes.io/worker": "true",
-					},
-				},
-			},
-			expected: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := controller.isNodeManagedByKarpenter(tc.node)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-func TestExtractInstanceIDFromProviderID(t *testing.T) {
-	controller := &Controller{}
-
-	testCases := []struct {
-		name       string
-		providerID string
-		expected   string
-	}{
-		{
-			name:       "valid IBM provider ID",
-			providerID: "ibm:///us-south/instance-123",
-			expected:   "instance-123",
-		},
-		{
-			name:       "valid IBM provider ID with different region",
-			providerID: "ibm:///eu-de/instance-456",
-			expected:   "instance-456",
-		},
-		{
-			name:       "non-IBM provider ID",
-			providerID: "aws:///us-west-2/i-123456789",
-			expected:   "",
-		},
-		{
-			name:       "malformed IBM provider ID",
-			providerID: "ibm://instance-123",
-			expected:   "",
-		},
-		{
-			name:       "empty provider ID",
-			providerID: "",
-			expected:   "",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := controller.extractInstanceIDFromProviderID(tc.providerID)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-func TestIsNodeOrphanedLongEnough(t *testing.T) {
-	controller := &Controller{
-		orphanTimeout: 10 * time.Minute,
-	}
-
-	testCases := []struct {
-		name     string
-		node     corev1.Node
-		expected bool
-	}{
-		{
-			name: "node NotReady for long enough",
-			node: corev1.Node{
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{
-							Type:               corev1.NodeReady,
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-15 * time.Minute)},
-						},
-					},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "node NotReady but not long enough",
-			node: corev1.Node{
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{
-							Type:               corev1.NodeReady,
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-5 * time.Minute)},
-						},
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "node Ready",
-			node: corev1.Node{
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{
-							Type:               corev1.NodeReady,
-							Status:             corev1.ConditionTrue,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-15 * time.Minute)},
-						},
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "node Unknown for long enough",
-			node: corev1.Node{
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{
-							Type:               corev1.NodeReady,
-							Status:             corev1.ConditionUnknown,
-							LastTransitionTime: metav1.Time{Time: time.Now().Add(-15 * time.Minute)},
-						},
-					},
-				},
-			},
-			expected: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := controller.isNodeOrphanedLongEnough(tc.node)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-func TestGetOrphanTimeoutFromEnv(t *testing.T) {
-	testCases := []struct {
-		name     string
-		envValue string
-		expected time.Duration
-	}{
-		{
-			name:     "valid timeout",
-			envValue: "20",
-			expected: 20 * time.Minute,
-		},
-		{
-			name:     "timeout below minimum",
-			envValue: "2",
-			expected: MinimumOrphanTimeout,
-		},
-		{
-			name:     "invalid timeout",
-			envValue: "invalid",
-			expected: DefaultOrphanTimeout,
-		},
-		{
-			name:     "empty timeout",
-			envValue: "",
-			expected: DefaultOrphanTimeout,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.envValue != "" {
-				_ = os.Setenv("KARPENTER_ORPHAN_TIMEOUT_MINUTES", tc.envValue)
-				defer func() { _ = os.Unsetenv("KARPENTER_ORPHAN_TIMEOUT_MINUTES") }()
-			}
-
-			result := getOrphanTimeoutFromEnv()
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-func TestIsKarpenterManagedInstance(t *testing.T) {
-	testCases := []struct {
-		name             string
-		hasGlobalTagging bool
-		instanceID       string
-		expectedResult   bool
-	}{
-		{
-			name:             "no global tagging client available",
-			hasGlobalTagging: false,
-			instanceID:       "instance-999",
-			expectedResult:   false,
-		},
-		{
-			name:             "global tagging client available but no IBM client",
-			hasGlobalTagging: true,
-			instanceID:       "instance-123",
-			expectedResult:   false, // Will return false due to IBM client being nil
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			controller := &Controller{}
-
-			// Create a real GlobalTagging client but don't initialize IBM client
-			if tc.hasGlobalTagging {
-				// We can't easily create a real client without credentials, so just test the logic
-				// The actual test is in the integration with the existing environment variable
-				controller.globalTagging = &globaltaggingv1.GlobalTaggingV1{}
-			}
-
-			result := controller.isKarpenterManagedInstance(context.Background(), tc.instanceID)
-
-			assert.Equal(t, tc.expectedResult, result)
-		})
-	}
-}
-
-func TestGlobalTaggingLogic(t *testing.T) {
-	t.Run("tag identification logic", func(t *testing.T) {
-		// Test the tag identification logic directly
-		testTags := []struct {
-			tagName        string
-			tagValue       string
-			expectedResult bool
-		}{
-			{"karpenter.sh/managed", "true", true},
-			{"karpenter.sh/nodepool", "test-pool", true},
-			{"karpenter.sh/provisioner", "test-provisioner", true},
-			{"managed-by-karpenter", "", true},  // Tag name contains "karpenter"
-			{"managed-by-terraform", "", false}, // Tag name doesn't contain "karpenter"
-			{"some-karpenter-tag", "", true},    // Tag name contains "karpenter"
-			{"environment", "prod", false},
-			{"project", "test", false},
-			{"", "", false},
-		}
-
-		for _, tc := range testTags {
-			t.Run(tc.tagName+"_"+tc.tagValue, func(t *testing.T) {
-				// Test the logic used in checkInstanceTagsWithGlobalTaggingAPI
-				result := tc.tagName == "karpenter.sh/managed" ||
-					strings.HasPrefix(tc.tagName, "karpenter.sh/") ||
-					strings.Contains(tc.tagName, "karpenter")
-
-				assert.Equal(t, tc.expectedResult, result)
-			})
-		}
-	})
-}
-
-func TestNewControllerGlobalTaggingInitialization(t *testing.T) {
-	testCases := []struct {
-		name                        string
-		orphanCleanupEnabled        string
-		ibmCloudAPIKey              string
-		expectedGlobalTaggingClient bool
-	}{
-		{
-			name:                        "orphan cleanup enabled with API key",
-			orphanCleanupEnabled:        "true",
-			ibmCloudAPIKey:              "test-api-key",
-			expectedGlobalTaggingClient: true,
-		},
-		{
-			name:                        "orphan cleanup enabled without API key",
-			orphanCleanupEnabled:        "true",
-			ibmCloudAPIKey:              "",
-			expectedGlobalTaggingClient: false,
-		},
-		{
-			name:                        "orphan cleanup disabled",
-			orphanCleanupEnabled:        "false",
-			ibmCloudAPIKey:              "test-api-key",
-			expectedGlobalTaggingClient: false,
-		},
-		{
-			name:                        "orphan cleanup not set",
-			orphanCleanupEnabled:        "",
-			ibmCloudAPIKey:              "test-api-key",
-			expectedGlobalTaggingClient: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Set environment variables
-			if tc.orphanCleanupEnabled != "" {
-				_ = os.Setenv("KARPENTER_ENABLE_ORPHAN_CLEANUP", tc.orphanCleanupEnabled)
-				defer func() { _ = os.Unsetenv("KARPENTER_ENABLE_ORPHAN_CLEANUP") }()
-			}
-			if tc.ibmCloudAPIKey != "" {
-				_ = os.Setenv("IBMCLOUD_API_KEY", tc.ibmCloudAPIKey)
-				defer func() { _ = os.Unsetenv("IBMCLOUD_API_KEY") }()
-			}
-
-			scheme := runtime.NewScheme()
-			client := clientfake.NewClientBuilder().WithScheme(scheme).Build()
-			controller := NewController(client, nil)
-
-			if tc.expectedGlobalTaggingClient {
-				assert.NotNil(t, controller.globalTagging, "Global Tagging client should be initialized")
-			} else {
-				assert.Nil(t, controller.globalTagging, "Global Tagging client should not be initialized")
-			}
-		})
-	}
-}
-
-// mockGlobalTaggingAPI is a mock implementation for testing
 type mockGlobalTaggingAPI struct {
 	response *globaltaggingv1.TagList
+	pages    map[int64]*globaltaggingv1.TagList
 	err      error
-
-	lastAttachedTo *string
+	offsets  []int64
 }
 
-func (m *mockGlobalTaggingAPI) ListTagsWithContext(ctx context.Context, opts *globaltaggingv1.ListTagsOptions) (*globaltaggingv1.TagList, *core.DetailedResponse, error) {
-	if opts != nil {
-		m.lastAttachedTo = opts.AttachedTo
+func (m *mockGlobalTaggingAPI) ListTagsWithContext(_ context.Context, options *globaltaggingv1.ListTagsOptions) (*globaltaggingv1.TagList, *core.DetailedResponse, error) {
+	m.offsets = append(m.offsets, *options.Offset)
+	if m.pages != nil {
+		return m.pages[*options.Offset], nil, m.err
 	}
 	return m.response, nil, m.err
 }
 
-func TestHasKarpenterTags(t *testing.T) {
-	logger := logr.Discard()
+type mockVPCClientProvider struct {
+	vpcClient *ibm.VPCClient
+	err       error
+}
 
-	crn := "crn:v1:bluemix:public:is:us-south:a/1234::instance:instance-123"
+func (m *mockVPCClientProvider) GetVPCClient(context.Context) (*ibm.VPCClient, error) {
+	return m.vpcClient, m.err
+}
 
-	testCases := []struct {
-		name           string
-		instanceCRN    *string
-		instanceID     string
-		mockResponse   *globaltaggingv1.TagList
-		mockError      error
-		expectedResult bool
-		assertAttached bool
-	}{
-		{
-			name:           "nil CRN returns false",
-			instanceCRN:    nil,
-			instanceID:     "instance-123",
-			expectedResult: false,
-			assertAttached: false,
-		},
-		{
-			name:           "API error returns false",
-			instanceCRN:    ptr.To(crn),
-			instanceID:     "instance-123",
-			mockError:      fmt.Errorf("API error"),
-			expectedResult: false,
-			assertAttached: true,
-		},
-		{
-			name:           "nil TagList returns false",
-			instanceCRN:    ptr.To(crn),
-			instanceID:     "instance-123",
-			mockResponse:   nil,
-			expectedResult: false,
-			assertAttached: true,
-		},
-		{
-			name:           "nil Items returns false",
-			instanceCRN:    ptr.To(crn),
-			instanceID:     "instance-123",
-			mockResponse:   &globaltaggingv1.TagList{Items: nil},
-			expectedResult: false,
-			assertAttached: true,
-		},
-		{
-			name:        "karpenter tag returns true",
-			instanceCRN: ptr.To(crn),
-			instanceID:  "instance-123",
-			mockResponse: &globaltaggingv1.TagList{
-				Items: []globaltaggingv1.Tag{{Name: ptr.To("karpenter.sh/managed")}},
-			},
-			expectedResult: true,
-			assertAttached: true,
-		},
-		{
-			name:        "non-karpenter tags returns false",
-			instanceCRN: ptr.To(crn),
-			instanceID:  "instance-123",
-			mockResponse: &globaltaggingv1.TagList{
-				Items: []globaltaggingv1.Tag{{Name: ptr.To("env:prod")}},
-			},
-			expectedResult: false,
-			assertAttached: true,
-		},
-		{
-			name:        "nil tag name is ignored",
-			instanceCRN: ptr.To(crn),
-			instanceID:  "instance-123",
-			mockResponse: &globaltaggingv1.TagList{
-				Items: []globaltaggingv1.Tag{{Name: nil}},
-			},
-			expectedResult: false,
-			assertAttached: true,
-		},
+func orphanScheme() *runtime.Scheme {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
+	scheme.AddKnownTypes(gv, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
+	metav1.AddToGroupVersion(scheme, gv)
+	return scheme
+}
+
+func ownershipTags() *globaltaggingv1.TagList {
+	result := &globaltaggingv1.TagList{}
+	for key, value := range ownership.VPCTags("cluster-a-uid", "claim-uid", "class-uid") {
+		result.Items = append(result.Items, globaltaggingv1.Tag{Name: core.StringPtr(key + ":" + value)})
 	}
+	return result
+}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			mock := &mockGlobalTaggingAPI{
-				response: tc.mockResponse,
-				err:      tc.mockError,
+func ownedInstance(age time.Duration) *vpcv1.Instance {
+	return &vpcv1.Instance{
+		ID:        core.StringPtr("instance"),
+		CRN:       core.StringPtr("crn:v1:bluemix:public:is:us-south:a/account::instance:instance"),
+		CreatedAt: func() *strfmt.DateTime { value := strfmt.DateTime(time.Now().Add(-age)); return &value }(),
+	}
+}
+
+func orphanClient(objects ...client.Object) client.Client {
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system", UID: "cluster-a-uid"}}
+	return fake.NewClientBuilder().WithScheme(orphanScheme()).WithObjects(append(objects, namespace)...).Build()
+}
+
+func TestOwnershipRequiresImmutableClusterIdentity(t *testing.T) {
+	for _, scenario := range []string{"owned", "foreign", "legacy", "default cluster", "incomplete", "conflicting", "tag error", "unknown cluster"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Setenv("CLUSTER_NAME", "default")
+			tags := ownershipTags()
+			kubeClient := orphanClient()
+			tagging := &mockGlobalTaggingAPI{response: tags}
+			switch scenario {
+			case "foreign":
+				for i := range tags.Items {
+					if *tags.Items[i].Name == ownership.ClusterUIDTag+":cluster-a-uid" {
+						tags.Items[i].Name = core.StringPtr(ownership.ClusterUIDTag + ":cluster-b-uid")
+					}
+				}
+			case "legacy":
+				tagging.response = &globaltaggingv1.TagList{Items: []globaltaggingv1.Tag{{Name: core.StringPtr("karpenter.sh/managed:true")}}}
+			case "default cluster":
+				tagging.response = &globaltaggingv1.TagList{Items: []globaltaggingv1.Tag{{Name: core.StringPtr("karpenter.sh/cluster:default")}}}
+			case "incomplete":
+				for i := range tags.Items {
+					if *tags.Items[i].Name == ownership.ClaimUIDTag+":claim-uid" {
+						tags.Items[i].Name = core.StringPtr("user:unrelated")
+					}
+				}
+			case "conflicting":
+				tags.Items = append(tags.Items, globaltaggingv1.Tag{Name: core.StringPtr(ownership.ClusterUIDTag + ":cluster-b-uid")})
+			case "tag error":
+				tagging.err = context.DeadlineExceeded
+			case "unknown cluster":
+				kubeClient = fake.NewClientBuilder().WithScheme(orphanScheme()).Build()
 			}
+			c := &Controller{kubeClient: kubeClient, apiReader: kubeClient, globalTagging: tagging}
+			require.Equal(t, scenario == "owned", owns(c, ownedInstance(time.Hour).CRN))
+		})
+	}
+}
 
-			controller := &Controller{
-				globalTagging: mock,
+func TestOwnershipReadsAllTagPages(t *testing.T) {
+	tags := ownershipTags()
+	first := &globaltaggingv1.TagList{Items: tags.Items[:2], TotalCount: core.Int64Ptr(int64(len(tags.Items)))}
+	second := &globaltaggingv1.TagList{Items: tags.Items[2:], TotalCount: core.Int64Ptr(int64(len(tags.Items)))}
+	tagging := &mockGlobalTaggingAPI{pages: map[int64]*globaltaggingv1.TagList{0: first, 2: second}}
+	kubeClient := orphanClient()
+	c := &Controller{kubeClient: kubeClient, globalTagging: tagging}
+	require.True(t, owns(c, ownedInstance(time.Hour).CRN))
+	require.Equal(t, []int64{0, 2}, tagging.offsets)
+}
+
+func TestOrphanInstanceDeletionRequiresProofAndAge(t *testing.T) {
+	for _, scenario := range []string{"orphan", "new", "unknown age", "live claim", "pending claim", "live node", "foreign tags", "cloud error", "fresh claim", "tag error"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
+			instance := ownedInstance(time.Hour)
+			tagging := &mockGlobalTaggingAPI{response: ownershipTags()}
+			var objects []client.Object
+			if scenario == "new" {
+				instance = ownedInstance(time.Minute)
 			}
-
-			result := controller.hasKarpenterTags(context.Background(), tc.instanceCRN, tc.instanceID, logger)
-			assert.Equal(t, tc.expectedResult, result)
-
-			if tc.assertAttached {
-				assert.NotNil(t, mock.lastAttachedTo)
-				assert.Equal(t, *tc.instanceCRN, *mock.lastAttachedTo)
+			if scenario == "unknown age" {
+				instance.CreatedAt = nil
+			}
+			if scenario == "live claim" {
+				objects = append(objects, &karpv1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: "live", UID: "other-uid"}, Status: karpv1.NodeClaimStatus{ProviderID: "ibm:///us-south/instance"}})
+			}
+			if scenario == "pending claim" || scenario == "fresh claim" {
+				objects = append(objects, &karpv1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: "pending", UID: "claim-uid"}})
+			}
+			if scenario == "live node" {
+				objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}, Spec: corev1.NodeSpec{ProviderID: "ibm:///us-south/instance"}})
+			}
+			if scenario == "foreign tags" {
+				for i := range tagging.response.Items {
+					if *tagging.response.Items[i].Name == ownership.ClusterUIDTag+":cluster-a-uid" {
+						tagging.response.Items[i].Name = core.StringPtr(ownership.ClusterUIDTag + ":cluster-b-uid")
+					}
+				}
+			}
+			if scenario == "tag error" {
+				tagging.err = context.DeadlineExceeded
+			}
+			lookupErr := error(nil)
+			if scenario == "cloud error" {
+				lookupErr = errors.New("cloud lookup failed")
+			}
+			mockVPC.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(instance, &core.DetailedResponse{StatusCode: 200}, lookupErr)
+			if scenario == "orphan" {
+				mockVPC.EXPECT().DeleteInstanceWithContext(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, options *vpcv1.DeleteInstanceOptions) (*core.DetailedResponse, error) {
+					require.Equal(t, "instance", *options.ID)
+					return &core.DetailedResponse{StatusCode: 202}, nil
+				})
+			}
+			kubeClient := orphanClient(objects...)
+			apiReader := client.Reader(kubeClient)
+			if scenario == "fresh claim" {
+				kubeClient = orphanClient()
+			}
+			c := &Controller{kubeClient: kubeClient, apiReader: apiReader, ibmClient: &mockVPCClientProvider{vpcClient: ibm.NewVPCClientWithMock(mockVPC)}, globalTagging: tagging, orphanTimeout: DefaultOrphanTimeout}
+			err := c.processOrphanedInstance(context.Background(), "instance")
+			if scenario == "cloud error" || scenario == "tag error" {
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, mock.lastAttachedTo)
+				require.NoError(t, err)
 			}
 		})
 	}
 }
 
-func TestCordonNode(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
+func TestOrphanInstancePreservesFailedDeletionForRetry(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
+	mockVPC.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).Return(ownedInstance(time.Hour), &core.DetailedResponse{}, nil)
+	mockVPC.EXPECT().DeleteInstanceWithContext(gomock.Any(), gomock.Any()).Return(nil, context.DeadlineExceeded)
+	kubeClient := orphanClient()
+	c := &Controller{kubeClient: kubeClient, ibmClient: &mockVPCClientProvider{vpcClient: ibm.NewVPCClientWithMock(mockVPC)}, globalTagging: &mockGlobalTaggingAPI{response: ownershipTags()}, orphanTimeout: DefaultOrphanTimeout}
+	require.ErrorIs(t, c.processOrphanedInstance(context.Background(), "instance"), context.DeadlineExceeded)
+}
 
-	testCases := []struct {
-		name                  string
-		initialUnschedulable  bool
-		expectedUnschedulable bool
-	}{
-		{
-			name:                  "cordon schedulable node",
-			initialUnschedulable:  false,
-			expectedUnschedulable: true,
-		},
-		{
-			name:                  "skip already cordoned node",
-			initialUnschedulable:  true,
-			expectedUnschedulable: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			node := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-node",
-				},
-				Spec: corev1.NodeSpec{
-					Unschedulable: tc.initialUnschedulable,
-				},
-			}
-
-			fakeClient := clientfake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
-			controller := &Controller{kubeClient: fakeClient}
-
-			err := controller.cordonNode(context.Background(), node)
-			assert.NoError(t, err)
-
-			updated := &corev1.Node{}
-			err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "test-node"}, updated)
-			assert.NoError(t, err)
-			assert.Equal(t, tc.expectedUnschedulable, updated.Spec.Unschedulable)
-		})
+func TestProviderIDExtractionRejectsIKSIdentity(t *testing.T) {
+	c := &Controller{}
+	require.Equal(t, "02u7_instance", c.extractInstanceIDFromProviderID("ibm:///us-south/02u7_instance"))
+	for _, invalid := range []string{"ibm://account///cluster/worker", "ibm:///us-south/", "ibm:///instance", "other:///region/instance"} {
+		require.Empty(t, c.extractInstanceIDFromProviderID(invalid))
 	}
 }
 
-func TestForceDeletePodsOnNode(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	t.Run("delete pods on node", func(t *testing.T) {
-		pod1 := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "pod-1",
-				Namespace: "default",
-			},
-			Spec: corev1.PodSpec{
-				NodeName: "test-node",
-			},
-		}
-		pod2 := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "pod-2",
-				Namespace: "default",
-			},
-			Spec: corev1.PodSpec{
-				NodeName: "test-node",
-			},
-		}
-
-		fakeClient := clientfake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(pod1, pod2).
-			WithIndex(&corev1.Pod{}, "spec.nodeName", func(obj client.Object) []string {
-				p := obj.(*corev1.Pod)
-				return []string{p.Spec.NodeName}
-			}).
-			Build()
-		controller := &Controller{kubeClient: fakeClient}
-
-		err := controller.forceDeletePodsOnNode(context.Background(), "test-node")
-		assert.NoError(t, err)
-
-		podList := &corev1.PodList{}
-		err = fakeClient.List(context.Background(), podList, client.MatchingFields{"spec.nodeName": "test-node"})
-		assert.NoError(t, err)
-		assert.Equal(t, 0, len(podList.Items))
-	})
-
-	t.Run("skip terminating pods", func(t *testing.T) {
-		now := metav1.Time{Time: time.Now()}
-		pod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:              "terminating-pod",
-				Namespace:         "default",
-				DeletionTimestamp: &now,
-				Finalizers:        []string{"test"},
-			},
-			Spec: corev1.PodSpec{
-				NodeName: "test-node",
-			},
-		}
-
-		fakeClient := clientfake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(pod).
-			WithIndex(&corev1.Pod{}, "spec.nodeName", func(obj client.Object) []string {
-				p := obj.(*corev1.Pod)
-				return []string{p.Spec.NodeName}
-			}).
-			Build()
-		controller := &Controller{kubeClient: fakeClient}
-
-		err := controller.forceDeletePodsOnNode(context.Background(), "test-node")
-		assert.NoError(t, err)
-
-		podList := &corev1.PodList{}
-		err = fakeClient.List(context.Background(), podList, client.MatchingFields{"spec.nodeName": "test-node"})
-		assert.NoError(t, err)
-		assert.Equal(t, 1, len(podList.Items))
-	})
-
-	t.Run("no pods on node", func(t *testing.T) {
-		fakeClient := clientfake.NewClientBuilder().
-			WithScheme(scheme).
-			WithIndex(&corev1.Pod{}, "spec.nodeName", func(obj client.Object) []string {
-				p := obj.(*corev1.Pod)
-				return []string{p.Spec.NodeName}
-			}).
-			Build()
-		controller := &Controller{kubeClient: fakeClient}
-
-		err := controller.forceDeletePodsOnNode(context.Background(), "empty-node")
-		assert.NoError(t, err)
-	})
+func TestOrphanTimeoutHasMinimum(t *testing.T) {
+	t.Setenv("KARPENTER_ORPHAN_TIMEOUT_MINUTES", "1")
+	require.Equal(t, MinimumOrphanTimeout, getOrphanTimeoutFromEnv())
+	t.Setenv("KARPENTER_ORPHAN_TIMEOUT_MINUTES", "20")
+	require.Equal(t, 20*time.Minute, getOrphanTimeoutFromEnv())
+	t.Setenv("KARPENTER_ORPHAN_TIMEOUT_MINUTES", "invalid")
+	require.Equal(t, DefaultOrphanTimeout, getOrphanTimeoutFromEnv())
 }
 
-func TestProcessOrphanedNodeSafetyChecks(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	t.Run("skip non-karpenter node", func(t *testing.T) {
-		node := corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "plain-node",
-				Labels: map[string]string{
-					"node-role.kubernetes.io/worker": "true",
-				},
-			},
-			Spec: corev1.NodeSpec{
-				ProviderID: "ibm:///us-south/instance-123",
-			},
-		}
-
-		fakeClient := clientfake.NewClientBuilder().WithScheme(scheme).WithObjects(&node).Build()
-		controller := &Controller{kubeClient: fakeClient, orphanTimeout: 10 * time.Minute}
-
-		err := controller.processOrphanedNode(context.Background(), node)
-		assert.NoError(t, err)
+func TestReconcileSkipsReferencedInstances(t *testing.T) {
+	t.Setenv("KARPENTER_ENABLE_ORPHAN_CLEANUP", "true")
+	ctrl := gomock.NewController(t)
+	mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
+	orphan := ownedInstance(time.Hour)
+	live := ownedInstance(time.Hour)
+	live.ID = core.StringPtr("live-instance")
+	mockVPC.EXPECT().ListInstancesWithContext(gomock.Any(), gomock.Any()).Return(&vpcv1.InstanceCollection{Instances: []vpcv1.Instance{*live, *orphan}}, &core.DetailedResponse{}, nil)
+	mockVPC.EXPECT().GetInstanceWithContext(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, options *vpcv1.GetInstanceOptions) (*vpcv1.Instance, *core.DetailedResponse, error) {
+		require.Equal(t, "instance", *options.ID)
+		return orphan, &core.DetailedResponse{}, nil
 	})
-
-	t.Run("skip node not orphaned long enough", func(t *testing.T) {
-		node := corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "young-node",
-				Labels: map[string]string{
-					"karpenter.sh/nodepool": "test-pool",
-				},
-			},
-			Spec: corev1.NodeSpec{
-				ProviderID: "ibm:///us-south/instance-456",
-			},
-			Status: corev1.NodeStatus{
-				Conditions: []corev1.NodeCondition{
-					{
-						Type:               corev1.NodeReady,
-						Status:             corev1.ConditionFalse,
-						LastTransitionTime: metav1.Time{Time: time.Now().Add(-5 * time.Minute)},
-					},
-				},
-			},
-		}
-
-		fakeClient := clientfake.NewClientBuilder().WithScheme(scheme).WithObjects(&node).Build()
-		controller := &Controller{kubeClient: fakeClient, orphanTimeout: 10 * time.Minute}
-
-		err := controller.processOrphanedNode(context.Background(), node)
-		assert.NoError(t, err)
-	})
-
-	t.Run("skip node with empty provider ID", func(t *testing.T) {
-		node := corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "no-provider-node",
-				Labels: map[string]string{
-					"karpenter.sh/nodepool": "test-pool",
-				},
-			},
-			Spec: corev1.NodeSpec{
-				ProviderID: "",
-			},
-			Status: corev1.NodeStatus{
-				Conditions: []corev1.NodeCondition{
-					{
-						Type:               corev1.NodeReady,
-						Status:             corev1.ConditionFalse,
-						LastTransitionTime: metav1.Time{Time: time.Now().Add(-15 * time.Minute)},
-					},
-				},
-			},
-		}
-
-		fakeClient := clientfake.NewClientBuilder().WithScheme(scheme).WithObjects(&node).Build()
-		controller := &Controller{kubeClient: fakeClient, orphanTimeout: 10 * time.Minute}
-
-		err := controller.processOrphanedNode(context.Background(), node)
-		assert.NoError(t, err)
-	})
+	mockVPC.EXPECT().DeleteInstanceWithContext(gomock.Any(), gomock.Any()).Return(&core.DetailedResponse{}, nil)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "live"}, Spec: corev1.NodeSpec{ProviderID: "ibm:///us-south/live-instance"}}
+	kubeClient := orphanClient(node)
+	tagging := &mockGlobalTaggingAPI{response: ownershipTags()}
+	c := &Controller{kubeClient: kubeClient, ibmClient: &mockVPCClientProvider{vpcClient: ibm.NewVPCClientWithMock(mockVPC)}, globalTagging: tagging, orphanTimeout: DefaultOrphanTimeout}
+	result, err := c.Reconcile(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, OrphanCheckInterval, result.RequeueAfter)
+	require.Len(t, tagging.offsets, 2)
 }
 
-func TestIsNodeOrphanedLongEnoughNoConditions(t *testing.T) {
-	controller := &Controller{orphanTimeout: 10 * time.Minute}
-
-	testCases := []struct {
-		name     string
-		node     corev1.Node
-		expected bool
-	}{
-		{
-			name: "old node without conditions is orphaned",
-			node: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					CreationTimestamp: metav1.Time{Time: time.Now().Add(-15 * time.Minute)},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "young node without conditions is not orphaned",
-			node: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					CreationTimestamp: metav1.Time{Time: time.Now().Add(-3 * time.Minute)},
-				},
-			},
-			expected: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := controller.isNodeOrphanedLongEnough(tc.node)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
+func TestReconcileRequiresClusterIdentity(t *testing.T) {
+	t.Setenv("KARPENTER_ENABLE_ORPHAN_CLEANUP", "true")
+	ctrl := gomock.NewController(t)
+	mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
+	kubeClient := fake.NewClientBuilder().WithScheme(orphanScheme()).Build()
+	c := &Controller{kubeClient: kubeClient, ibmClient: &mockVPCClientProvider{vpcClient: ibm.NewVPCClientWithMock(mockVPC)}, globalTagging: &mockGlobalTaggingAPI{response: ownershipTags()}, orphanTimeout: DefaultOrphanTimeout}
+	_, err := c.Reconcile(context.Background())
+	require.Error(t, err)
 }
 
-func TestIsNodeManagedByKarpenterInitializedAnnotation(t *testing.T) {
-	controller := &Controller{}
-
-	node := corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				"karpenter.sh/initialized": "true",
-			},
-		},
+func owns(c *Controller, crn *string) bool {
+	tags, err := c.instanceTags(context.Background(), crn)
+	if err != nil {
+		return false
 	}
-
-	result := controller.isNodeManagedByKarpenter(node)
-	assert.True(t, result)
+	owned, err := c.ownsTags(context.Background(), tags)
+	return owned && err == nil
 }

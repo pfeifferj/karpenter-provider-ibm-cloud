@@ -22,7 +22,6 @@ import (
 
 	"github.com/awslabs/operatorpkg/reconciler"
 	"github.com/awslabs/operatorpkg/singleton"
-	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/metrics"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/karpenter/pkg/operator/injection"
@@ -64,10 +63,8 @@ func (c *Controller) Reconcile(ctx context.Context) (reconciler.Result, error) {
 
 	// Refresh pricing information
 	if err := c.pricingProvider.Refresh(ctx); err != nil {
-		metrics.ApiRequests.WithLabelValues("RefreshPricing", "500", "global").Inc()
 		return reconciler.Result{}, fmt.Errorf("refreshing pricing information: %w", err)
 	}
-	metrics.ApiRequests.WithLabelValues("RefreshPricing", "200", "global").Inc()
 
 	// Requeue after 12 hours to refresh prices
 	return reconciler.Result{RequeueAfter: 12 * time.Hour}, nil

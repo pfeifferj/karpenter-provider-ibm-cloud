@@ -86,14 +86,14 @@ func (e *IBMCloudError) IsUnauthorized() bool {
 // NewIBMCloudHTTPClient creates a new HTTP client for IBM Cloud APIs
 func NewIBMCloudHTTPClient(baseURL string, setHeaders func(*http.Request, string)) *IBMCloudHTTPClient {
 	return &IBMCloudHTTPClient{
-		client: &http.Client{
+		client: InstrumentHTTPClient(&http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,
 				IdleConnTimeout:     30 * time.Second,
 			},
-		},
+		}, ""),
 		baseURL:    strings.TrimSuffix(baseURL, "/"),
 		setHeaders: setHeaders,
 	}
@@ -102,7 +102,7 @@ func NewIBMCloudHTTPClient(baseURL string, setHeaders func(*http.Request, string
 // NewIBMCloudHTTPClientWithClient creates a new HTTP client wrapper with custom http.Client
 func NewIBMCloudHTTPClientWithClient(httpClient *http.Client, baseURL string, setHeaders func(*http.Request, string)) *IBMCloudHTTPClient {
 	return &IBMCloudHTTPClient{
-		client:     httpClient,
+		client:     InstrumentHTTPClient(httpClient, ""),
 		baseURL:    strings.TrimSuffix(baseURL, "/"),
 		setHeaders: setHeaders,
 	}

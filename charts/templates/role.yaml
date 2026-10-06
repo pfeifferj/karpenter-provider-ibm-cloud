@@ -2,7 +2,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: karpenter-manager
+  name: {{ include "karpenter.fullname" . }}-manager
 rules:
 - apiGroups:
   - ""
@@ -28,6 +28,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - namespaces
   - persistentvolumeclaims
   - persistentvolumes
   - pods
@@ -173,8 +174,8 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: karpenter-manager
-  namespace: karpenter
+  name: {{ include "karpenter.fullname" . }}
+  namespace: {{ .Release.Namespace }}
 rules:
 - apiGroups:
   - ""
@@ -193,7 +194,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: karpenter-manager
+  name: {{ include "karpenter.fullname" . }}-lease
   namespace: kube-node-lease
 rules:
 - apiGroups:
@@ -212,7 +213,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: karpenter-manager
+  name: {{ include "karpenter.fullname" . }}-dns
   namespace: kube-system
 rules:
 - apiGroups:

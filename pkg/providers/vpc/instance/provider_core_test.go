@@ -159,6 +159,7 @@ func TestProviderList(t *testing.T) {
 	t.Run("list with multiple instances", func(t *testing.T) {
 		instance1 := getTestVPCInstance()
 		instance2 := &vpcv1.Instance{
+			CRN:  core.StringPtr(testInstanceCRN),
 			ID:   ptrString("instance-2"),
 			Name: ptrString("node-2"),
 			Profile: &vpcv1.InstanceProfileReference{
@@ -224,81 +225,6 @@ func TestProviderList(t *testing.T) {
 }
 
 // TestProviderUpdateTags tests the VPCInstanceProvider UpdateTags() method
-func TestProviderUpdateTags(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	ctx := context.Background()
-	mockVPC := mock_ibm.NewMockvpcClientInterface(ctrl)
-
-	t.Run("successful tag update", func(t *testing.T) {
-		instanceID := "test-instance-id"
-		tags := map[string]string{
-			"environment": "production",
-			"team":        "platform",
-			"managed-by":  "karpenter",
-		}
-
-		mockVPC.EXPECT().
-			UpdateInstanceWithContext(gomock.Any(), gomock.Any()).
-			Return(&vpcv1.Instance{ID: &instanceID}, &core.DetailedResponse{StatusCode: 200}, nil).
-			Times(1)
-
-		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
-
-		err := vpcClient.UpdateInstanceTags(ctx, instanceID, tags)
-		assert.NoError(t, err)
-	})
-
-	t.Run("update tags with empty tags map", func(t *testing.T) {
-		instanceID := "test-instance-id"
-		tags := map[string]string{}
-
-		mockVPC.EXPECT().
-			UpdateInstanceWithContext(gomock.Any(), gomock.Any()).
-			Return(&vpcv1.Instance{ID: &instanceID}, &core.DetailedResponse{StatusCode: 200}, nil).
-			Times(1)
-
-		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
-
-		err := vpcClient.UpdateInstanceTags(ctx, instanceID, tags)
-		assert.NoError(t, err)
-	})
-
-	t.Run("update tags with instance not found", func(t *testing.T) {
-		instanceID := "nonexistent-instance"
-		tags := map[string]string{"env": "test"}
-
-		mockVPC.EXPECT().
-			UpdateInstanceWithContext(gomock.Any(), gomock.Any()).
-			Return(nil, nil, fmt.Errorf("instance not found: 404")).
-			Times(1)
-
-		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
-
-		err := vpcClient.UpdateInstanceTags(ctx, instanceID, tags)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not found")
-	})
-
-	t.Run("update tags with API error", func(t *testing.T) {
-		instanceID := "test-instance-id"
-		tags := map[string]string{"env": "test"}
-
-		mockVPC.EXPECT().
-			UpdateInstanceWithContext(gomock.Any(), gomock.Any()).
-			Return(nil, nil, fmt.Errorf("permission denied")).
-			Times(1)
-
-		vpcClient := ibm.NewVPCClientWithMock(mockVPC)
-
-		err := vpcClient.UpdateInstanceTags(ctx, instanceID, tags)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "permission denied")
-	})
-}
-
-// TestProviderIDExtraction tests provider ID parsing
 func TestProviderIDExtraction(t *testing.T) {
 	tests := []struct {
 		name       string

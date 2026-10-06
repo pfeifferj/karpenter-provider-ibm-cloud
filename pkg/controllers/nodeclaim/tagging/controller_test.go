@@ -17,7 +17,6 @@ package tagging
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,44 +28,15 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 )
 
 func TestController_Name(t *testing.T) {
 	controller := &Controller{}
 	assert.Equal(t, "nodeclaim.tagging", controller.Name())
-}
-
-func TestController_Register(t *testing.T) {
-	// Create a proper scheme
-	s := runtime.NewScheme()
-	require.NoError(t, scheme.AddToScheme(s))
-
-	// Register Karpenter v1 types manually
-	gv := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
-	s.AddKnownTypes(gv,
-		&karpenterv1.NodeClaim{},
-		&karpenterv1.NodeClaimList{},
-		&karpenterv1.NodePool{},
-		&karpenterv1.NodePoolList{},
-	)
-	metav1.AddToGroupVersion(s, gv)
-
-	fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
-	controller, err := NewController(fakeClient)
-	if err != nil {
-		t.Skipf("Skipping test due to missing IBM credentials: %v", err)
-		return
-	}
-
-	// Test that Register method exists and can be called
-	// (will fail with nil manager but that's expected)
-	var mgr manager.Manager
-	err = controller.Register(context.Background(), mgr)
-	assert.Error(t, err) // Expected because mgr is nil
 }
 
 func TestController_isVPCMode(t *testing.T) {
@@ -437,26 +407,9 @@ func TestController_Reconcile(t *testing.T) {
 	}
 }
 
-func TestNewController(t *testing.T) {
-	// Create a proper scheme
-	s := runtime.NewScheme()
-	require.NoError(t, scheme.AddToScheme(s))
-
-	fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
-
-	// Test creating controller
-	controller, err := NewController(fakeClient)
-
-	// In test environment without IBM credentials, this will fail
-	// but we're testing that the function exists and returns appropriate error
-	if err != nil {
-		assert.Contains(t, err.Error(), "creating IBM client")
-		return
-	}
-
-	assert.NotNil(t, controller)
-	assert.NotNil(t, controller.kubeClient)
-	assert.NotNil(t, controller.ibmClient)
+func TestNewControllerRequiresSharedClient(t *testing.T) {
+	_, err := NewController(fake.NewClientBuilder().Build(), nil)
+	assert.Error(t, err)
 }
 
 func TestUpdateVPCInstanceTags(t *testing.T) {
@@ -532,6 +485,19 @@ func TestTagsExtraction(t *testing.T) {
 			expectedTags: map[string]string{},
 		},
 		{
+			name: "reserved keys are dropped",
+			requirements: []karpenterv1.NodeSelectorRequirementWithMinValues{
+				{
+					Key:      "karpenter-ibm.sh/tags",
+					Operator: v1.NodeSelectorOpIn,
+					Values:   []string{"managed-by=someone", "karpenter-ibm.sh.cluster-uid=forged", "Karpenter.sh/owned=x", "team=platform"},
+				},
+			},
+			expectedTags: map[string]string{
+				"team": "platform",
+			},
+		},
+		{
 			name:         "no tag requirements",
 			requirements: []karpenterv1.NodeSelectorRequirementWithMinValues{},
 			expectedTags: map[string]string{},
@@ -551,21 +517,8 @@ func TestTagsExtraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tags := make(map[string]string)
-
-			// Extract tags using the same logic as the controller
-			for _, req := range tt.requirements {
-				if req.Key == "karpenter-ibm.sh/tags" {
-					for _, value := range req.Values {
-						parts := strings.SplitN(value, "=", 2)
-						if len(parts) == 2 {
-							tags[parts[0]] = parts[1]
-						}
-					}
-				}
-			}
-
-			assert.Equal(t, tt.expectedTags, tags)
+			claim := &karpenterv1.NodeClaim{Spec: karpenterv1.NodeClaimSpec{Requirements: tt.requirements}}
+			assert.Equal(t, tt.expectedTags, requirementTags(claim))
 		})
 	}
 }
@@ -573,4 +526,24 @@ func TestTagsExtraction(t *testing.T) {
 // Helper functions
 func ptr(s string) *string {
 	return &s
+}
+
+func TestTagsVPCInstanceHonorsPersistedBackend(t *testing.T) {
+	vpcClass := &v1alpha1.IBMNodeClass{Spec: v1alpha1.IBMNodeClassSpec{VPC: "vpc"}}
+	iksClass := &v1alpha1.IBMNodeClass{Spec: v1alpha1.IBMNodeClassSpec{IKSClusterID: "cluster"}}
+	c := &Controller{}
+	for _, tt := range []struct {
+		backend string
+		class   *v1alpha1.IBMNodeClass
+		want    bool
+	}{
+		{"", vpcClass, true},
+		{"", iksClass, false},
+		{"iks", vpcClass, false},
+		{"vpc", iksClass, true},
+	} {
+		claim := &karpenterv1.NodeClaim{}
+		claim.Annotations = map[string]string{ownership.BackendAnnotation: tt.backend}
+		assert.Equal(t, tt.want, c.tagsVPCInstance(claim, tt.class), "backend=%q", tt.backend)
+	}
 }

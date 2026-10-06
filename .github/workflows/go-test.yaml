@@ -61,6 +61,9 @@ jobs:
       run: |
         go test -v -race ./...
 
+    - name: Test E2E harness helpers
+      run: env -u RUN_E2E_TESTS go test -mod=vendor -race -tags=e2e ./test/e2e
+
     - name: Run tests with coverage
       run: |
         go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
@@ -116,8 +119,12 @@ jobs:
     - name: Run make lint
       run: |
         # Ensure golangci-lint is available in PATH for pre-commit
-        export PATH="$(go env GOPATH)/bin:${PATH}"
+        go_bin="$(go env GOPATH)/bin"
+        export PATH="${go_bin}:${PATH}"
         which golangci-lint
         golangci-lint version
         # Skip verify-codegen and verify-vendor hooks - already checked in test job
         SKIP=verify-codegen,verify-vendor make lint
+
+    - name: Lint E2E harness
+      run: golangci-lint run --build-tags=e2e ./test/e2e/...

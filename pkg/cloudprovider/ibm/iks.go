@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -32,13 +33,10 @@ import (
 
 // IKS API configuration constants
 const (
-	// iksV2BaseURL is the base URL for v2 API (list/get operations)
-	// v2 API returns fields like workerCount, poolName
+	// iksV2BaseURL is the base URL for the v2 API (pool and worker list/get/create/delete)
 	iksV2BaseURL = "https://containers.cloud.ibm.com/global/v2"
 
-	// iksV1BaseURL is the base URL for v1 API (resize/create/delete operations)
-	// v1 API uses fields like sizePerZone, name - required for mutating operations
-	// as v2 API does not yet support these operations
+	// iksV1BaseURL is the base URL for the v1 API, which serves pool resize (v2 has no resize endpoint)
 	iksV1BaseURL = "https://containers.cloud.ibm.com/global/v1"
 )
 
@@ -47,16 +45,12 @@ var ibmAccountIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 // IKSClient handles IBM Kubernetes Service API operations.
 //
-// Concurrency: This client uses a mutex (resizeMu) to serialize resize operations
-// within the same process, preventing race conditions where concurrent goroutines
-// could read the same pool size and both increment to the same value.
-//
-// Cross-pod concurrency is handled by Karpenter's leader election mechanism - only
-// one controller pod is active at a time, so distributed locking is not required.
+// Concurrency: resizeMu serializes resize operations within the process. Cross-pod
+// concurrency is excluded by Karpenter's leader election.
 type IKSClient struct {
 	client       *Client
-	httpClient   *httpclient.IBMCloudHTTPClient // v2 API for list/get
-	httpClientV1 *httpclient.IBMCloudHTTPClient // v1 API for resize/create/delete
+	httpClient   *httpclient.IBMCloudHTTPClient // v2 API
+	httpClientV1 *httpclient.IBMCloudHTTPClient // v1 API for resize
 	accountID    string                         // cached and validated IBM account ID
 	resizeMu     sync.Mutex                     // serializes resize operations within this process
 }
@@ -140,13 +134,19 @@ func NewIKSClient(client *Client) (*IKSClient, error) {
 		accountID: accountID,
 	}
 
-	// Create HTTP clients for both API versions
-	// v2 API for list/get operations (returns workerCount, poolName fields)
-	// v1 API for resize/create/delete operations (uses sizePerZone, name fields)
 	iksClient.httpClient = httpclient.NewIBMCloudHTTPClient(iksV2BaseURL, iksClient.setIKSHeaders)
 	iksClient.httpClientV1 = httpclient.NewIBMCloudHTTPClient(iksV1BaseURL, iksClient.setIKSHeaders)
 
 	return iksClient, nil
+}
+
+func (c *IKSClient) GetAccountID() string { return c.accountID }
+
+func (c *IKSClient) GetRegion() string {
+	if c.client == nil {
+		return ""
+	}
+	return c.client.GetRegion()
 }
 
 // NewIKSClientWithHTTPClient creates a new IKS API client with a custom HTTP client for testing
@@ -159,6 +159,10 @@ func NewIKSClientWithHTTPClient(client *Client, httpClient *httpclient.IBMCloudH
 
 // GetWorkerDetails retrieves detailed information about an IKS worker
 func (c *IKSClient) GetWorkerDetails(ctx context.Context, clusterID, workerID string) (*IKSWorkerDetails, error) {
+	if c.client == nil || c.client.iamClient == nil || c.httpClient == nil {
+		return nil, fmt.Errorf("IKS client not properly initialized")
+	}
+
 	// Get IAM token for authentication
 	token, err := c.client.iamClient.GetToken(ctx)
 	if err != nil {
@@ -166,7 +170,7 @@ func (c *IKSClient) GetWorkerDetails(ctx context.Context, clusterID, workerID st
 	}
 
 	// Construct API endpoint
-	endpoint := fmt.Sprintf("/clusters/%s/workers/%s", clusterID, workerID)
+	endpoint := "/vpc/getWorker?" + url.Values{"cluster": {clusterID}, "worker": {workerID}}.Encode()
 
 	// Make request using shared HTTP client
 	resp, err := c.httpClient.Get(ctx, endpoint, token)
@@ -188,6 +192,22 @@ func (c *IKSClient) GetWorkerDetails(ctx context.Context, clusterID, workerID st
 	}
 
 	return &workerDetails, nil
+}
+
+func (c *IKSClient) ListWorkers(ctx context.Context, clusterID string) ([]*IKSWorkerDetails, error) {
+	if c.client == nil || c.client.iamClient == nil || c.httpClient == nil {
+		return nil, fmt.Errorf("IKS client not properly initialized")
+	}
+	token, err := c.client.iamClient.GetToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting IAM token: %w", err)
+	}
+	endpoint := "/vpc/getWorkers?" + url.Values{"cluster": {clusterID}, "showDeleted": {"false"}}.Encode()
+	var workers []*IKSWorkerDetails
+	if err := c.httpClient.GetJSON(ctx, endpoint, token, &workers); err != nil {
+		return nil, fmt.Errorf("listing workers in cluster %s: %w", clusterID, err)
+	}
+	return workers, nil
 }
 
 // GetVPCInstanceIDFromWorker extracts the VPC instance ID from worker details
@@ -274,16 +294,45 @@ func (c *IKSClient) GetClusterConfig(ctx context.Context, clusterID string) (str
 
 // WorkerPool represents an IKS worker pool
 type WorkerPool struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"poolName"` // v2 API uses poolName not name
-	Flavor      string            `json:"flavor"`
-	Zone        string            `json:"zone"`
-	SizePerZone int               `json:"workerCount"` // v2 API returns workerCount not sizePerZone
-	ActualSize  int               `json:"actualSize"`
-	State       string            `json:"state"`
-	Labels      map[string]string `json:"labels"`
-	CreatedAt   time.Time         `json:"createdAt"`
-	UpdatedAt   time.Time         `json:"updatedAt"`
+	ID               string            `json:"id"`
+	Name             string            `json:"poolName"` // v2 API uses poolName not name
+	Flavor           string            `json:"flavor"`
+	Zone             string            `json:"zone"`
+	SizePerZone      int               `json:"workerCount"` // v2 API returns workerCount not sizePerZone
+	ActualSize       int               `json:"actualSize"`
+	State            string            `json:"state"`
+	Labels           map[string]string `json:"labels"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+	Zones            []WorkerPoolZone  `json:"zones"`
+	AutoscaleEnabled bool              `json:"autoscaleEnabled"`
+}
+
+func (p *WorkerPool) UnmarshalJSON(data []byte) error {
+	type pool WorkerPool
+	var wire struct {
+		pool
+		LegacyName   string `json:"name"`
+		LegacyFlavor string `json:"machineType"`
+		LegacySize   *int   `json:"sizePerZone"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*p = WorkerPool(wire.pool)
+	if p.Name == "" {
+		p.Name = wire.LegacyName
+	}
+	if p.Flavor == "" {
+		p.Flavor = wire.LegacyFlavor
+	}
+	if wire.LegacySize != nil {
+		p.SizePerZone = *wire.LegacySize
+	}
+	if len(p.Zones) == 1 {
+		p.Zone = p.Zones[0].ID
+	}
+	return nil
 }
 
 // WorkerPoolResizeRequest represents a request to resize a worker pool
@@ -315,32 +364,23 @@ type WorkerPoolCreateRequest struct {
 
 // ListWorkerPools retrieves all worker pools for a cluster
 func (c *IKSClient) ListWorkerPools(ctx context.Context, clusterID string) ([]*WorkerPool, error) {
+	if c.client == nil || c.client.iamClient == nil || c.httpClient == nil {
+		return nil, fmt.Errorf("IKS client not properly initialized")
+	}
+
 	// Get IAM token for authentication
 	token, err := c.client.iamClient.GetToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting IAM token: %w", err)
 	}
 
-	// Construct API endpoint using v2 getWorkerPools with v1-compatible flag
-	// Reference: ibmcloud CLI traces show this endpoint structure
-	endpoint := fmt.Sprintf("/getWorkerPools?v1-compatible&cluster=%s", clusterID)
+	endpoint := "/vpc/getWorkerPools?" + url.Values{"cluster": {clusterID}}.Encode()
 
 	// Parse response
 	var workerPools []*WorkerPool
 
 	// Make request using shared HTTP client
 	if err := c.httpClient.GetJSON(ctx, endpoint, token, &workerPools); err != nil {
-		// Handle specific IBM Cloud error codes
-		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
-			switch ibmErr.Code {
-			case "E3917": // Cluster provider not permitted for given operation
-				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, ibmErr.Description)
-			case "E0003": // Unauthorized
-				return nil, fmt.Errorf("unauthorized to access IKS API: %s", ibmErr.Description)
-			case "E0015": // Cluster not found
-				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, ibmErr.Description)
-			}
-		}
 		return nil, err
 	}
 
@@ -399,156 +439,26 @@ func (c *IKSClient) ResizeWorkerPool(ctx context.Context, clusterID, poolID stri
 	return nil
 }
 
-// IncrementWorkerPool atomically increments a worker pool's size by 1.
-// This method acquires a lock to prevent concurrent increment operations
-// from racing, ensuring each call actually adds one worker.
-// Returns the new size after increment.
-func (c *IKSClient) IncrementWorkerPool(ctx context.Context, clusterID, poolID string) (int, error) {
-	c.resizeMu.Lock()
-	defer c.resizeMu.Unlock()
-
-	// Check context before proceeding
-	select {
-	case <-ctx.Done():
-		return 0, fmt.Errorf("context canceled before increment: %w", ctx.Err())
-	default:
-	}
-
-	// Get current pool state (while holding the lock)
-	pool, err := c.getWorkerPoolInternal(ctx, clusterID, poolID)
-	if err != nil {
-		return 0, fmt.Errorf("getting worker pool for increment: %w", err)
-	}
-
-	newSize := pool.SizePerZone + 1
-
-	// Perform the resize
-	if err := c.resizeWorkerPoolInternal(ctx, clusterID, poolID, newSize); err != nil {
-		return 0, err
-	}
-
-	return newSize, nil
-}
-
-// DecrementWorkerPool atomically decrements a worker pool's size by 1.
-// This method acquires a lock to prevent concurrent decrement operations
-// from racing. Returns the new size after decrement. Will not go below 0.
-func (c *IKSClient) DecrementWorkerPool(ctx context.Context, clusterID, poolID string) (int, error) {
-	c.resizeMu.Lock()
-	defer c.resizeMu.Unlock()
-
-	// Check context before proceeding
-	select {
-	case <-ctx.Done():
-		return 0, fmt.Errorf("context canceled before decrement: %w", ctx.Err())
-	default:
-	}
-
-	// Get current pool state (while holding the lock)
-	pool, err := c.getWorkerPoolInternal(ctx, clusterID, poolID)
-	if err != nil {
-		return 0, fmt.Errorf("getting worker pool for decrement: %w", err)
-	}
-
-	newSize := pool.SizePerZone - 1
-	if newSize < 0 {
-		newSize = 0
-	}
-
-	// Perform the resize
-	if err := c.resizeWorkerPoolInternal(ctx, clusterID, poolID, newSize); err != nil {
-		return 0, err
-	}
-
-	return newSize, nil
-}
-
-// resizeWorkerPoolInternal is the internal resize implementation without locking.
-//
-// IMPORTANT: Callers MUST hold resizeMu before calling this method.
-// This method assumes the caller has already acquired the lock and will
-// release it after the operation completes.
-func (c *IKSClient) resizeWorkerPoolInternal(ctx context.Context, clusterID, poolID string, newSize int) error {
-	if newSize < 0 {
-		return fmt.Errorf("invalid pool size: %d (must be >= 0)", newSize)
-	}
-
-	token, err := c.client.iamClient.GetToken(ctx)
-	if err != nil {
-		return fmt.Errorf("getting IAM token: %w", err)
-	}
-
-	request := WorkerPoolResizeRequest{
-		SizePerZone: newSize,
-		State:       "resizing",
-		Labels:      nil,
-	}
-
-	endpoint := fmt.Sprintf("/clusters/%s/workerpools/%s", clusterID, poolID)
-
-	jsonData, err := json.Marshal(&request)
-	if err != nil {
-		return fmt.Errorf("marshaling request: %w", err)
-	}
-
-	_, err = c.httpClientV1.Patch(ctx, endpoint, token, strings.NewReader(string(jsonData)))
-	if err != nil {
-		return fmt.Errorf("resize worker pool %s in cluster %s to size %d failed: %w", poolID, clusterID, newSize, err)
-	}
-
-	return nil
-}
-
-// getWorkerPoolInternal is the internal get implementation without HTTP client validation.
-//
-// IMPORTANT: Callers MUST hold resizeMu before calling this method.
-// Used by increment/decrement methods that already hold the lock.
-func (c *IKSClient) getWorkerPoolInternal(ctx context.Context, clusterID, poolID string) (*WorkerPool, error) {
-	token, err := c.client.iamClient.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting IAM token: %w", err)
-	}
-
-	endpoint := fmt.Sprintf("/getWorkerPool?v1-compatible&cluster=%s&workerpool=%s", clusterID, poolID)
-
-	var workerPool WorkerPool
-	if err := c.httpClient.GetJSON(ctx, endpoint, token, &workerPool); err != nil {
-		return nil, err
-	}
-
-	return &workerPool, nil
-}
-
 // GetWorkerPool retrieves a specific worker pool
 func (c *IKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID string) (*WorkerPool, error) {
+	if c.client == nil || c.client.iamClient == nil || c.httpClient == nil {
+		return nil, fmt.Errorf("IKS client not properly initialized")
+	}
+
 	// Get IAM token for authentication
 	token, err := c.client.iamClient.GetToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting IAM token: %w", err)
 	}
 
-	// Construct API endpoint using v2 getWorkerPool with v1-compatible flag
-	// The v2 API uses query parameters: cluster={id}&workerpool={name/id}
-	endpoint := fmt.Sprintf("/getWorkerPool?v1-compatible&cluster=%s&workerpool=%s", clusterID, poolID)
+	// workerpool accepts either the pool name or ID.
+	endpoint := "/vpc/getWorkerPool?" + url.Values{"cluster": {clusterID}, "workerpool": {poolID}}.Encode()
 
 	// Parse response
 	var workerPool WorkerPool
 
 	// Make request using shared HTTP client
 	if err := c.httpClient.GetJSON(ctx, endpoint, token, &workerPool); err != nil {
-		// Handle specific IBM Cloud error codes
-		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
-			switch ibmErr.Code {
-			case "E3917": // Cluster provider not permitted for given operation
-				return nil, fmt.Errorf("cluster %s is not configured for Karpenter management (IKS managed cluster): %s", clusterID, ibmErr.Description)
-			case "E0003": // Unauthorized
-				return nil, fmt.Errorf("unauthorized to access IKS API: %s", ibmErr.Description)
-			case "E0015": // Cluster not found
-				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, ibmErr.Description)
-			case "E0013": // Worker pool not found
-				return nil, fmt.Errorf("worker pool %s not found in cluster %s: %s", poolID, clusterID, ibmErr.Description)
-			}
-		}
 		return nil, err
 	}
 
@@ -557,80 +467,48 @@ func (c *IKSClient) GetWorkerPool(ctx context.Context, clusterID, poolID string)
 
 // CreateWorkerPool creates a new worker pool in the specified cluster
 func (c *IKSClient) CreateWorkerPool(ctx context.Context, clusterID string, request *WorkerPoolCreateRequest) (*WorkerPool, error) {
-	// Get IAM token for authentication
+	if c.client == nil || c.client.iamClient == nil || c.httpClient == nil || request == nil {
+		return nil, fmt.Errorf("IKS client or worker pool request not initialized")
+	}
 	token, err := c.client.iamClient.GetToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting IAM token: %w", err)
 	}
-
-	// Construct API endpoint
-	endpoint := fmt.Sprintf("/clusters/%s/workerpools", clusterID)
-
-	// Marshal request body
-	jsonData, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling request: %w", err)
+	zones := make([]map[string]string, 0, len(request.Zones))
+	for _, zone := range request.Zones {
+		zones = append(zones, map[string]string{"id": zone.ID, "subnetID": zone.SubnetID})
 	}
-
-	// Make POST request to create the worker pool (v1 API)
-	resp, err := c.httpClientV1.Post(ctx, endpoint, token, strings.NewReader(string(jsonData)))
-	if err != nil {
-		// Handle specific IBM Cloud error codes
-		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
-			switch ibmErr.Code {
-			case "E3917":
-				return nil, fmt.Errorf("cluster %s is not configured for worker pool creation: %s", clusterID, ibmErr.Description)
-			case "E0003":
-				return nil, fmt.Errorf("unauthorized to create worker pool: %s", ibmErr.Description)
-			case "E0015":
-				return nil, fmt.Errorf("cluster %s not found: %s", clusterID, ibmErr.Description)
-			case "E4036":
-				return nil, fmt.Errorf("invalid worker pool configuration: %s", ibmErr.Description)
-			}
-		}
+	body := map[string]interface{}{"cluster": clusterID, "name": request.Name, "flavor": request.Flavor,
+		"workerCount": request.SizePerZone, "zones": zones, "labels": request.Labels,
+		"diskEncryption": request.DiskEncryption, "vpcID": request.VpcID}
+	var response struct {
+		WorkerPoolID string `json:"workerPoolID"`
+		ID           string `json:"id"`
+	}
+	if err := c.httpClient.PostJSON(ctx, "/vpc/createWorkerPool", token, body, &response); err != nil {
 		return nil, fmt.Errorf("creating worker pool: %w", err)
 	}
-
-	// Parse response
-	var workerPool WorkerPool
-	if err := json.Unmarshal(resp.Body, &workerPool); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
+	if response.WorkerPoolID == "" {
+		response.WorkerPoolID = response.ID
 	}
-
-	return &workerPool, nil
+	if response.WorkerPoolID == "" {
+		return nil, fmt.Errorf("worker pool create response contains no ID")
+	}
+	return &WorkerPool{ID: response.WorkerPoolID, Name: request.Name}, nil
 }
 
 // DeleteWorkerPool deletes a worker pool from the specified cluster
 func (c *IKSClient) DeleteWorkerPool(ctx context.Context, clusterID, poolID string) error {
-	// Get IAM token for authentication
+	if c.client == nil || c.client.iamClient == nil || c.httpClient == nil {
+		return fmt.Errorf("IKS client not properly initialized")
+	}
 	token, err := c.client.iamClient.GetToken(ctx)
 	if err != nil {
 		return fmt.Errorf("getting IAM token: %w", err)
 	}
-
-	// Construct API endpoint
-	endpoint := fmt.Sprintf("/clusters/%s/workerpools/%s", clusterID, poolID)
-
-	// Make DELETE request (v1 API)
-	_, err = c.httpClientV1.Delete(ctx, endpoint, token)
-	if err != nil {
-		// Handle specific IBM Cloud error codes
-		if ibmErr, ok := err.(*httpclient.IBMCloudError); ok {
-			switch ibmErr.Code {
-			case "E3917":
-				return fmt.Errorf("cluster %s is not configured for worker pool deletion: %s", clusterID, ibmErr.Description)
-			case "E0003":
-				return fmt.Errorf("unauthorized to delete worker pool: %s", ibmErr.Description)
-			case "E0015":
-				return fmt.Errorf("cluster %s not found: %s", clusterID, ibmErr.Description)
-			case "E0013":
-				return fmt.Errorf("worker pool %s not found in cluster %s: %s", poolID, clusterID, ibmErr.Description)
-			case "E4037":
-				return fmt.Errorf("cannot delete default worker pool: %s", ibmErr.Description)
-			}
-		}
+	body := map[string]string{"cluster": clusterID, "workerpool": poolID}
+	if err := c.httpClient.PostJSON(ctx, "/removeWorkerPool", token, body, nil); err != nil {
 		return fmt.Errorf("deleting worker pool: %w", err)
 	}
-
 	return nil
 }

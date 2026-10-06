@@ -18,7 +18,7 @@ package v1alpha1
 
 const (
 	// IBMNodeClassHashVersion is the version of the hash function used to compute the hash of the IBMNodeClass
-	IBMNodeClassHashVersion = "1"
+	IBMNodeClassHashVersion = "2"
 
 	// AnnotationIBMNodeClassHash is the annotation key for the hash of the IBMNodeClass
 	AnnotationIBMNodeClassHash = Group + "/nodeclass-hash"

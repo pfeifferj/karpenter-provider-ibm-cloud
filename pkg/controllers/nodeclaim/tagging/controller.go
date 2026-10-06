@@ -32,7 +32,7 @@ import (
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
-	vpcProvider "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/vpc/instance"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 )
 
 // Controller reconciles NodeClaim objects to ensure proper tagging of IBM Cloud instances
@@ -44,18 +44,12 @@ type Controller struct {
 	ibmClient  *ibm.Client
 }
 
-// NewController constructs a controller instance
-func NewController(kubeClient client.Client) (*Controller, error) {
-	// Create IBM client for tagging operations
-	ibmClient, err := ibm.NewClient()
-	if err != nil {
-		return nil, fmt.Errorf("creating IBM client: %w", err)
+// NewController constructs a controller instance that tags through the shared IBM client.
+func NewController(kubeClient client.Client, ibmClient *ibm.Client) (*Controller, error) {
+	if ibmClient == nil {
+		return nil, fmt.Errorf("IBM client is required for instance tagging")
 	}
-
-	return &Controller{
-		kubeClient: kubeClient,
-		ibmClient:  ibmClient,
-	}, nil
+	return &Controller{kubeClient: kubeClient, ibmClient: ibmClient}, nil
 }
 
 // Reconcile executes a control loop for the resource
@@ -93,37 +87,46 @@ func (c *Controller) Reconcile(ctx context.Context) (reconciler.Result, error) {
 			continue
 		}
 
-		// Only process VPC instances (IKS tagging not supported)
-		if !c.isVPCMode(nodeClass) {
+		if !c.tagsVPCInstance(&nodeClaim, nodeClass) {
 			continue
 		}
-
-		// Build tags map
-		tags := map[string]string{
-			"karpenter-ibm.sh/nodeclaim": nodeClaim.Name,
-			"karpenter-ibm.sh/nodepool":  nodeClaim.Labels["karpenter.sh/nodepool"],
-		}
-
-		// Add custom tags from nodeclaim requirements
-		for _, req := range nodeClaim.Spec.Requirements {
-			if req.Key == "karpenter-ibm.sh/tags" {
-				for _, value := range req.Values {
-					parts := strings.SplitN(value, "=", 2)
-					if len(parts) == 2 {
-						tags[parts[0]] = parts[1]
-					}
-				}
-			}
-		}
-
-		// Update instance tags using VPC provider
-		if err := c.updateVPCInstanceTags(ctx, node.Spec.ProviderID, tags); err != nil {
+		if err := c.updateVPCInstanceTags(ctx, node.Spec.ProviderID, requirementTags(&nodeClaim)); err != nil {
 			log.FromContext(ctx).Error(err, "Failed to update VPC instance tags", "provider_id", node.Spec.ProviderID)
 			continue
 		}
 	}
 
 	return reconciler.Result{}, nil
+}
+
+// tagsVPCInstance reports whether the claim is backed by a VPC instance; IKS workers are not tagged.
+// The persisted backend annotation wins over the NodeClass, whose mode can change after launch.
+func (c *Controller) tagsVPCInstance(nodeClaim *karpenterv1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) bool {
+	switch nodeClaim.Annotations[ownership.BackendAnnotation] {
+	case "iks":
+		return false
+	case "":
+		return c.isVPCMode(nodeClass)
+	default:
+		return true
+	}
+}
+
+// requirementTags returns the user tags requested through karpenter-ibm.sh/tags requirements, without reserved keys.
+func requirementTags(nodeClaim *karpenterv1.NodeClaim) map[string]string {
+	tags := map[string]string{}
+	for _, req := range nodeClaim.Spec.Requirements {
+		if req.Key != "karpenter-ibm.sh/tags" {
+			continue
+		}
+		for _, value := range req.Values {
+			key, tagValue, ok := strings.Cut(value, "=")
+			if ok && !ownership.ReservedTag(key) {
+				tags[key] = tagValue
+			}
+		}
+	}
+	return tags
 }
 
 // isVPCMode determines if a NodeClass is configured for VPC mode
@@ -149,14 +152,22 @@ func (c *Controller) isVPCMode(nodeClass *v1alpha1.IBMNodeClass) bool {
 
 // updateVPCInstanceTags updates tags on a VPC instance
 func (c *Controller) updateVPCInstanceTags(ctx context.Context, providerID string, tags map[string]string) error {
-	// Create VPC provider for this specific operation
-	vpcProvider, err := vpcProvider.NewVPCInstanceProvider(c.ibmClient, c.kubeClient)
-	if err != nil {
-		return fmt.Errorf("creating VPC provider: %w", err)
+	if c.ibmClient == nil {
+		return fmt.Errorf("IBM client not initialized")
 	}
-
-	// Use the VPC provider to update tags
-	return vpcProvider.UpdateTags(ctx, providerID, tags)
+	parts := strings.Split(strings.TrimPrefix(providerID, "ibm:///"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("invalid VPC provider ID")
+	}
+	vpc, err := c.ibmClient.GetVPCClient(ctx)
+	if err != nil {
+		return err
+	}
+	vpc, err = vpc.ForRegion(parts[0])
+	if err != nil {
+		return err
+	}
+	return vpc.UpdateInstanceTags(ctx, parts[1], tags)
 }
 
 // Name returns the name of the controller

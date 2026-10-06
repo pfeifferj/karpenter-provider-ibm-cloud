@@ -21,9 +21,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/awslabs/operatorpkg/status"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clocktesting "k8s.io/utils/clock/testing"
+	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 // pollUntil polls a condition until it's true or timeout
@@ -444,7 +447,7 @@ func TestCircuitBreaker_ErrorTypes(t *testing.T) {
 			TimeToWait: 5 * time.Minute,
 		}
 
-		expected := "circuit breaker OPEN: test message (retry in 5m0s)"
+		expected := "circuit breaker OPEN: test message"
 		assert.Equal(t, expected, err.Error())
 
 		// Test without TimeToWait
@@ -460,8 +463,9 @@ func TestCircuitBreaker_ErrorTypes(t *testing.T) {
 			TimeToReset: 30 * time.Second,
 		}
 
-		expected := "rate limit exceeded: 3/2 instances this minute (reset in 30s)"
+		expected := "rate limit exceeded: 3/2 instances this minute"
 		assert.Equal(t, expected, err.Error())
+		assert.Equal(t, 30*time.Second, err.TimeToReset)
 	})
 
 	t.Run("ConcurrencyLimitError", func(t *testing.T) {
@@ -954,6 +958,70 @@ func TestCircuitBreaker_EnhancedErrorMessage(t *testing.T) {
 	assert.Contains(t, cbErr.Message, "Recent failures:")
 	assert.Contains(t, cbErr.Message, "API timeout")
 
-	// Check that retry time is included
-	assert.Contains(t, cbErr.Error(), "retry in")
+	assert.Positive(t, cbErr.TimeToWait)
+	assert.NotContains(t, cbErr.Error(), "retry in")
+}
+
+func TestCircuitBreakerOpenErrorKeepsLaunchConditionStableUntilRecovery(t *testing.T) {
+	clock := clocktesting.NewFakeClock(time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	cb := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logr.Discard())
+	cb.now = clock.Now
+	cb.lastStateChange, cb.lastMinuteReset = clock.Now(), clock.Now()
+	for _, failure := range []string{"unauthorized", "request timeout", "subnet not found"} {
+		cb.RecordFailure("class", "us-south", fmt.Errorf("%s", failure))
+	}
+	var first *CircuitBreakerError
+	require.ErrorAs(t, cb.CanProvision(context.Background(), "class", "us-south", 0), &first)
+	require.Equal(t, 15*time.Minute, first.TimeToWait)
+	claim := &v1.NodeClaim{}
+	claim.StatusConditions(status.WithClock(clock)).SetUnknownWithReason(v1.ConditionTypeLaunched, "LaunchFailed", first.Error())
+	initialStatus := claim.Status.DeepCopy()
+	elapsed := time.Duration(0)
+	for _, step := range []time.Duration{time.Nanosecond, time.Second, 6 * time.Minute} {
+		clock.Step(step)
+		elapsed += step
+		var next *CircuitBreakerError
+		require.ErrorAs(t, cb.CanProvision(context.Background(), "class", "us-south", 0), &next)
+		require.Equal(t, first.Error(), next.Error())
+		require.Equal(t, cb.config.RecoveryTimeout-elapsed, next.TimeToWait)
+		claim.StatusConditions(status.WithClock(clock)).SetUnknownWithReason(v1.ConditionTypeLaunched, "LaunchFailed", next.Error())
+		require.Equal(t, *initialStatus, claim.Status)
+	}
+	current, err := cb.GetState()
+	require.NoError(t, err)
+	require.Zero(t, current.RecentFailures)
+	require.Equal(t, cb.config.RecoveryTimeout-elapsed, current.TimeToRecovery)
+	clock.Step(current.TimeToRecovery)
+	require.NoError(t, cb.CanProvision(context.Background(), "class", "us-south", 0))
+	require.Equal(t, CircuitBreakerHalfOpen, cb.state)
+}
+
+func TestRateLimitErrorKeepsLaunchConditionStableUntilReset(t *testing.T) {
+	clock := clocktesting.NewFakeClock(time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC))
+	config := DefaultCircuitBreakerConfig()
+	config.RateLimitPerMinute = 1
+	cb := NewCircuitBreaker(config, logr.Discard())
+	cb.now = clock.Now
+	cb.lastStateChange, cb.lastMinuteReset = clock.Now(), clock.Now()
+	require.NoError(t, cb.CanProvision(context.Background(), "class", "us-south", 0))
+	cb.RecordSuccess("class", "us-south")
+	var first *RateLimitError
+	require.ErrorAs(t, cb.CanProvision(context.Background(), "class", "us-south", 0), &first)
+	require.Equal(t, time.Minute, first.TimeToReset)
+	claim := &v1.NodeClaim{}
+	claim.StatusConditions(status.WithClock(clock)).SetUnknownWithReason(v1.ConditionTypeLaunched, "LaunchFailed", first.Error())
+	initialStatus := claim.Status.DeepCopy()
+	elapsed := time.Duration(0)
+	for _, step := range []time.Duration{time.Nanosecond, 10 * time.Second, 40 * time.Second} {
+		clock.Step(step)
+		elapsed += step
+		var next *RateLimitError
+		require.ErrorAs(t, cb.CanProvision(context.Background(), "class", "us-south", 0), &next)
+		require.Equal(t, first.Error(), next.Error())
+		require.Equal(t, time.Minute-elapsed, next.TimeToReset)
+		claim.StatusConditions(status.WithClock(clock)).SetUnknownWithReason(v1.ConditionTypeLaunched, "LaunchFailed", next.Error())
+		require.Equal(t, *initialStatus, claim.Status)
+	}
+	clock.Step(time.Minute - elapsed)
+	require.NoError(t, cb.CanProvision(context.Background(), "class", "us-south", 0))
 }

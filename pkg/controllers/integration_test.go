@@ -24,9 +24,11 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/controllers/nodeclass/hash"
@@ -39,6 +41,7 @@ func TestHashControllerIntegration(t *testing.T) {
 	// Create scheme and add our types
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	// Create test NodeClass
 	nodeClass := &v1alpha1.IBMNodeClass{
@@ -106,6 +109,7 @@ func TestStatusControllerIntegration(t *testing.T) {
 	// Create scheme and add our types
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	tests := []struct {
 		name               string
@@ -193,6 +197,7 @@ func TestControllerErrorHandling(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	// Test with non-existent NodeClass
 	fakeClient := fake.NewClientBuilder().
@@ -219,6 +224,7 @@ func TestControllerConcurrency(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	// Create multiple NodeClasses
 	nodeClasses := []*v1alpha1.IBMNodeClass{}
@@ -305,6 +311,7 @@ func TestControllerLifecycle(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	// Create NodeClass with deletion timestamp
 	now := metav1.Now()
@@ -348,6 +355,7 @@ func TestMultiControllerIntegration(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	nodeClass := &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{

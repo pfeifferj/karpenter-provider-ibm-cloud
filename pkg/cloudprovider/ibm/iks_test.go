@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -188,7 +187,7 @@ func TestIKSClient_GetWorkerDetails(t *testing.T) {
 			// Create test server
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// Verify request
-				expectedPath := "/clusters/" + tt.clusterID + "/workers/" + tt.workerID
+				expectedPath := "/vpc/getWorker"
 				assert.Equal(t, expectedPath, r.URL.Path)
 				assert.Equal(t, "GET", r.Method)
 				assert.Contains(t, r.Header.Get("Authorization"), "Bearer")
@@ -651,304 +650,78 @@ func TestIKSClient_GetClusterConfig_ClientNotInitialized(t *testing.T) {
 	}
 }
 
-func TestIKSClient_IncrementWorkerPool(t *testing.T) {
-	tests := []struct {
-		name            string
-		initialSize     int
-		getResponse     int
-		patchResponse   int
-		expectedNewSize int
-		expectedError   string
-	}{
-		{
-			name:            "successful increment from 0",
-			initialSize:     0,
-			getResponse:     http.StatusOK,
-			patchResponse:   http.StatusOK,
-			expectedNewSize: 1,
-		},
-		{
-			name:            "successful increment from 5",
-			initialSize:     5,
-			getResponse:     http.StatusOK,
-			patchResponse:   http.StatusOK,
-			expectedNewSize: 6,
-		},
-		{
-			name:          "get pool fails",
-			initialSize:   0,
-			getResponse:   http.StatusNotFound,
-			expectedError: "getting worker pool for increment",
-		},
-		{
-			name:          "resize fails",
-			initialSize:   5,
-			getResponse:   http.StatusOK,
-			patchResponse: http.StatusForbidden,
-			expectedError: "resize worker pool",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var getCalled, patchCalled bool
-			var patchedSize int
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.Method {
-				case "GET":
-					getCalled = true
-					if tt.getResponse != http.StatusOK {
-						w.WriteHeader(tt.getResponse)
-						_, _ = w.Write([]byte(`{"code": "E0015", "description": "not found"}`))
-						return
-					}
-					w.WriteHeader(http.StatusOK)
-					_, _ = fmt.Fprintf(w, `{"id": "pool-1", "poolName": "default", "workerCount": %d}`, tt.initialSize)
-				case "PATCH":
-					patchCalled = true
-					var req map[string]interface{}
-					_ = json.NewDecoder(r.Body).Decode(&req)
-					if size, ok := req["sizePerZone"].(float64); ok {
-						patchedSize = int(size)
-					}
-					if tt.patchResponse != http.StatusOK {
-						w.WriteHeader(tt.patchResponse)
-						_, _ = w.Write([]byte(`{"code": "E0403", "description": "forbidden"}`))
-						return
-					}
-					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`{}`))
-				}
-			}))
-			defer server.Close()
-
-			client := &Client{
-				iamClient: &IAMClient{
-					Authenticator: &mockAuthenticator{token: "test-token"},
-				},
-			}
-
-			iksClient := &IKSClient{
-				client:       client,
-				httpClient:   httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) }),
-				httpClientV1: httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) }),
-			}
-
-			ctx := context.Background()
-			newSize, err := iksClient.IncrementWorkerPool(ctx, "cluster-1", "default")
-
-			if tt.expectedError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedError)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.expectedNewSize, newSize)
-				assert.True(t, getCalled, "GET should have been called")
-				assert.True(t, patchCalled, "PATCH should have been called")
-				assert.Equal(t, tt.expectedNewSize, patchedSize, "PATCH should request correct size")
-			}
-		})
-	}
-}
-
-func TestIKSClient_DecrementWorkerPool(t *testing.T) {
-	tests := []struct {
-		name            string
-		initialSize     int
-		getResponse     int
-		patchResponse   int
-		expectedNewSize int
-		expectedError   string
-	}{
-		{
-			name:            "successful decrement from 5",
-			initialSize:     5,
-			getResponse:     http.StatusOK,
-			patchResponse:   http.StatusOK,
-			expectedNewSize: 4,
-		},
-		{
-			name:            "decrement from 1 to 0",
-			initialSize:     1,
-			getResponse:     http.StatusOK,
-			patchResponse:   http.StatusOK,
-			expectedNewSize: 0,
-		},
-		{
-			name:            "decrement from 0 stays at 0",
-			initialSize:     0,
-			getResponse:     http.StatusOK,
-			patchResponse:   http.StatusOK,
-			expectedNewSize: 0,
-		},
-		{
-			name:          "get pool fails",
-			initialSize:   5,
-			getResponse:   http.StatusNotFound,
-			expectedError: "getting worker pool for decrement",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var patchedSize int
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.Method {
-				case "GET":
-					if tt.getResponse != http.StatusOK {
-						w.WriteHeader(tt.getResponse)
-						_, _ = w.Write([]byte(`{"code": "E0015", "description": "not found"}`))
-						return
-					}
-					w.WriteHeader(http.StatusOK)
-					_, _ = fmt.Fprintf(w, `{"id": "pool-1", "poolName": "default", "workerCount": %d}`, tt.initialSize)
-				case "PATCH":
-					var req map[string]interface{}
-					_ = json.NewDecoder(r.Body).Decode(&req)
-					if size, ok := req["sizePerZone"].(float64); ok {
-						patchedSize = int(size)
-					}
-					if tt.patchResponse != http.StatusOK {
-						w.WriteHeader(tt.patchResponse)
-						return
-					}
-					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`{}`))
-				}
-			}))
-			defer server.Close()
-
-			client := &Client{
-				iamClient: &IAMClient{
-					Authenticator: &mockAuthenticator{token: "test-token"},
-				},
-			}
-
-			iksClient := &IKSClient{
-				client:       client,
-				httpClient:   httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) }),
-				httpClientV1: httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) }),
-			}
-
-			ctx := context.Background()
-			newSize, err := iksClient.DecrementWorkerPool(ctx, "cluster-1", "default")
-
-			if tt.expectedError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedError)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.expectedNewSize, newSize)
-				assert.Equal(t, tt.expectedNewSize, patchedSize)
-			}
-		})
-	}
-}
-
-func TestIKSClient_IncrementWorkerPool_ContextCancellation(t *testing.T) {
+func TestIKSClientV2LifecycleContract(t *testing.T) {
+	clusterID := "cluster with/slash"
+	poolID := "real-pool"
+	workerID := "real-worker"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Server should not be called when context is canceled")
-	}))
-	defer server.Close()
-
-	client := &Client{
-		iamClient: &IAMClient{
-			Authenticator: &mockAuthenticator{token: "test-token"},
-		},
-	}
-
-	iksClient := &IKSClient{
-		client:       client,
-		httpClient:   httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) }),
-		httpClientV1: httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) }),
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	_, err := iksClient.IncrementWorkerPool(ctx, "cluster-1", "default")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "context canceled")
-}
-
-func TestIKSClient_ConcurrentIncrements(t *testing.T) {
-	// This test verifies that concurrent increments are serialized by the mutex
-	var mu sync.Mutex
-	currentSize := 0
-	callCount := 0
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-
-		switch r.Method {
-		case "GET":
-			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprintf(w, `{"id": "pool-1", "poolName": "default", "workerCount": %d}`, currentSize)
-		case "PATCH":
-			callCount++
-			var req map[string]interface{}
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			if size, ok := req["sizePerZone"].(float64); ok {
-				currentSize = int(size)
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
+		switch r.URL.Path {
+		case "/vpc/createWorkerPool":
+			assert.Equal(t, http.MethodPost, r.Method)
+			var body map[string]interface{}
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, clusterID, body["cluster"])
+			assert.Equal(t, "owned-pool", body["name"])
+			assert.Equal(t, "bx2-4x16", body["flavor"])
+			assert.Equal(t, float64(1), body["workerCount"])
+			assert.Equal(t, []interface{}{map[string]interface{}{"id": "us-south-1", "subnetID": "inherited-cluster-subnet"}}, body["zones"])
+			_, _ = w.Write([]byte(`{"workerPoolID":"real-pool"}`))
+		case "/vpc/getWorkerPool":
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.Equal(t, clusterID, r.URL.Query().Get("cluster"))
+			assert.Equal(t, poolID, r.URL.Query().Get("workerpool"))
+			_, _ = w.Write([]byte(`{"id":"real-pool","poolName":"owned-pool","flavor":"bx2-4x16","workerCount":1,"zones":[{"id":"us-south-1"}],"autoscaleEnabled":false}`))
+		case "/vpc/getWorkerPools":
+			assert.Equal(t, clusterID, r.URL.Query().Get("cluster"))
+			_, _ = w.Write([]byte(`[{"id":"real-pool","poolName":"owned-pool","workerCount":1,"zones":[{"id":"us-south-1"}]}]`))
+		case "/vpc/getWorkers":
+			assert.Equal(t, clusterID, r.URL.Query().Get("cluster"))
+			assert.Equal(t, "false", r.URL.Query().Get("showDeleted"))
+			_, _ = w.Write([]byte(`[{"id":"real-worker","poolID":"real-pool","location":"us-south-1","flavor":"bx2-4x16"}]`))
+		case "/removeWorkerPool":
+			assert.Equal(t, http.MethodPost, r.Method)
+			var body map[string]string
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, map[string]string{"cluster": clusterID, "workerpool": poolID}, body)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected endpoint %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
+	client := &Client{iamClient: &IAMClient{Authenticator: &mockAuthenticator{token: "token"}}}
+	httpClient := httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) })
+	iksClient := NewIKSClientWithHTTPClient(client, httpClient)
+	created, err := iksClient.CreateWorkerPool(context.Background(), clusterID, &WorkerPoolCreateRequest{Name: "owned-pool", Flavor: "bx2-4x16", SizePerZone: 1, Zones: []WorkerPoolZone{{ID: "us-south-1", SubnetID: "inherited-cluster-subnet"}}})
+	require.NoError(t, err)
+	require.Equal(t, poolID, created.ID)
+	pool, err := iksClient.GetWorkerPool(context.Background(), clusterID, poolID)
+	require.NoError(t, err)
+	require.Equal(t, "us-south-1", pool.Zone)
+	require.Equal(t, 1, pool.SizePerZone)
+	pools, err := iksClient.ListWorkerPools(context.Background(), clusterID)
+	require.NoError(t, err)
+	require.Len(t, pools, 1)
+	workers, err := iksClient.ListWorkers(context.Background(), clusterID)
+	require.NoError(t, err)
+	require.Equal(t, workerID, workers[0].ID)
+	require.NoError(t, iksClient.DeleteWorkerPool(context.Background(), clusterID, poolID))
+}
 
-	client := &Client{
-		iamClient: &IAMClient{
-			Authenticator: &mockAuthenticator{token: "test-token"},
-		},
-	}
-
-	iksClient := &IKSClient{
-		client:       client,
-		httpClient:   httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) }),
-		httpClientV1: httpclient.NewIBMCloudHTTPClient(server.URL, func(req *http.Request, token string) { req.Header.Set("Authorization", "Bearer "+token) }),
-	}
-
-	// Run 10 concurrent increments
-	var wg sync.WaitGroup
-	numGoroutines := 10
-	results := make([]int, numGoroutines)
-	errors := make([]error, numGoroutines)
-
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			ctx := context.Background()
-			newSize, err := iksClient.IncrementWorkerPool(ctx, "cluster-1", "default")
-			results[idx] = newSize
-			errors[idx] = err
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Verify no errors
-	for i, err := range errors {
-		assert.NoError(t, err, "goroutine %d should not have error", i)
-	}
-
-	// Verify final size is exactly numGoroutines (each increment added 1)
-	mu.Lock()
-	finalSize := currentSize
-	finalCallCount := callCount
-	mu.Unlock()
-
-	assert.Equal(t, numGoroutines, finalSize, "final size should be %d after %d increments", numGoroutines, numGoroutines)
-	assert.Equal(t, numGoroutines, finalCallCount, "should have exactly %d PATCH calls", numGoroutines)
-
-	// Verify each result is unique (1, 2, 3, ..., 10 in some order)
-	resultSet := make(map[int]bool)
-	for _, r := range results {
-		resultSet[r] = true
-	}
-	assert.Equal(t, numGoroutines, len(resultSet), "each increment should return a unique size")
+func TestIKSClientPreservesTypedPoolLookupAndDeleteErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":"E0001","description":"not found"}`))
+	}))
+	defer server.Close()
+	client := &Client{iamClient: &IAMClient{Authenticator: &mockAuthenticator{token: "token"}}}
+	iksClient := NewIKSClientWithHTTPClient(client, httpclient.NewIBMCloudHTTPClient(server.URL, nil))
+	_, err := iksClient.GetWorkerPool(context.Background(), "cluster", "pool")
+	var cloudError *httpclient.IBMCloudError
+	require.ErrorAs(t, err, &cloudError)
+	require.Equal(t, http.StatusNotFound, cloudError.StatusCode)
+	err = iksClient.DeleteWorkerPool(context.Background(), "cluster", "pool")
+	require.ErrorAs(t, err, &cloudError)
+	require.Equal(t, http.StatusNotFound, cloudError.StatusCode)
 }

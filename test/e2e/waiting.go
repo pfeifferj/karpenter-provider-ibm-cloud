@@ -20,6 +20,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -100,7 +101,7 @@ func (s *E2ETestSuite) waitForNodeClassReady(t *testing.T, nodeClassName string)
 	select {
 	case <-time.After(initialDelay):
 	case <-ctx.Done():
-		t.Fatal("Context cancelled during initial delay")
+		t.Fatal("Context canceled during initial delay")
 	}
 
 	err := wait.PollUntilContextTimeout(ctx, pollInterval, testTimeout, true, func(ctx context.Context) (bool, error) {
@@ -152,9 +153,10 @@ func (s *E2ETestSuite) waitForNodeClassReady(t *testing.T, nodeClassName string)
 		t.Logf("Check #%d: NodeClass %s conditions (ResourceVersion: %s):", checkCount, nodeClassName, nodeClass.ResourceVersion)
 		for _, condition := range nodeClass.Status.Conditions {
 			statusIcon := "?"
-			if condition.Status == metav1.ConditionTrue {
+			switch condition.Status {
+			case metav1.ConditionTrue:
 				statusIcon = "[OK]"
-			} else if condition.Status == metav1.ConditionFalse {
+			case metav1.ConditionFalse:
 				statusIcon = "[FAILED]"
 			}
 			t.Logf("  %s Type: %s, Status: %s, Reason: %s, Message: %s",
@@ -309,44 +311,6 @@ func (s *E2ETestSuite) waitForPodsGone(t *testing.T, deploymentName string) {
 	require.NoError(t, err, "All pods should be terminated")
 }
 
-// waitForPodToBeRunning waits for a single pod to be in running state
-func (s *E2ETestSuite) waitForPodToBeRunning(t *testing.T, podName, namespace string) {
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-	defer cancel()
-	err := wait.PollUntilContextTimeout(ctx, pollInterval, testTimeout, true, func(ctx context.Context) (bool, error) {
-		var pod corev1.Pod
-		err := s.kubeClient.Get(ctx, types.NamespacedName{Name: podName, Namespace: namespace}, &pod)
-		if err != nil {
-			t.Logf("Error getting pod %s: %v", podName, err)
-			return false, nil
-		}
-
-		// Check if pod is running
-		if pod.Status.Phase == corev1.PodRunning {
-			// Also check that all containers are ready
-			allReady := true
-			for _, condition := range pod.Status.Conditions {
-				if condition.Type == corev1.PodReady {
-					if condition.Status != corev1.ConditionTrue {
-						allReady = false
-					}
-					break
-				}
-			}
-			if allReady {
-				t.Logf("Pod %s is running and ready", podName)
-				return true, nil
-			}
-			t.Logf("Pod %s is running but not ready yet", podName)
-			return false, nil
-		}
-
-		t.Logf("Pod %s is in phase %s, waiting for Running...", podName, pod.Status.Phase)
-		return false, nil
-	})
-	require.NoError(t, err, "Pod should be running within timeout")
-}
-
 // waitForNodesCleanedUp waits for all Karpenter nodes matching a NodePool to be removed
 func (s *E2ETestSuite) waitForNodesCleanedUp(t *testing.T, nodePoolName string, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -429,27 +393,42 @@ func (s *E2ETestSuite) waitForNodeClaimCleanedUp(t *testing.T, nodeClaimName str
 	require.NoError(t, err, "NodeClaim should be cleaned up within timeout")
 }
 
-// waitForInstanceCountReduction waits for IBM Cloud instance count to reduce
-func (s *E2ETestSuite) waitForInstanceCountReduction(t *testing.T, targetCount int, timeout time.Duration) int {
+// waitForInstancesGone waits until none of the given IBM Cloud instance IDs remain in the test VPC.
+func (s *E2ETestSuite) waitForInstancesGone(t *testing.T, ids []string, timeout time.Duration) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-
-	var finalCount int
-	err := wait.PollUntilContextTimeout(ctx, 10*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		instances, err := s.getIBMCloudInstances(t)
-		if err != nil {
-			t.Logf("Warning: Failed to get instance count: %v", err)
-			return false, nil // Don't fail, just retry
-		}
-		finalCount = len(instances)
-		t.Logf("Current instance count: %d (target: %d)", finalCount, targetCount)
-		if finalCount <= targetCount {
-			return true, nil
-		}
-		return false, nil
+	remaining, err := pollInstancesGone(ctx, ids, 10*time.Second, s.getIBMCloudInstancesWithContext, func(remaining []string) {
+		t.Logf("Instances still present: %v", remaining)
 	})
-	if err != nil {
-		t.Logf("Warning: Instance count did not reach target within timeout")
+	require.NoError(t, err, "IBM Cloud instances %v must be deleted within %v (still present: %v)", ids, timeout, remaining)
+}
+
+// pollInstancesGone polls the inventory until no listed ID remains. Inventory errors are retried and
+// reported if the context expires, so a failing API never reads as successful cleanup.
+func pollInstancesGone(ctx context.Context, ids []string, interval time.Duration, inventory func(context.Context) (map[string]string, error), observe func([]string)) ([]string, error) {
+	remaining := ids
+	var lastInventoryError error
+	err := wait.PollUntilContextCancel(ctx, interval, true, func(ctx context.Context) (bool, error) {
+		instances, err := inventory(ctx)
+		if err != nil {
+			lastInventoryError = err
+			return false, nil
+		}
+		lastInventoryError = nil
+		remaining = nil
+		for _, id := range ids {
+			if _, present := instances[id]; present {
+				remaining = append(remaining, id)
+			}
+		}
+		if observe != nil && len(remaining) != 0 {
+			observe(remaining)
+		}
+		return len(remaining) == 0, nil
+	})
+	if err != nil && lastInventoryError != nil {
+		return remaining, fmt.Errorf("waiting for instance deletion: %w (last inventory error: %v)", err, lastInventoryError)
 	}
-	return finalCount
+	return remaining, err
 }

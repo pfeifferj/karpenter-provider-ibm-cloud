@@ -17,14 +17,16 @@ package hash
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
-	"github.com/mitchellh/hashstructure/v2"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/nodeclass"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
@@ -34,22 +36,25 @@ import (
 // +kubebuilder:rbac:groups=karpenter-ibm.sh,resources=ibmnodeclasses/status,verbs=get;update;patch
 type Controller struct {
 	kubeClient client.Client
+	apiReader  client.Reader
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client) (*Controller, error) {
+func NewController(kubeClient client.Client, readers ...client.Reader) (*Controller, error) {
 	if kubeClient == nil {
 		return nil, fmt.Errorf("kubeClient cannot be nil")
 	}
-	return &Controller{
-		kubeClient: kubeClient,
-	}, nil
+	reader := client.Reader(kubeClient)
+	if len(readers) != 0 && readers[0] != nil {
+		reader = readers[0]
+	}
+	return &Controller{kubeClient: kubeClient, apiReader: reader}, nil
 }
 
 // Reconcile executes a control loop for the resource
 func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	nc := &v1alpha1.IBMNodeClass{}
-	if err := c.kubeClient.Get(ctx, req.NamespacedName, nc); err != nil {
+	if err := c.apiReader.Get(ctx, req.NamespacedName, nc); err != nil {
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -58,33 +63,78 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, nil
 	}
 
-	// Compute hash of the spec
-	hash, err := hashstructure.Hash(nc.Spec, hashstructure.FormatV2, nil)
+	hashString, err := nodeclass.ProvisioningHash(nc)
 	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to compute hash: %w", err)
+		return reconcile.Result{}, fmt.Errorf("computing provisioning hash: %w", err)
+	}
+	currentHash, currentVersion := nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash], nc.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion]
+	if currentVersion != v1alpha1.IBMNodeClassHashVersion {
+		if err := c.migrateClaims(ctx, nc, hashString); err != nil {
+			return reconcile.Result{}, err
+		}
+	} else if currentHash == hashString && nc.Annotations[nodeclass.HashMigrationAnnotation] == "" {
+		return reconcile.Result{}, nil
 	}
 
-	// Convert hash to string
-	hashString := fmt.Sprint(hash)
-
-	// Store hash in annotations (following AWS pattern)
 	stored := nc.DeepCopy()
 	if nc.Annotations == nil {
-		nc.Annotations = make(map[string]string)
+		nc.Annotations = map[string]string{}
 	}
+	delete(nc.Annotations, nodeclass.HashMigrationAnnotation)
+	nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash] = hashString
+	nc.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion] = v1alpha1.IBMNodeClassHashVersion
+	if err := c.kubeClient.Patch(ctx, nc, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to patch annotations: %w", err)
+	}
+	return reconcile.Result{}, nil
+}
 
-	// Check if hash has changed
-	currentHash, exists := nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
-	currentVersion, versionExists := nc.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion]
-	if !exists || currentHash != hashString || !versionExists || currentVersion != v1alpha1.IBMNodeClassHashVersion {
-		nc.Annotations[v1alpha1.AnnotationIBMNodeClassHash] = hashString
-		nc.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion] = v1alpha1.IBMNodeClassHashVersion
-		if err := c.kubeClient.Patch(ctx, nc, client.MergeFrom(stored)); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to patch annotations: %w", err)
+// migrateClaims restamps claims hashed under version 1 so the version bump alone does not drift
+// them. The checkpoint pins both hashes so a restart mid-migration resumes against the same spec.
+func (c *Controller) migrateClaims(ctx context.Context, nc *v1alpha1.IBMNodeClass, hashString string) error {
+	legacyHash, err := nodeclass.LegacyHash(nc)
+	if err != nil {
+		return fmt.Errorf("computing legacy hash: %w", err)
+	}
+	migration, err := nodeclass.ReadHashMigration(nc)
+	if err != nil {
+		return err
+	}
+	if migration == nil {
+		migration = &nodeclass.HashMigration{LegacyHash: legacyHash, ProvisioningHash: hashString}
+		value, err := json.Marshal(migration)
+		if err != nil {
+			return err
+		}
+		stored := nc.DeepCopy()
+		if nc.Annotations == nil {
+			nc.Annotations = map[string]string{}
+		}
+		nc.Annotations[nodeclass.HashMigrationAnnotation] = string(value)
+		if err := c.kubeClient.Patch(ctx, nc, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
+			return err
 		}
 	}
-
-	return reconcile.Result{}, nil
+	claims := &karpv1.NodeClaimList{}
+	if err := c.apiReader.List(ctx, claims); err != nil {
+		return err
+	}
+	for i := range claims.Items {
+		claim := &claims.Items[i]
+		if claim.Spec.NodeClassRef == nil || claim.Spec.NodeClassRef.Name != nc.Name || claim.Spec.NodeClassRef.Group != v1alpha1.Group ||
+			claim.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion] != "1" ||
+			claim.Annotations[v1alpha1.AnnotationIBMNodeClassHash] != migration.LegacyHash ||
+			claim.StatusConditions().Get(karpv1.ConditionTypeDrifted).IsTrue() {
+			continue
+		}
+		storedClaim := claim.DeepCopy()
+		claim.Annotations[v1alpha1.AnnotationIBMNodeClassHash] = migration.ProvisioningHash
+		claim.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion] = v1alpha1.IBMNodeClassHashVersion
+		if err := c.kubeClient.Patch(ctx, claim, client.MergeFromWithOptions(storedClaim, client.MergeFromWithOptimisticLock{})); err != nil {
+			return fmt.Errorf("migrating hash for NodeClaim %s: %w", claim.Name, err)
+		}
+	}
+	return nil
 }
 
 // Register registers the controller with the manager

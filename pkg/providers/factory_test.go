@@ -19,6 +19,7 @@ package providers
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -432,4 +433,41 @@ func TestProviderFactory_BootstrapModePrecedence(t *testing.T) {
 			// The mode determination logic is what we're testing here
 		})
 	}
+}
+
+func TestProviderFactorySharesConcurrentVPCOperations(t *testing.T) {
+	t.Setenv("IBMCLOUD_API_KEY", "test-key")
+	t.Setenv("IKS_CLUSTER_ID", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	kube := fake.NewClientBuilder().WithScheme(getTestScheme()).Build()
+	factory := NewProviderFactory(ctx, &ibm.Client{}, kube, nil, nil)
+	results := make(chan commonTypes.InstanceProvider, 32)
+	errors := make(chan error, 32)
+	var pending sync.WaitGroup
+	for range 32 {
+		pending.Add(1)
+		go func() {
+			defer pending.Done()
+			provider, err := factory.GetInstanceProvider(getVPCNodeClass())
+			results <- provider
+			errors <- err
+		}()
+	}
+	pending.Wait()
+	close(results)
+	close(errors)
+	for err := range errors {
+		assert.NoError(t, err)
+	}
+	var first commonTypes.InstanceProvider
+	for provider := range results {
+		if first == nil {
+			first = provider
+		}
+		assert.Same(t, first, provider)
+	}
+	specialized, err := factory.GetVPCProvider(getVPCNodeClass())
+	assert.NoError(t, err)
+	assert.Same(t, first, specialized)
 }

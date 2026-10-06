@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,106 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestCalicoNodeNameFileContainsExactNodeName(t *testing.T) {
+	const nodeName = "karpenter-worker.us-south-1.example"
+	provider := NewVPCBootstrapProvider(&ibm.Client{}, nil, nil)
+	script, err := provider.generateCloudInitScript(context.Background(), commonTypes.Options{
+		NodeName:  nodeName,
+		CNIPlugin: "calico",
+	})
+	require.NoError(t, err)
+
+	var writes []string
+	for _, line := range strings.Split(script, "\n") {
+		if strings.Contains(line, "> /var/lib/calico/nodename") {
+			writes = append(writes, line)
+		}
+	}
+	require.Len(t, writes, 1)
+	command := strings.ReplaceAll(writes[0], "/var/lib/calico/nodename", `"$CALICO_NODE_NAME_FILE"`)
+	nodeNameFile := filepath.Join(t.TempDir(), "nodename")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	cmd.Env = append(os.Environ(), "HOSTNAME="+nodeName, "CALICO_NODE_NAME_FILE="+nodeNameFile)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	contents, err := os.ReadFile(nodeNameFile)
+	require.NoError(t, err)
+	require.Equal(t, []byte(nodeName), contents)
+}
+
+func TestCalicoBootstrapWaitsForInstallerArtifacts(t *testing.T) {
+	provider := NewVPCBootstrapProvider(&ibm.Client{}, nil, nil)
+	script, err := provider.generateCloudInitScript(context.Background(), commonTypes.Options{
+		NodeName:  "worker-001",
+		CNIPlugin: "calico",
+	})
+	require.NoError(t, err)
+	_, setup, found := strings.Cut(script, "# Install CNI configuration based on detected plugin\n")
+	require.True(t, found)
+	setup, _, found = strings.Cut(setup, "# Wait for CNI to be fully operational\n")
+	require.True(t, found)
+	_, readiness, found := strings.Cut(script, "check_cni_ready() {\n")
+	require.True(t, found)
+	readiness, _, found = strings.Cut(readiness, "\nwhile [ $elapsed -lt $CNI_WAIT_TIMEOUT ]; do")
+	require.True(t, found)
+	readiness = "check_cni_ready() {\n" + readiness + "\ncheck_cni_ready\n"
+
+	directory := t.TempDir()
+	for _, name := range []string{"bin", "net.d", "calico"} {
+		require.NoError(t, os.Mkdir(filepath.Join(directory, name), 0700))
+	}
+	for _, binary := range []string{"calico", "calico-ipam"} {
+		require.NoError(t, os.WriteFile(filepath.Join(directory, "bin", binary), []byte("#!/bin/sh\nexit 0\n"), 0700))
+	}
+	rewritePaths := strings.NewReplacer(
+		"/etc/cni/net.d", `"$BOOTSTRAP_TEST_ROOT/net.d"`,
+		"/opt/cni/bin", `"$BOOTSTRAP_TEST_ROOT/bin"`,
+		"/var/lib/calico", `"$BOOTSTRAP_TEST_ROOT/calico"`,
+	)
+	run := func(fragment string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eu\n"+rewritePaths.Replace(fragment))
+		cmd.Env = append(os.Environ(), "CNI_PLUGIN=calico", "HOSTNAME=worker-001", "BOOTSTRAP_TEST_ROOT="+directory)
+		return cmd.CombinedOutput()
+	}
+	output, err := run(`
+systemctl() {
+    if [ "$1" = start ] && [ "$2" = kubelet ]; then
+        [ ! -e "$BOOTSTRAP_TEST_ROOT/net.d/10-calico.conflist" ] || return 1
+        printf started > "$BOOTSTRAP_TEST_ROOT/kubelet-started"
+    fi
+    return 0
+}
+report_status() { :; }
+journalctl() { :; }
+` + setup)
+	require.NoError(t, err, "%s", output)
+	started, err := os.ReadFile(filepath.Join(directory, "kubelet-started"))
+	require.NoError(t, err)
+	require.Equal(t, "started", string(started))
+	_, err = os.Stat(filepath.Join(directory, "net.d", "10-calico.conflist"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	_, err = run(readiness)
+	require.Error(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "net.d", "10-calico.conflist"), []byte(`{"cniVersion":"0.3.1","plugins":[{"type":"calico"}]}`), 0600))
+	_, err = run(readiness)
+	require.Error(t, err)
+	kubeconfigPath := filepath.Join(directory, "net.d", "calico-kubeconfig")
+	require.NoError(t, os.WriteFile(kubeconfigPath, nil, 0600))
+	_, err = run(readiness)
+	require.Error(t, err)
+	require.NoError(t, os.WriteFile(kubeconfigPath, []byte("apiVersion: v1\nkind: Config\n"), 0600))
+	output, err = run(readiness)
+	require.NoError(t, err, "%s", output)
+	require.NoError(t, os.Chmod(filepath.Join(directory, "bin", "calico-ipam"), 0600))
+	_, err = run(readiness)
+	require.Error(t, err)
+}
 
 func TestGenerateCloudInitScript(t *testing.T) {
 	client := &ibm.Client{}
@@ -83,11 +185,6 @@ func TestGenerateCloudInitScript(t *testing.T) {
 		assert.Contains(t, script, "calico")
 		assert.Contains(t, script, "/etc/cni/net.d/10-calico.conflist")
 		assert.Contains(t, script, "/opt/cni/bin/calico")
-		// Calico CNI kubeconfig must point at the SA kubeconfig, not the
-		// kubelet bootstrap kubeconfig (whose system:bootstrap:<token> user
-		// has no RBAC for clusterinformations.crd.projectcalico.org).
-		assert.Contains(t, script, `s/__KUBECONFIG_FILEPATH__/\/etc\/cni\/net.d\/calico-kubeconfig/g`)
-		assert.NotContains(t, script, `s/__KUBECONFIG_FILEPATH__/\/var\/lib\/kubelet\/bootstrap-kubeconfig/g`)
 
 		// Verify kubelet configuration
 		assert.Contains(t, script, "kubelet")

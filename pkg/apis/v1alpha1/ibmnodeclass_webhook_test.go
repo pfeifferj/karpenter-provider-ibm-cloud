@@ -16,242 +16,144 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func validWebhookNodeClass() *IBMNodeClass {
+	return &IBMNodeClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-nodeclass"},
+		Spec: IBMNodeClassSpec{
+			InstanceProfile:   "bx2-2x8",
+			Region:            "us-south",
+			Zone:              "us-south-1",
+			VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
+			Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
+			Subnet:            "02c7-ac2802cf-54bb-4508-aad7-eba7e8c2034c",
+			SecurityGroups:    []string{"r010-36f045e2-86a1-4af8-917e-b17a41f8abe3"},
+			SSHKeys:           []string{"r010-28168374-32db-4fd4-b1e7-12bd4c30e1db"},
+			ResourceGroup:     "0123456789abcdef0123456789abcdef",
+			APIServerEndpoint: "https://test.example.com:6443",
+			BootstrapMode:     stringPtr("cloud-init"),
+		},
+	}
+}
 
 func TestIBMNodeClass_ValidateCreate(t *testing.T) {
 	tests := []struct {
 		name         string
-		nodeClass    *IBMNodeClass
-		wantErr      bool
+		configure    func(*IBMNodeClass)
 		errContains  []string
 		wantWarnings []string
 	}{
 		{
 			name: "customer configuration - missing api server endpoint",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:         "br-sao",
-					Zone:           "br-sao-2",
-					VPC:            "r042-4225852b-4846-4a4a-88c4-9966471337c6",
-					Image:          "ibm-ubuntu-22-04-5-minimal-amd64-6",
-					Subnet:         "02u7-718345b5-2de1-4a9a-b1de-fa7e307ee8c5",
-					SecurityGroups: []string{"sg-k8s-workers"}, // Name instead of ID
-					ResourceGroup:  "karpenter-rg",
-					// Missing APIServerEndpoint
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.Region, nc.Spec.Zone = "br-sao", "br-sao-2"
+				nc.Spec.Image = "ibm-ubuntu-22-04-5-minimal-amd64-6"
+				nc.Spec.SecurityGroups = []string{"sg-k8s-workers"}
+				nc.Spec.APIServerEndpoint = ""
+				nc.Spec.BootstrapMode = nil
 			},
-			wantErr: true,
 			errContains: []string{
 				"apiServerEndpoint is required",
-				"security group 'sg-k8s-workers' appears to be a name",
+				"security group 'sg-k8s-workers' is not a valid IBM Cloud resource ID",
 			},
 			wantWarnings: []string{
-				"image 'ibm-ubuntu-22-04-5-minimal-amd64-6' appears to be a name",
 				"bootstrapMode not specified",
+				"image 'ibm-ubuntu-22-04-5-minimal-amd64-6' appears to be a name",
 			},
 		},
-		{
-			name: "valid configuration with IDs",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "eu-de",
-					Zone:              "eu-de-2",
-					VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
-					Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
-					Subnet:            "02c7-ac2802cf-54bb-4508-aad7-eba7e8c2034c",
-					SecurityGroups:    []string{"r010-36f045e2-86a1-4af8-917e-b17a41f8abe3"},
-					APIServerEndpoint: "https://10.243.65.4:6443",
-					BootstrapMode:     stringPtr("cloud-init"),
-				},
-			},
-			wantErr:      false,
-			errContains:  []string{},
-			wantWarnings: []string{},
-		},
+		{name: "valid configuration with IDs"},
 		{
 			name: "invalid security group format - too short",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
-					Image:             "ubuntu-20-04",
-					SecurityGroups:    []string{"r010-short"},
-					APIServerEndpoint: "https://10.0.0.1:6443",
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.SecurityGroups = []string{"r010-short"}
+				nc.Spec.Image = "ubuntu-20-04"
 			},
-			wantErr: true,
-			errContains: []string{
-				"security group 'r010-short' is not a valid IBM Cloud resource ID",
-			},
-			wantWarnings: []string{
-				"image 'ubuntu-20-04' appears to be a name",
-			},
+			errContains:  []string{"security group 'r010-short' is not a valid IBM Cloud resource ID"},
+			wantWarnings: []string{"image 'ubuntu-20-04' appears to be a name"},
 		},
 		{
 			name: "invalid api server endpoint format",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
-					Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
-					SecurityGroups:    []string{"r010-36f045e2-86a1-4af8-917e-b17a41f8abe3"},
-					APIServerEndpoint: "10.0.0.1:6443", // Missing https://
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.APIServerEndpoint = "10.0.0.1:6443"
 			},
-			wantErr: true,
-			errContains: []string{
-				"apiServerEndpoint '10.0.0.1:6443' is not a valid URL",
-			},
+			errContains: []string{"apiServerEndpoint '10.0.0.1:6443' is not a valid URL"},
 		},
 		{
 			name: "invalid subnet format",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
-					Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
-					Subnet:            "my-subnet", // Invalid format
-					SecurityGroups:    []string{"r010-36f045e2-86a1-4af8-917e-b17a41f8abe3"},
-					APIServerEndpoint: "https://10.0.0.1:6443",
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.Subnet = "my-subnet"
 			},
-			wantErr: true,
-			errContains: []string{
-				"subnet 'my-subnet' is not a valid IBM Cloud subnet ID",
-			},
+			errContains: []string{"subnet 'my-subnet' is not a valid IBM Cloud subnet ID"},
 		},
 		{
 			name: "invalid bootstrap mode",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
-					Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
-					SecurityGroups:    []string{"r010-36f045e2-86a1-4af8-917e-b17a41f8abe3"},
-					APIServerEndpoint: "https://10.0.0.1:6443",
-					BootstrapMode:     stringPtr("invalid-mode"),
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.BootstrapMode = stringPtr("invalid-mode")
 			},
-			wantErr: true,
-			errContains: []string{
-				"invalid bootstrapMode 'invalid-mode'",
-			},
+			errContains: []string{"invalid bootstrapMode 'invalid-mode'"},
 		},
 		{
 			name: "missing VPC",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region: "us-south",
-					Zone:   "us-south-1",
-					// Missing VPC
-					Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
-					SecurityGroups:    []string{"r010-36f045e2-86a1-4af8-917e-b17a41f8abe3"},
-					APIServerEndpoint: "https://10.0.0.1:6443",
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.VPC = ""
 			},
-			wantErr: true,
-			errContains: []string{
-				"vpc is required",
-			},
+			errContains: []string{"vpc is required"},
 		},
 		{
 			name: "no security groups - should warn",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
-					Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
-					SecurityGroups:    []string{}, // Empty
-					APIServerEndpoint: "https://10.0.0.1:6443",
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.SecurityGroups = nil
 			},
-			wantErr: false,
-			wantWarnings: []string{
-				"no security groups specified",
-			},
+			wantWarnings: []string{"no security groups specified"},
 		},
 		{
 			name: "invalid SSH key format",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
-					Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
-					SecurityGroups:    []string{"r010-36f045e2-86a1-4af8-917e-b17a41f8abe3"},
-					SSHKeys:           []string{"my-ssh-key"}, // Invalid format
-					APIServerEndpoint: "https://10.0.0.1:6443",
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.SSHKeys = []string{"my-ssh-key"}
 			},
-			wantErr: true,
-			errContains: []string{
-				"SSH key 'my-ssh-key' is not a valid IBM Cloud resource ID",
-			},
+			errContains: []string{"SSH key 'my-ssh-key' is not a valid IBM Cloud resource ID"},
 		},
 		{
 			name: "valid configuration with different region number lengths",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "br-sao",
-					Zone:              "br-sao-2",
-					VPC:               "r042-4225852b-4846-4a4a-88c4-9966471337c6", // r042 (4 digits)
-					Image:             "r006-dd3c20fa-71d3-4dc0-913f-2f097bf3e500", // r006 (3 digits)
-					Subnet:            "02c7-ac2802cf-54bb-4508-aad7-eba7e8c2034c",
-					SecurityGroups:    []string{"r050-36f045e2-86a1-4af8-917e-b17a41f8abe3"}, // r050 (3 digits)
-					APIServerEndpoint: "https://172.21.0.1:6443",
-					BootstrapMode:     stringPtr("cloud-init"),
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.Region, nc.Spec.Zone = "br-sao", "br-sao-2"
+				nc.Spec.VPC = "r042-4225852b-4846-4a4a-88c4-9966471337c6"
+				nc.Spec.Image = "r006-dd3c20fa-71d3-4dc0-913f-2f097bf3e500"
+				nc.Spec.SecurityGroups = []string{"r50-36f045e2-86a1-4af8-917e-b17a41f8abe3"}
 			},
-			wantErr:      false,
-			errContains:  []string{},
-			wantWarnings: []string{},
 		},
 		{
 			name: "http endpoint should be allowed",
-			nodeClass: &IBMNodeClass{
-				Spec: IBMNodeClassSpec{
-					Region:            "us-south",
-					Zone:              "us-south-1",
-					VPC:               "r010-2b1c3cdc-a678-4eda-86af-731130de1c0a",
-					Image:             "r010-dd3c20fa-71d3-4dc0-913f-2f097bf3e500",
-					SecurityGroups:    []string{"r010-36f045e2-86a1-4af8-917e-b17a41f8abe3"},
-					APIServerEndpoint: "http://10.0.0.1:6443", // HTTP should be allowed
-				},
+			configure: func(nc *IBMNodeClass) {
+				nc.Spec.APIServerEndpoint = "http://10.0.0.1:6443"
 			},
-			wantErr:      false,
-			errContains:  []string{},
-			wantWarnings: []string{},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			warnings, err := tt.nodeClass.ValidateCreate(ctx, tt.nodeClass)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				for _, contains := range tt.errContains {
-					assert.Contains(t, err.Error(), contains)
+			nc := validWebhookNodeClass()
+			if tt.configure != nil {
+				tt.configure(nc)
+			}
+			warnings, err := nc.ValidateCreate(context.Background(), nc)
+			if len(tt.errContains) != 0 {
+				require.Error(t, err)
+				for _, expected := range tt.errContains {
+					assert.Contains(t, err.Error(), expected)
 				}
 			} else {
 				assert.NoError(t, err)
 			}
-
-			// Check warnings
-			assert.Equal(t, len(tt.wantWarnings), len(warnings))
-			for i, warning := range tt.wantWarnings {
-				if i < len(warnings) {
-					assert.Contains(t, string(warnings[i]), warning)
-				}
+			assert.Len(t, warnings, len(tt.wantWarnings))
+			for _, expected := range tt.wantWarnings {
+				assert.Contains(t, strings.Join(warnings, "\n"), expected)
 			}
 		})
 	}
@@ -259,35 +161,26 @@ func TestIBMNodeClass_ValidateCreate(t *testing.T) {
 
 func TestIBMNodeClass_ValidateUpdate(t *testing.T) {
 	ctx := context.Background()
-	nodeClass := &IBMNodeClass{
-		Spec: IBMNodeClassSpec{
-			Region:         "br-sao",
-			Zone:           "br-sao-2",
-			VPC:            "r042-4225852b-4846-4a4a-88c4-9966471337c6",
-			Image:          "ibm-ubuntu-22-04-5-minimal-amd64-5",
-			Subnet:         "02u7-718345b5-2de1-4a9a-b1de-fa7e307ee8c5",
-			SecurityGroups: []string{"sg-k8s-workers"},
-			ResourceGroup:  "karpenter-rg",
-			// Missing APIServerEndpoint
-		},
-	}
-
-	warnings, err := nodeClass.ValidateUpdate(ctx, nil, nodeClass)
-	assert.Error(t, err)
+	nc := validWebhookNodeClass()
+	old := nc.DeepCopy()
+	nc.Spec.APIServerEndpoint = ""
+	nc.Spec.SecurityGroups = []string{"sg-k8s-workers"}
+	nc.Spec.Image = "ibm-ubuntu-22-04-5-minimal-amd64-5"
+	warnings, err := nc.ValidateUpdate(ctx, old, nc)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "apiServerEndpoint is required")
 	assert.Contains(t, err.Error(), "security group 'sg-k8s-workers' is not a valid IBM Cloud resource ID")
-	assert.True(t, len(warnings) > 0)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "image 'ibm-ubuntu-22-04-5-minimal-amd64-5' appears to be a name")
 }
 
 func TestIBMNodeClass_ValidateDelete(t *testing.T) {
-	ctx := context.Background()
-	nodeClass := &IBMNodeClass{}
-	warnings, err := nodeClass.ValidateDelete(ctx, nodeClass)
+	nc := &IBMNodeClass{}
+	warnings, err := nc.ValidateDelete(context.Background(), nc)
 	assert.NoError(t, err)
 	assert.Empty(t, warnings)
 }
 
-// Helper function to create string pointer
 func stringPtr(s string) *string {
 	return &s
 }

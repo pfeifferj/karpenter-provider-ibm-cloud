@@ -41,6 +41,7 @@ import (
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
 const (
@@ -70,6 +71,18 @@ type E2ETestSuite struct {
 
 	profileOnce sync.Once
 	profiles    []string
+
+	vpcOnce sync.Once
+	vpc     *ibm.VPCClient
+	vpcErr  error
+}
+
+// vpcClient returns one VPC client per suite; its IAM authenticator caches and refreshes the token.
+func (s *E2ETestSuite) vpcClient() (*ibm.VPCClient, error) {
+	s.vpcOnce.Do(func() {
+		s.vpc, s.vpcErr = ibm.NewVPCClient("https://"+s.testRegion+".iaas.cloud.ibm.com/v1", "iam", s.apiKey, s.testRegion, s.testResourceGroup)
+	})
+	return s.vpc, s.vpcErr
 }
 
 // NodeSnapshot represents a snapshot of a node's state for stability monitoring
@@ -166,9 +179,7 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 		apiKey:            os.Getenv("IBMCLOUD_API_KEY"),
 	}
 
-	// CRITICAL: Pre-test cleanup to prevent circuit breaker issues
-	t.Logf("Performing PRE-TEST cleanup to prevent stale resource issues...")
-	suite.cleanupAllStaleResources(t)
+	require.True(t, suite.cleanupAllStaleResources(t), "owned E2E resources must finish cleanup before testing")
 
 	// Wait for cleanup to complete and verify cluster state
 	suite.verifyCleanState(t)
@@ -178,31 +189,8 @@ func SetupE2ETestSuite(t *testing.T) *E2ETestSuite {
 
 // verifyCleanState checks that cluster is clean before starting tests
 func (s *E2ETestSuite) verifyCleanState(t *testing.T) {
-	ctx := context.Background()
-
-	// Check for any remaining E2E resources
-	var nodeClassList v1alpha1.IBMNodeClassList
-	err := s.kubeClient.List(ctx, &nodeClassList)
-	if err == nil && len(nodeClassList.Items) > 0 {
-		t.Logf("Warning: Warning: Found %d IBMNodeClass resources before test start:", len(nodeClassList.Items))
-		for _, nc := range nodeClassList.Items {
-			t.Logf("  - %s (VPC: %s, Age: %s)", nc.Name, nc.Spec.VPC, time.Since(nc.CreationTimestamp.Time).Round(time.Second))
-		}
-		// Force cleanup if any remain
-		if len(nodeClassList.Items) > 0 {
-			t.Logf("Force cleaning remaining IBMNodeClasses...")
-			s.cleanupAllStaleResources(t)
-		}
-	}
-
-	var nodeClaimList karpv1.NodeClaimList
-	err = s.kubeClient.List(ctx, &nodeClaimList)
-	if err == nil && len(nodeClaimList.Items) > 0 {
-		t.Logf("Warning: Warning: Found %d NodeClaim resources before test start", len(nodeClaimList.Items))
-		for _, nc := range nodeClaimList.Items {
-			t.Logf("  - %s (Conditions: %d)", nc.Name, len(nc.Status.Conditions))
-		}
-	}
-
-	t.Logf("Cluster state verified - ready for testing")
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	require.NoError(t, s.waitForStaleResourcesGone(ctx, t), "owned E2E resources must be absent before testing")
 }

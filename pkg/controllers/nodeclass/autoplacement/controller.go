@@ -116,7 +116,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
 			if updateErr := c.patchNodeClassStatusWithStored(ctx, nodeClass, stored); updateErr != nil {
 				if errors.IsConflict(updateErr) {
-					return reconcile.Result{Requeue: true}, nil
+					return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 				}
 				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
@@ -130,7 +130,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "InstanceTypeSelectionFailed", err.Error())
 			if updateErr := c.patchNodeClassStatusWithStored(ctx, nodeClass, stored); updateErr != nil {
 				if errors.IsConflict(updateErr) {
-					return reconcile.Result{Requeue: true}, nil
+					return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 				}
 				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
@@ -148,7 +148,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 		if err := c.patchNodeClassStatusWithStored(ctx, nodeClass, stored); err != nil {
 			if errors.IsConflict(err) {
-				return reconcile.Result{Requeue: true}, nil
+				return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 			}
 			return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
 		}
@@ -179,7 +179,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "SubnetSelectionFailed", err.Error())
 			if updateErr := c.patchNodeClassStatusWithStored(ctx, nodeClass, stored); updateErr != nil {
 				if errors.IsConflict(updateErr) {
-					return reconcile.Result{Requeue: true}, nil
+					return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 				}
 				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
@@ -193,7 +193,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			c.updateCondition(nodeClass, ConditionTypeAutoPlacement, metav1.ConditionFalse, "SubnetSelectionFailed", err.Error())
 			if updateErr := c.patchNodeClassStatusWithStored(ctx, nodeClass, stored); updateErr != nil {
 				if errors.IsConflict(updateErr) {
-					return reconcile.Result{Requeue: true}, nil
+					return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 				}
 				return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", updateErr)
 			}
@@ -215,7 +215,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 		if err := c.patchNodeClassStatusWithStored(ctx, nodeClass, stored); err != nil {
 			if errors.IsConflict(err) {
-				return reconcile.Result{Requeue: true}, nil
+				return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 			}
 			return reconcile.Result{}, fmt.Errorf("updating nodeclass status: %w", err)
 		}
@@ -235,7 +235,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		nodeClass.Status.SelectedSubnets = []string{}
 		if err := c.patchNodeClassStatusWithStored(ctx, nodeClass, stored); err != nil {
 			if errors.IsConflict(err) {
-				return reconcile.Result{Requeue: true}, nil
+				return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 			}
 			return reconcile.Result{}, fmt.Errorf("clearing selectedSubnets: %w", err)
 		}

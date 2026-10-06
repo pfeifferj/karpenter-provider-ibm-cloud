@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -43,10 +44,14 @@ type ProviderFactory struct {
 	pricingProvider      pricing.Provider
 	subnetProvider       subnet.Provider
 	instanceTypeProvider instancetype.Provider
+	apiReader            client.Reader
+	mu                   sync.Mutex
+	vpc                  commonTypes.VPCInstanceProvider
+	iks                  commonTypes.IKSWorkerPoolProvider
 }
 
 // NewProviderFactory creates a new provider factory
-func NewProviderFactory(ctx context.Context, client *ibm.Client, kubeClient client.Client, kubernetesClient kubernetes.Interface, unavailableOfferings *ibmcache.UnavailableOfferings) *ProviderFactory {
+func NewProviderFactory(ctx context.Context, client *ibm.Client, kubeClient client.Client, kubernetesClient kubernetes.Interface, unavailableOfferings *ibmcache.UnavailableOfferings, options ...FactoryOption) *ProviderFactory {
 	// Create shared providers
 	var region string
 	if client != nil {
@@ -56,68 +61,101 @@ func NewProviderFactory(ctx context.Context, client *ibm.Client, kubeClient clie
 	subnetProvider := subnet.NewProvider(client)
 	instanceTypeProvider := instancetype.NewProvider(client, pricingProvider, unavailableOfferings)
 
-	return &ProviderFactory{
+	factory := &ProviderFactory{
 		client:               client,
 		kubeClient:           kubeClient,
 		kubernetesClient:     kubernetesClient,
 		pricingProvider:      pricingProvider,
 		subnetProvider:       subnetProvider,
 		instanceTypeProvider: instanceTypeProvider,
+		apiReader:            kubeClient,
 	}
+	for _, option := range options {
+		option(factory)
+	}
+	return factory
 }
 
-// GetInstanceProvider returns the appropriate instance provider based on the NodeClass
+type FactoryOption func(*ProviderFactory)
+
+func WithAPIReader(reader client.Reader) FactoryOption {
+	return func(f *ProviderFactory) { f.apiReader = reader }
+}
+
+// WithVPCInstanceProvider supplies the VPC instance provider instead of building one lazily.
+func WithVPCInstanceProvider(provider commonTypes.VPCInstanceProvider) FactoryOption {
+	return func(f *ProviderFactory) { f.vpc = provider }
+}
+
 func (f *ProviderFactory) GetInstanceProvider(nodeClass *v1alpha1.IBMNodeClass) (commonTypes.InstanceProvider, error) {
 	if nodeClass == nil {
 		return nil, fmt.Errorf("nodeClass cannot be nil")
 	}
+	return f.GetInstanceProviderForMode(f.determineProviderMode(nodeClass))
+}
 
-	mode := f.determineProviderMode(nodeClass)
-
+func (f *ProviderFactory) GetInstanceProviderForMode(mode commonTypes.ProviderMode) (commonTypes.InstanceProvider, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	switch mode {
 	case commonTypes.IKSMode:
-		return iksProvider.NewIKSWorkerPoolProvider(f.client, f.kubeClient)
-	case commonTypes.VPCMode:
-		if f.kubernetesClient != nil {
-			return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient, vpcProvider.WithKubernetesClient(f.kubernetesClient))
+		if f.iks == nil {
+			provider, err := iksProvider.NewIKSWorkerPoolProvider(f.client, f.kubeClient,
+				iksProvider.WithAPIReader(f.apiReader),
+				iksProvider.WithInstanceTypeProvider(f.instanceTypeProvider),
+			)
+			if err != nil {
+				return nil, err
+			}
+			f.iks = provider
 		}
-		// Standard constructor without kubernetes client
-		return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
+		return f.iks, nil
+	case commonTypes.VPCMode:
+		if f.vpc == nil {
+			options := []vpcProvider.Option{vpcProvider.WithAPIReader(f.apiReader)}
+			if f.kubernetesClient != nil {
+				options = append(options, vpcProvider.WithKubernetesClient(f.kubernetesClient))
+			}
+			provider, err := vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient, options...)
+			if err != nil {
+				return nil, err
+			}
+			f.vpc = provider
+		}
+		return f.vpc, nil
 	default:
 		return nil, fmt.Errorf("unknown provider mode: %s", mode)
 	}
 }
 
-// GetVPCProvider returns a VPC-specific provider
 func (f *ProviderFactory) GetVPCProvider(nodeClass *v1alpha1.IBMNodeClass) (commonTypes.VPCInstanceProvider, error) {
 	if nodeClass == nil {
 		return nil, fmt.Errorf("nodeClass cannot be nil")
 	}
-
 	mode := f.determineProviderMode(nodeClass)
 	if mode != commonTypes.VPCMode {
 		return nil, fmt.Errorf("VPC provider requested but NodeClass is configured for %s mode", mode)
 	}
-
-	if f.kubernetesClient != nil {
-		return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient, vpcProvider.WithKubernetesClient(f.kubernetesClient))
+	provider, err := f.GetInstanceProviderForMode(mode)
+	if err != nil {
+		return nil, err
 	}
-	// Standard constructor without kubernetes client
-	return vpcProvider.NewVPCInstanceProvider(f.client, f.kubeClient)
+	return provider.(commonTypes.VPCInstanceProvider), nil
 }
 
-// GetIKSProvider returns an IKS-specific provider
 func (f *ProviderFactory) GetIKSProvider(nodeClass *v1alpha1.IBMNodeClass) (commonTypes.IKSWorkerPoolProvider, error) {
 	if nodeClass == nil {
 		return nil, fmt.Errorf("nodeClass cannot be nil")
 	}
-
 	mode := f.determineProviderMode(nodeClass)
 	if mode != commonTypes.IKSMode {
 		return nil, fmt.Errorf("IKS provider requested but NodeClass is configured for %s mode", mode)
 	}
-
-	return iksProvider.NewIKSWorkerPoolProvider(f.client, f.kubeClient)
+	provider, err := f.GetInstanceProviderForMode(mode)
+	if err != nil {
+		return nil, err
+	}
+	return provider.(commonTypes.IKSWorkerPoolProvider), nil
 }
 
 // determineProviderMode determines which provider mode to use based on NodeClass configuration

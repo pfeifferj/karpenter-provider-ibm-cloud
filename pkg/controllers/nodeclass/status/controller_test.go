@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -115,6 +116,41 @@ func getValidNodeClass() *v1alpha1.IBMNodeClass {
 			Image:           "r006-988caa8b-7786-49c9-aea6-9553af2b1969", // Real Ubuntu 20.04 image
 			InstanceProfile: "bx2-2x8",                                   // Add required instanceProfile
 		},
+	}
+}
+
+func TestReconcilePreservesConditionsAndRecordsGeneration(t *testing.T) {
+	for _, valid := range []bool{true, false} {
+		t.Run(fmt.Sprintf("valid=%t", valid), func(t *testing.T) {
+			nc := getValidNodeClass()
+			nc.Generation = 7
+			if !valid {
+				nc.Spec.Region = ""
+			}
+			independent := metav1.Condition{
+				Type: "AutoPlacement", Status: metav1.ConditionTrue,
+				Reason: "Selected", Message: "Placement selected", ObservedGeneration: 6,
+				LastTransitionTime: metav1.NewTime(time.Unix(1, 0)),
+			}
+			nc.Status.Conditions = []metav1.Condition{independent}
+			kubeClient := fake.NewClientBuilder().WithScheme(getTestScheme()).
+				WithObjects(nc).WithStatusSubresource(nc).Build()
+			_, err := NewTestController(kubeClient).Reconcile(context.Background(), reconcile.Request{
+				NamespacedName: client.ObjectKeyFromObject(nc),
+			})
+			require.NoError(t, err)
+			updated := &v1alpha1.IBMNodeClass{}
+			require.NoError(t, kubeClient.Get(context.Background(), client.ObjectKeyFromObject(nc), updated))
+			require.Equal(t, &independent, meta.FindStatusCondition(updated.Status.Conditions, independent.Type))
+			ready := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+			require.NotNil(t, ready)
+			require.Equal(t, int64(7), ready.ObservedGeneration)
+			expected := metav1.ConditionFalse
+			if valid {
+				expected = metav1.ConditionTrue
+			}
+			require.Equal(t, expected, ready.Status)
+		})
 	}
 }
 

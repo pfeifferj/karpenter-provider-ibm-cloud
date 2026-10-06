@@ -83,9 +83,20 @@ manifests: ## generate the controller-gen kubernetes manifests
 	$(CONTROLLER_GEN) crd paths="./vendor/sigs.k8s.io/karpenter/pkg/apis/..." output:crd:artifacts:config=charts/crds
 	@echo "Expanding NodeSelectorRequirement operator enum in generated CRDs..."
 	@hack/expand-operator-enum.sh charts/crds
+	$(MAKE) rbac-manifests
+
+.PHONY: rbac-manifests
+rbac-manifests: ## Generate Helm RBAC manifests
 	@echo "Generating RBAC manifests..."
 	@rm -f charts/templates/rbac_*.yaml charts/templates/role_*.yaml charts/templates/clusterrole_*.yaml
 	GOFLAGS="-mod=mod" $(CONTROLLER_GEN) rbac:roleName=karpenter-manager paths="./pkg/controllers/..." output:rbac:dir=charts/templates
+	@sed -i \
+		-e '/^  name: karpenter-manager$$/{N;' \
+		-e 's/^  name: karpenter-manager\nrules:$$/  name: {{ include "karpenter.fullname" . }}-manager\nrules:/;' \
+		-e 's/^  name: karpenter-manager\n  namespace: karpenter$$/  name: {{ include "karpenter.fullname" . }}\n  namespace: {{ .Release.Namespace }}/;' \
+		-e 's/^  name: karpenter-manager\n  namespace: kube-system$$/  name: {{ include "karpenter.fullname" . }}-dns\n  namespace: kube-system/;' \
+		-e 's/^  name: karpenter-manager\n  namespace: kube-node-lease$$/  name: {{ include "karpenter.fullname" . }}-lease\n  namespace: kube-node-lease/;' \
+		-e '}' charts/templates/role.yaml
 
 .PHONY: test
 test: vendor unit
@@ -96,6 +107,14 @@ ci: ensure-hooks vendor unit lint ## Run all CI checks (tests + linting)
 .PHONY: unit
 unit:
 	go test $(GTEST_ARGS) ./...
+
+.PHONY: test-alerts
+test-alerts: ## Test rendered Prometheus alerts (requires Helm and promtool)
+	hack/test-prometheus-rules.sh
+
+.PHONY: test-rbac
+test-rbac: ## Test Helm RBAC references (requires Helm and Python PyYAML)
+	python3 hack/test-helm-rbac.py
 
 .PHONY: e2e
 e2e: ## Run e2e tests against real cluster (requires env vars)

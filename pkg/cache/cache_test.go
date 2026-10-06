@@ -17,10 +17,15 @@ package cache
 
 import (
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/metrics"
 )
 
 // pollUntil polls a condition until it's true or timeout
@@ -43,7 +48,6 @@ func TestNewCache(t *testing.T) {
 	assert.NotNil(t, cache)
 	assert.Equal(t, ttl, cache.ttl)
 	assert.NotNil(t, cache.items)
-	assert.NotNil(t, cache.stopChan)
 
 	// Cleanup
 	cache.Stop()
@@ -364,4 +368,40 @@ func TestCacheWithDifferentTypes(t *testing.T) {
 	mapVal, exists := cache.Get("map")
 	assert.True(t, exists)
 	assert.Equal(t, map[string]int{"key": 123}, mapVal.(map[string]int))
+}
+
+func TestCacheConstructionDoesNotRequireShutdown(t *testing.T) {
+	before := runtime.NumGoroutine()
+	for range 100 {
+		New(time.Minute)
+	}
+	assert.Less(t, runtime.NumGoroutine()-before, 10)
+}
+
+func TestCacheInsertSweepsExpiredUniqueKeys(t *testing.T) {
+	c := New(5 * time.Millisecond)
+	c.Set("old", true)
+	time.Sleep(10 * time.Millisecond)
+	c.Set("new", true)
+	c.mu.RLock()
+	_, old := c.items["old"]
+	c.mu.RUnlock()
+	assert.False(t, old)
+}
+
+func TestNamedCacheMetricsExcludeExistenceChecks(t *testing.T) {
+	cache := NewNamed("metrics-test", time.Minute)
+	hits := func() float64 { return testutil.ToFloat64(metrics.CacheHitsTotal.WithLabelValues("metrics-test")) }
+	misses := func() float64 { return testutil.ToFloat64(metrics.CacheMissesTotal.WithLabelValues("metrics-test")) }
+
+	cache.Set("key", "value")
+	require.True(t, cache.Has("key"))
+	require.False(t, cache.Has("absent"))
+	require.Zero(t, hits())
+	require.Zero(t, misses())
+
+	_, _ = cache.Get("key")
+	_, _ = cache.Get("absent")
+	require.Equal(t, 1.0, hits())
+	require.Equal(t, 1.0, misses())
 }

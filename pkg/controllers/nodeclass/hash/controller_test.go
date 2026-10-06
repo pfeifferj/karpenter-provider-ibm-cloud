@@ -25,12 +25,14 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 func TestNewController(t *testing.T) {
@@ -73,6 +75,7 @@ func TestNewController(t *testing.T) {
 func TestController_Reconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	tests := []struct {
 		name               string
@@ -261,6 +264,7 @@ func TestController_Reconcile(t *testing.T) {
 func TestController_ReconcileNotFound(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	controller, err := NewController(fakeClient)
@@ -283,6 +287,7 @@ func TestController_ReconcileNotFound(t *testing.T) {
 func TestController_HashCalculation(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	// Create two identical nodeclasses
 	nodeClass1 := &v1alpha1.IBMNodeClass{
@@ -347,6 +352,7 @@ func TestController_HashCalculation(t *testing.T) {
 func TestController_Register(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	controller, err := NewController(fakeClient)
@@ -363,6 +369,7 @@ func TestController_Register(t *testing.T) {
 func TestController_ConcurrentReconciliation(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
 
 	// Create multiple nodeclasses
 	var nodeclasses []runtime.Object

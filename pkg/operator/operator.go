@@ -63,7 +63,7 @@ func NewOperator(ctx context.Context, coreOperator *operator.Operator) (context.
 	unavailableOfferings := cache.NewUnavailableOfferings()
 
 	// Create provider factory with all providers
-	providerFactory := providers.NewProviderFactory(ctx, ibmClient, coreOperator.GetClient(), kubernetesClient, unavailableOfferings)
+	providerFactory := providers.NewProviderFactory(ctx, ibmClient, coreOperator.GetClient(), kubernetesClient, unavailableOfferings, providers.WithAPIReader(coreOperator.GetAPIReader()))
 
 	// Create options with environment variables (including circuit breaker config)
 	opts := options.NewOptions()

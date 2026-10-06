@@ -17,11 +17,18 @@ limitations under the License.
 package ibm
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIBMError_Error(t *testing.T) {
@@ -220,13 +227,125 @@ func TestParseError_StringPatterns(t *testing.T) {
 	}
 }
 
-func TestParseError_SDKProblem(t *testing.T) {
-	// core.SDKProblem requires complex initialization
-	// and we can't create a valid instance without internal IBM SDK knowledge
-	t.Skip("Skipping SDK problem test - requires internal SDK structures")
+type errorResponseTransport func(*http.Request) (*http.Response, error)
 
-	// This test would require mocking internal SDK structures which is not
-	// feasible without access to the internal implementation details
+func (f errorResponseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestParseError_WrappedSDKHTTPResponse(t *testing.T) {
+	sdk, err := vpcv1.NewVpcV1(&vpcv1.VpcV1Options{URL: "https://test.iaas.cloud.ibm.com/v1", Authenticator: &core.NoAuthAuthenticator{}})
+	require.NoError(t, err)
+	requests := 0
+	sdk.Service.SetHTTPClient(&http.Client{Transport: errorResponseTransport(func(request *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"errors":[{"code":"validation_failed","message":"Expected only one oneOf fields to be set: got 0","more_info":"https://cloud.ibm.com/apidocs/vpc"}]}`)),
+			Request:    request,
+		}, nil
+	})})
+	_, response, requestErr := sdk.GetInstanceWithContext(context.Background(), &vpcv1.GetInstanceOptions{ID: core.StringPtr("instance-id")})
+	require.Error(t, requestErr)
+	require.Equal(t, http.StatusBadRequest, response.StatusCode)
+	require.Equal(t, 1, requests)
+	wrappedErr := fmt.Errorf("reconciling claim: %w", fmt.Errorf("getting instance: %w", requestErr))
+	parsed := ParseError(wrappedErr)
+	require.Equal(t, http.StatusBadRequest, parsed.StatusCode)
+	require.Equal(t, ErrorTypeValidation, parsed.Type)
+	require.Equal(t, "validation_failed", parsed.Code)
+	require.Equal(t, "https://cloud.ibm.com/apidocs/vpc", parsed.MoreInfo)
+	require.False(t, parsed.Retryable)
+	require.ErrorIs(t, parsed, wrappedErr)
+	var httpProblem *core.HTTPProblem
+	require.ErrorAs(t, parsed, &httpProblem)
+	require.Same(t, response, httpProblem.Response)
+}
+
+func TestParseError_SDKProblemWithoutResponse(t *testing.T) {
+	for _, message := range []string{"invalid request", "404 not found", "request timeout", "Expected only one oneOf fields to be set: got 0"} {
+		t.Run(message, func(t *testing.T) {
+			var problem error = core.SDKErrorf(context.DeadlineExceeded, message, "request-error", core.NewProblemComponent("github.com/IBM/vpc-go-sdk/vpcv1", "test"))
+			wrappedErr := fmt.Errorf("creating instance: %w", problem)
+			parsed := ParseError(wrappedErr)
+			require.Zero(t, parsed.StatusCode)
+			require.Equal(t, ErrorTypeUnknown, parsed.Type)
+			require.ErrorIs(t, parsed, context.DeadlineExceeded)
+		})
+	}
+}
+
+func TestParseError_TransportFailureAfterRequestRemainsUncertain(t *testing.T) {
+	sdk, err := vpcv1.NewVpcV1(&vpcv1.VpcV1Options{URL: "https://test.iaas.cloud.ibm.com/v1", Authenticator: &core.NoAuthAuthenticator{}})
+	require.NoError(t, err)
+	requests := 0
+	transportErr := errors.New("validation response lost after request submission")
+	sdk.Service.SetHTTPClient(&http.Client{Transport: errorResponseTransport(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return nil, transportErr
+	})})
+	_, response, requestErr := sdk.GetInstanceWithContext(context.Background(), &vpcv1.GetInstanceOptions{ID: core.StringPtr("instance-id")})
+	require.Error(t, requestErr)
+	require.Nil(t, response)
+	require.Equal(t, 1, requests)
+	parsed := ParseError(fmt.Errorf("getting instance: %w", requestErr))
+	require.Zero(t, parsed.StatusCode)
+	require.Equal(t, ErrorTypeUnknown, parsed.Type)
+	require.ErrorIs(t, parsed, transportErr)
+}
+
+func TestParseError_HTTPProblemWithoutResponse(t *testing.T) {
+	var problem error = &core.HTTPProblem{IBMProblem: core.IBMErrorf(nil, core.NewProblemComponent("test", "test"), "invalid request 404", "missing-response")}
+	parsed := ParseError(fmt.Errorf("creating instance: %w", problem))
+	require.Zero(t, parsed.StatusCode)
+	require.Equal(t, ErrorTypeUnknown, parsed.Type)
+}
+
+func TestParseErrorResponse_ActualStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status    int
+		errType   ErrorType
+		retryable bool
+	}{
+		{http.StatusBadRequest, ErrorTypeValidation, false},
+		{http.StatusUnauthorized, ErrorTypeUnauthorized, false},
+		{http.StatusForbidden, ErrorTypeForbidden, false},
+		{http.StatusNotFound, ErrorTypeNotFound, false},
+		{http.StatusRequestTimeout, ErrorTypeTimeout, true},
+		{http.StatusConflict, ErrorTypeConflict, false},
+		{http.StatusUnprocessableEntity, ErrorTypeValidation, false},
+		{http.StatusTooManyRequests, ErrorTypeRateLimit, true},
+		{http.StatusInternalServerError, ErrorTypeServerError, true},
+		{http.StatusServiceUnavailable, ErrorTypeServerError, true},
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			original := fmt.Errorf("operation: %w", errors.New("invalid object, formerly returned 404"))
+			parsed := ParseErrorResponse(original, &core.DetailedResponse{
+				StatusCode: tc.status,
+				Headers:    http.Header{"Retry-After": []string{"37"}},
+				Result:     map[string]interface{}{"code": "request_failed", "more_info": "https://cloud.ibm.com/apidocs/vpc"},
+			})
+			require.Equal(t, tc.status, parsed.StatusCode)
+			require.Equal(t, tc.errType, parsed.Type)
+			require.Equal(t, tc.retryable, parsed.Retryable)
+			require.Equal(t, "request_failed", parsed.Code)
+			require.Equal(t, "https://cloud.ibm.com/apidocs/vpc", parsed.MoreInfo)
+			require.Equal(t, 37, parsed.RetryAfter)
+			require.ErrorIs(t, parsed, original)
+		})
+	}
+}
+
+func TestParseErrorResponse_MissingDetails(t *testing.T) {
+	for _, result := range []interface{}{nil, map[string]interface{}{"errors": []interface{}{}}, map[string]interface{}{"errors": "unexpected"}, map[string]interface{}{"errorCode": "failure"}} {
+		parsed := ParseErrorResponse(errors.New("request failed"), &core.DetailedResponse{StatusCode: http.StatusBadGateway, Result: result})
+		require.Equal(t, http.StatusBadGateway, parsed.StatusCode)
+		require.Equal(t, ErrorTypeServerError, parsed.Type)
+	}
+	require.Nil(t, ParseErrorResponse(nil, &core.DetailedResponse{StatusCode: http.StatusBadRequest}))
+	parsed := ParseErrorResponse(errors.New("transport failed"), nil)
+	require.Zero(t, parsed.StatusCode)
 }
 
 func TestParseError_AlreadyIBMError(t *testing.T) {
@@ -239,6 +358,7 @@ func TestParseError_AlreadyIBMError(t *testing.T) {
 
 	parsedErr := ParseError(originalErr)
 	assert.Equal(t, originalErr, parsedErr)
+	assert.Same(t, originalErr, ParseError(fmt.Errorf("reconciling instance: %w", originalErr)))
 }
 
 func TestParseError_Nil(t *testing.T) {

@@ -17,6 +17,7 @@ package cloudprovider
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"strings"
@@ -46,6 +47,8 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/instancetype"
 	commonTypes "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/types"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/vpc/subnet"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/nodeclass"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 )
 
 const CloudProviderName = "ibmcloud"
@@ -63,13 +66,13 @@ var _ cloudprovider.CloudProvider = (*CloudProvider)(nil)
 
 type CloudProvider struct {
 	kubeClient client.Client
+	apiReader  client.Reader
 	recorder   events.Recorder
 	ibmClient  *ibm.Client
 
 	instanceTypeProvider  instancetype.Provider
 	providerFactory       *providers.ProviderFactory
 	subnetProvider        subnet.Provider
-	defaultProviderMode   commonTypes.ProviderMode
 	circuitBreakerManager *NodeClassCircuitBreakerManager
 }
 
@@ -78,11 +81,12 @@ func New(ctx context.Context, kubeClient client.Client,
 	ibmClient *ibm.Client,
 	instanceTypeProvider instancetype.Provider,
 	subnetProvider subnet.Provider,
-	circuitBreakerConfig *CircuitBreakerConfig) *CloudProvider {
-	// Determine the default provider mode based on environment
-	defaultMode := commonTypes.VPCMode
-	if os.Getenv("IKS_CLUSTER_ID") != "" {
-		defaultMode = commonTypes.IKSMode
+	circuitBreakerConfig *CircuitBreakerConfig, factories ...*providers.ProviderFactory) *CloudProvider {
+	var factory *providers.ProviderFactory
+	if len(factories) != 0 && factories[0] != nil {
+		factory = factories[0]
+	} else {
+		factory = providers.NewProviderFactory(ctx, ibmClient, kubeClient, nil, nil)
 	}
 
 	// Initialize per-NodeClass circuit breaker manager
@@ -92,13 +96,13 @@ func New(ctx context.Context, kubeClient client.Client,
 
 	return &CloudProvider{
 		kubeClient: kubeClient,
+		apiReader:  kubeClient,
 		recorder:   recorder,
 		ibmClient:  ibmClient,
 
 		instanceTypeProvider:  instanceTypeProvider,
-		providerFactory:       providers.NewProviderFactory(ctx, ibmClient, kubeClient, nil, nil),
+		providerFactory:       factory,
 		subnetProvider:        subnetProvider,
-		defaultProviderMode:   defaultMode,
 		circuitBreakerManager: circuitBreakerManager,
 	}
 }
@@ -106,23 +110,38 @@ func New(ctx context.Context, kubeClient client.Client,
 func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.NodeClaim, error) {
 	log := log.FromContext(ctx).WithValues("providerID", providerID)
 
-	// For Get operations without NodeClass, use a minimal NodeClass with default provider mode
-	nodeClass := &v1alpha1.IBMNodeClass{}
-	if c.defaultProviderMode == commonTypes.IKSMode {
-		// Set IKS cluster ID from environment to trigger IKS mode
-		nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
+	nodeClass, mode, err := classForProviderID(providerID)
+	if err != nil {
+		return nil, err
 	}
+	instanceProvider, err := c.providerFactory.GetInstanceProviderForMode(mode)
 
-	// Get the appropriate instance provider
-	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 	if err != nil {
 		log.Error(err, "Failed to get instance provider")
 		return nil, fmt.Errorf("getting instance provider, %w", err)
 	}
 
+	targetVerified := false
+	if reader := c.apiReader; reader != nil {
+		claims := &karpv1.NodeClaimList{}
+		if listErr := reader.List(ctx, claims); listErr != nil {
+			return nil, listErr
+		}
+		for i := range claims.Items {
+			if claims.Items[i].Status.ProviderID == providerID {
+				if targetErr := c.ensureBirthTarget(ctx, instanceProvider, &claims.Items[i]); targetErr != nil {
+					return nil, targetErr
+				}
+				targetVerified = true
+			}
+		}
+	}
 	// Get the instance details
-	node, err := instanceProvider.Get(ctx, providerID)
+	node, err := freshGet(ctx, instanceProvider, providerID)
 	if err != nil {
+		if mode == commonTypes.VPCMode && !targetVerified && cloudprovider.IsNodeClaimNotFoundError(err) {
+			return nil, fmt.Errorf("VPC absence cannot be verified without a birth account: %v", err)
+		}
 		log.Error(err, "Failed to get instance")
 		return nil, fmt.Errorf("getting instance, %w", err)
 	}
@@ -133,24 +152,19 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 	zone := node.Labels["topology.kubernetes.io/zone"]
 	log.Info("Found instance", "type", instanceTypeName, "zone", zone)
 
-	instanceTypes, err := c.instanceTypeProvider.List(ctx, nodeClass)
-	if err != nil {
-		log.Error(err, "Failed to list instance types")
-		return nil, fmt.Errorf("listing instance types, %w", err)
-	}
-
-	instanceType, _ := lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool {
-		return i.Name == instanceTypeName
-	})
-	if instanceType != nil {
-		log.Info("Resolved instance type", "type", instanceType.Name)
+	var instanceType *cloudprovider.InstanceType
+	if mode == commonTypes.VPCMode && len(node.Status.Capacity) == 0 {
+		instanceTypes, err := c.instanceTypeProvider.List(ctx, nodeClass)
+		if err != nil {
+			return nil, fmt.Errorf("listing instance types: %w", err)
+		}
+		instanceType, _ = lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool { return i.Name == instanceTypeName })
 	}
 
 	nc := &karpv1.NodeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				karpv1.CapacityTypeLabelKey: node.Labels[karpv1.CapacityTypeLabelKey],
-			},
+			Labels:      node.Labels,
+			Annotations: node.Annotations,
 		},
 		Status: karpv1.NodeClaimStatus{
 			ProviderID: providerID,
@@ -160,6 +174,9 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 	if instanceType != nil {
 		nc.Status.Capacity = instanceType.Capacity
 		nc.Status.Allocatable = instanceType.Allocatable()
+	} else {
+		nc.Status.Capacity = node.Status.Capacity.DeepCopy()
+		nc.Status.Allocatable = node.Status.Allocatable.DeepCopy()
 	}
 
 	log.Info("Successfully retrieved NodeClaim",
@@ -170,81 +187,139 @@ func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.Nod
 }
 
 func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
-	log := log.FromContext(ctx)
-
-	// Get all nodes from the Kubernetes API
-	nodeList := &corev1.NodeList{}
-	if err := c.kubeClient.List(ctx, nodeList); err != nil {
-		return nil, fmt.Errorf("listing nodes, %w", err)
+	nodes := &corev1.NodeList{}
+	reader := c.apiReader
+	if reader == nil {
+		reader = c.kubeClient
 	}
-
-	var nodeClaims []*karpv1.NodeClaim
-	var providerErrors []error
-
-	for _, node := range nodeList.Items {
-		if node.Spec.ProviderID == "" {
-			continue
+	if err := reader.List(ctx, nodes); err != nil {
+		return nil, fmt.Errorf("listing nodes: %w", err)
+	}
+	owned := &karpv1.NodeClaimList{}
+	if err := reader.List(ctx, owned); err != nil {
+		return nil, err
+	}
+	byID := map[string]*karpv1.NodeClaim{}
+	for i := range owned.Items {
+		if owned.Items[i].Status.ProviderID != "" {
+			byID[owned.Items[i].Status.ProviderID] = &owned.Items[i]
 		}
-
-		// Skip nodes that don't have IBM provider IDs
+	}
+	claims := []*karpv1.NodeClaim{}
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
 		if !strings.HasPrefix(node.Spec.ProviderID, "ibm://") {
 			continue
 		}
-
-		// Handle IKS managed nodes (format: ibm://account-id///cluster-id/worker-id)
-		// These nodes are supported - the instance provider will map IKS worker to VPC instance
-
-		// For List operations, use default provider mode
-		nodeClass := &v1alpha1.IBMNodeClass{}
-		if c.defaultProviderMode == commonTypes.IKSMode {
-			nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
-		}
-
-		instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
+		_, mode, err := classForProviderID(node.Spec.ProviderID)
 		if err != nil {
-			log.Error(err, "Failed to get instance provider", "node", node.Name, "providerID", node.Spec.ProviderID)
-			providerErrors = append(providerErrors, fmt.Errorf("node %s: %w", node.Name, err))
-			continue
+			return nil, err
 		}
-
-		_, err = instanceProvider.Get(ctx, node.Spec.ProviderID)
+		provider, err := c.providerFactory.GetInstanceProviderForMode(mode)
 		if err != nil {
-			// Check if this is an IKS managed cluster that doesn't allow Karpenter management
-			if strings.Contains(err.Error(), "not configured for Karpenter management") {
-				log.V(1).Info("Skipping IKS managed node - cluster not configured for Karpenter", "node", node.Name)
+			return nil, fmt.Errorf("inventory for node %s: %w", node.Name, err)
+		}
+		claim := byID[node.Spec.ProviderID]
+		if claim != nil {
+			if err := c.ensureBirthTarget(ctx, provider, claim); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := freshGet(ctx, provider, node.Spec.ProviderID); err != nil {
+			// Omitting an absent instance is safe even when its account is unproven: List only
+			// drives deletion of NodeClaims, and a claimless node has none to delete.
+			if cloudprovider.IsNodeClaimNotFoundError(err) {
 				continue
 			}
-			log.Error(err, "Failed to get instance details", "node", node.Name)
-			continue
+			return nil, fmt.Errorf("inventory for node %s: %w", node.Name, err)
 		}
-
-		nc := &karpv1.NodeClaim{
-			Status: karpv1.NodeClaimStatus{
-				ProviderID: node.Spec.ProviderID,
-			},
-		}
-		nodeClaims = append(nodeClaims, nc)
+		claims = append(claims, &karpv1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Labels: node.Labels, Annotations: node.Annotations}, Status: karpv1.NodeClaimStatus{ProviderID: node.Spec.ProviderID}})
 	}
-
-	// Report any provider errors that occurred during listing
-	if len(providerErrors) > 0 {
-		log.Info("Some nodes were excluded from list due to provider errors",
-			"excludedNodeCount", len(providerErrors),
-			"totalNodes", len(nodeList.Items),
-			"includedNodes", len(nodeClaims))
-		// Log first few errors for debugging context
-		for i, err := range providerErrors {
-			if i >= 3 { // Only log first 3 to avoid spam
-				log.Info("Additional provider errors omitted for brevity", "remainingErrors", len(providerErrors)-3)
-				break
-			}
-			log.V(1).Info("Provider error detail", "error", err.Error())
-		}
-	}
-
-	log.Info("Listed all instances")
-	return nodeClaims, nil
+	return claims, nil
 }
+
+func validateBirthTarget(ctx context.Context, provider commonTypes.InstanceProvider, claim *karpv1.NodeClaim) error {
+	if strings.HasPrefix(claim.Status.ProviderID, "ibm:///") || claim.Annotations[ownership.BackendAnnotation] == "vpc" || claim.Annotations["karpenter-ibm.sh/vpc-launch"] != "" {
+		validator, ok := provider.(interface {
+			ValidateLaunchTarget(context.Context, *karpv1.NodeClaim) error
+		})
+		if !ok {
+			return fmt.Errorf("provider cannot validate VPC allocation target")
+		}
+		return validator.ValidateLaunchTarget(ctx, claim)
+	}
+	if account := claim.Annotations[ownership.AccountIDAnnotation]; account != "" && account != os.Getenv("IBM_ACCOUNT_ID") {
+		return fmt.Errorf("configured IBM account differs from allocation account")
+	}
+	return nil
+}
+
+func (c *CloudProvider) ensureBirthTarget(ctx context.Context, provider commonTypes.InstanceProvider, claim *karpv1.NodeClaim) error {
+	if strings.HasPrefix(claim.Status.ProviderID, "ibm:///") && claim.Annotations["karpenter-ibm.sh/vpc-launch"] == "" && claim.Annotations[ownership.AccountIDAnnotation] == "" {
+		if claim.UID == "" {
+			return fmt.Errorf("legacy VPC ownership requires a persisted NodeClaim")
+		}
+		node, err := freshGet(ctx, provider, claim.Status.ProviderID)
+		if err != nil {
+			return fmt.Errorf("legacy VPC birth account remains unverified: %v", err)
+		}
+		if node == nil || node.Spec.ProviderID != claim.Status.ProviderID || node.Annotations[ownership.AccountIDAnnotation] == "" {
+			return fmt.Errorf("legacy VPC lookup did not return verified account identity")
+		}
+		reader := c.apiReader
+		if reader == nil {
+			reader = c.kubeClient
+		}
+		fresh := &karpv1.NodeClaim{}
+		if err := reader.Get(ctx, client.ObjectKeyFromObject(claim), fresh); err != nil {
+			return err
+		}
+		if fresh.UID != claim.UID || fresh.Status.ProviderID != claim.Status.ProviderID {
+			return fmt.Errorf("legacy VPC claim changed during account verification")
+		}
+		if fresh.Annotations["karpenter-ibm.sh/vpc-launch"] == "" && fresh.Annotations[ownership.AccountIDAnnotation] == "" {
+			stored := fresh.DeepCopy()
+			if fresh.Annotations == nil {
+				fresh.Annotations = map[string]string{}
+			}
+			fresh.Annotations[ownership.AccountIDAnnotation] = node.Annotations[ownership.AccountIDAnnotation]
+			if err := c.kubeClient.Patch(ctx, fresh, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
+				return err
+			}
+		}
+		*claim = *fresh
+	}
+	return validateBirthTarget(ctx, provider, claim)
+}
+
+func freshGet(ctx context.Context, provider commonTypes.InstanceProvider, id string) (*corev1.Node, error) {
+	if fresh, ok := provider.(interface {
+		GetFresh(context.Context, string) (*corev1.Node, error)
+	}); ok {
+		return fresh.GetFresh(ctx, id)
+	}
+	return provider.Get(ctx, id)
+}
+
+func classForProviderID(providerID string) (*v1alpha1.IBMNodeClass, commonTypes.ProviderMode, error) {
+	nodeClass := &v1alpha1.IBMNodeClass{}
+	if strings.HasPrefix(providerID, "ibm:///") {
+		parts := strings.Split(strings.TrimPrefix(providerID, "ibm:///"), "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, "", fmt.Errorf("invalid VPC provider ID %q", providerID)
+		}
+		nodeClass.Spec.Region = parts[0]
+		return nodeClass, commonTypes.VPCMode, nil
+	}
+	parts := strings.Split(strings.TrimPrefix(providerID, "ibm://"), "/")
+	if !strings.HasPrefix(providerID, "ibm://") || len(parts) != 5 || parts[0] == "" || parts[1] != "" || parts[2] != "" || parts[3] == "" || parts[4] == "" {
+		return nil, "", fmt.Errorf("invalid IBM provider ID %q", providerID)
+	}
+	nodeClass.Spec.IKSClusterID = parts[3]
+	return nodeClass, commonTypes.IKSMode, nil
+}
+
+func (c *CloudProvider) SetAPIReader(reader client.Reader) { c.apiReader = reader }
 
 func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim) (*karpv1.NodeClaim, error) {
 	log := log.FromContext(ctx).WithValues(
@@ -252,6 +327,31 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		"requirements", nodeClaim.Spec.Requirements,
 		"resources", nodeClaim.Spec.Resources)
 	log.Info("Started node creation")
+	if nodeClaim.UID != "" {
+		current := &karpv1.NodeClaim{}
+		reader := c.apiReader
+		if reader == nil {
+			reader = c.kubeClient
+		}
+		if err := reader.Get(ctx, client.ObjectKeyFromObject(nodeClaim), current); err != nil {
+			return nil, err
+		}
+		if current.UID != nodeClaim.UID {
+			return nil, fmt.Errorf("NodeClaim UID changed during launch")
+		}
+		nodeClaim = current
+	}
+	if mode := nodeClaim.Annotations[ownership.BackendAnnotation]; mode != "" {
+		provider, err := c.providerFactory.GetInstanceProviderForMode(commonTypes.ProviderMode(mode))
+		if err != nil {
+			return nil, err
+		}
+		node, err := provider.Create(ctx, nodeClaim, nil)
+		if err != nil {
+			return nil, err
+		}
+		return c.nodeClaimForNode(nodeClaim, node, nil, nil)
+	}
 
 	nodeClass := &v1alpha1.IBMNodeClass{}
 	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
@@ -291,6 +391,9 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		}
 	}
 
+	if readyCondition.ObservedGeneration != nodeClass.Generation {
+		return nil, fmt.Errorf("NodeClass %s validation is stale for generation %d", nodeClass.Name, nodeClass.Generation)
+	}
 	if readyCondition.Status == metav1.ConditionFalse {
 		log.Error(fmt.Errorf("%s", readyCondition.Message), "NodeClass not ready")
 		return nil, cloudprovider.NewNodeClassNotReadyError(fmt.Errorf("%s", readyCondition.Message))
@@ -393,6 +496,13 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 
 	node, err := instanceProvider.Create(ctx, nodeClaim, compatible)
 	if err != nil {
+		var pending *cloudprovider.CreateError
+		if stderrors.As(err, &pending) && pending.ConditionReason == "WorkerProvisioning" {
+			c.circuitBreakerManager.RecordPending(nodeClass.Name, nodeClass.Spec.Region)
+			recorded = true
+			return nil, err
+		}
+
 		// Log the actual error details for better troubleshooting
 		log.Error(err, "Failed to create instance",
 			"nodeClass", nodeClass.Name,
@@ -410,6 +520,11 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	recorded = true
 	log.Info("Successfully created instance", "providerID", node.Spec.ProviderID)
 
+	return c.nodeClaimForNode(nodeClaim, node, compatible, nodeClass)
+}
+
+func (c *CloudProvider) nodeClaimForNode(nodeClaim *karpv1.NodeClaim, node *corev1.Node, compatible []*cloudprovider.InstanceType, launchClass *v1alpha1.IBMNodeClass) (*karpv1.NodeClaim, error) {
+	log := logr.Discard()
 	instanceType, _ := lo.Find(compatible, func(i *cloudprovider.InstanceType) bool {
 		return i.Name == node.Labels["node.kubernetes.io/instance-type"]
 	})
@@ -418,7 +533,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	}
 
 	nc := &karpv1.NodeClaim{
-		ObjectMeta: nodeClaim.ObjectMeta,
+		ObjectMeta: *nodeClaim.ObjectMeta.DeepCopy(),
 		Spec:       nodeClaim.Spec,
 		Status: karpv1.NodeClaimStatus{
 			ProviderID: node.Spec.ProviderID,
@@ -434,16 +549,8 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		nc.Labels = make(map[string]string)
 	}
 
-	// Copy essential labels from the created node first
 	for key, value := range node.Labels {
-		switch key {
-		case "node.kubernetes.io/instance-type", // TYPE column
-			"karpenter.sh/capacity-type",    // CAPACITY column
-			"topology.kubernetes.io/zone",   // ZONE column
-			"topology.kubernetes.io/region", // Region info
-			"karpenter.sh/nodepool":         // Preserve nodepool label
-			nc.Labels[key] = value
-		}
+		nc.Labels[key] = value
 	}
 
 	// Ensure all single-valued requirements from the NodePool are reflected as labels
@@ -473,24 +580,29 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	// Set the node name in status for the NODE column
 	// This will be populated once the node registers with the cluster
 	nc.Status.NodeName = node.Name
+	nc.Status.ImageID = node.Annotations[v1alpha1.AnnotationIBMNodeClaimImageID]
 
 	if instanceType != nil {
 		nc.Status.Capacity = instanceType.Capacity
 		nc.Status.Allocatable = instanceType.Allocatable()
 	}
 
-	annotations := map[string]string{
-		v1alpha1.AnnotationIBMNodeClassHash:           nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
-		v1alpha1.AnnotationIBMNodeClassHashVersion:    v1alpha1.IBMNodeClassHashVersion,
-		v1alpha1.AnnotationIBMNodeClaimSubnetID:       node.Annotations[v1alpha1.AnnotationIBMNodeClaimSubnetID],
-		v1alpha1.AnnotationIBMNodeClaimSecurityGroups: node.Annotations[v1alpha1.AnnotationIBMNodeClaimSecurityGroups],
+	if instanceType == nil {
+		nc.Status.Capacity = node.Status.Capacity.DeepCopy()
+		nc.Status.Allocatable = node.Status.Allocatable.DeepCopy()
 	}
-
-	// Store resolved image ID only if available
-	if nodeClass.Status.ResolvedImageID != "" {
-		annotations[v1alpha1.AnnotationIBMNodeClaimImageID] = nodeClass.Status.ResolvedImageID
+	annotations := node.Annotations
+	if annotations == nil {
+		annotations = map[string]string{}
 	}
-
+	if annotations[v1alpha1.AnnotationIBMNodeClassHash] == "" && launchClass != nil {
+		hash, err := nodeclass.ProvisioningHash(launchClass)
+		if err != nil {
+			return nil, err
+		}
+		annotations[v1alpha1.AnnotationIBMNodeClassHash] = hash
+		annotations[v1alpha1.AnnotationIBMNodeClassHashVersion] = v1alpha1.IBMNodeClassHashVersion
+	}
 	nc.Annotations = lo.Assign(nc.Annotations, annotations)
 
 	log.Info("Node creation completed successfully",
@@ -505,37 +617,34 @@ func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: nodeClaim.Name,
+			Name:        nodeClaim.Name,
+			UID:         nodeClaim.UID,
+			Labels:      nodeClaim.Labels,
+			Annotations: nodeClaim.Annotations,
 		},
 		Spec: corev1.NodeSpec{
 			ProviderID: nodeClaim.Status.ProviderID,
 		},
 	}
 
-	// For Delete operations, get the NodeClass to determine provider mode
-	nodeClass := &v1alpha1.IBMNodeClass{}
-	// Try to get the NodeClass from the nodeClaim's nodeClassRef
-	if nodeClaim.Spec.NodeClassRef != nil && nodeClaim.Spec.NodeClassRef.Name != "" {
-		if getErr := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); getErr != nil {
-			// If we can't get NodeClass, use default provider mode
-			if c.defaultProviderMode == commonTypes.IKSMode {
-				nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
-			}
-		}
-	} else {
-		// No NodeClass reference, use default provider mode
-		if c.defaultProviderMode == commonTypes.IKSMode {
-			nodeClass.Spec.IKSClusterID = os.Getenv("IKS_CLUSTER_ID")
-		}
+	_, mode, err := classForProviderID(nodeClaim.Status.ProviderID)
+	if err != nil {
+		return err
 	}
+	if persisted := nodeClaim.Annotations[ownership.BackendAnnotation]; persisted != "" && persisted != string(mode) {
+		return fmt.Errorf("provider identity conflicts with persisted launch backend")
+	}
+	instanceProvider, err := c.providerFactory.GetInstanceProviderForMode(mode)
 
-	// Get the appropriate instance provider
-	instanceProvider, err := c.providerFactory.GetInstanceProvider(nodeClass)
 	if err != nil {
 		log.Error(err, "Failed to get instance provider")
 		return fmt.Errorf("getting instance provider, %w", err)
 	}
 
+	if err := c.ensureBirthTarget(ctx, instanceProvider, nodeClaim); err != nil {
+		return err
+	}
+	node.Annotations = nodeClaim.Annotations
 	if err := instanceProvider.Delete(ctx, node); err != nil {
 		// Return NodeClaimNotFoundError unchanged - this is expected during cleanup
 		if cloudprovider.IsNodeClaimNotFoundError(err) {
@@ -613,8 +722,8 @@ func (c *CloudProvider) IsDrifted(ctx context.Context, nodeClaim *karpv1.NodeCla
 		return driftReason, nil
 	}
 
-	if driftReason = c.isNodeClassHashDrifted(ctx, log, nodeClaim, nodeClass); driftReason != "" {
-		return driftReason, nil
+	if driftReason, err = c.isNodeClassHashDrifted(ctx, log, nodeClaim, nodeClass); err != nil || driftReason != "" {
+		return driftReason, err
 	}
 
 	if driftReason = c.isImageDrifted(ctx, log, nodeClaim, nodeClass); driftReason != "" {
@@ -658,24 +767,41 @@ func (c *CloudProvider) isNodeClassHashVersionDrifted(ctx context.Context, log l
 	currentVersion := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion]
 
 	// Check if the hash version matches
-	if currentVersion != v1alpha1.IBMNodeClassHashVersion {
+	if currentVersion != "1" && currentVersion != v1alpha1.IBMNodeClassHashVersion {
 		log.Info("NodeClass hash version mismatch", "current", currentVersion, "expected", v1alpha1.IBMNodeClassHashVersion)
 		return NodeClassHashVersionChangedDrift
 	}
 	return ""
 }
 
-func (c *CloudProvider) isNodeClassHashDrifted(ctx context.Context, log logr.Logger, nodeClaim *karpv1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) cloudprovider.DriftReason {
+func (c *CloudProvider) isNodeClassHashDrifted(ctx context.Context, log logr.Logger, nodeClaim *karpv1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) (cloudprovider.DriftReason, error) {
 	// Get the current hash from the node's annotations
 	currentHash := nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
-	expectedHash := nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash]
+	expectedHash, err := nodeclass.ProvisioningHash(nodeClass)
+	if nodeClaim.Annotations[v1alpha1.AnnotationIBMNodeClassHashVersion] == "1" {
+		migration, migrationErr := nodeclass.ReadHashMigration(nodeClass)
+		if migrationErr != nil {
+			return "", migrationErr
+		}
+		if migration != nil && currentHash == migration.LegacyHash {
+			if expectedHash != migration.ProvisioningHash {
+				return NodeClassHashChangedDrift, nil
+			}
+			expectedHash = migration.LegacyHash
+		} else {
+			expectedHash, err = nodeclass.LegacyHash(nodeClass)
+		}
+	}
+	if err != nil {
+		return "", err
+	}
 
 	// Check if the hash matches
 	if expectedHash != currentHash {
 		log.Info("NodeClass hash mismatch", "current", currentHash, "expected", expectedHash)
-		return NodeClassHashChangedDrift
+		return NodeClassHashChangedDrift, nil
 	}
-	return ""
+	return "", nil
 }
 
 func (c *CloudProvider) isImageDrifted(ctx context.Context, log logr.Logger, nodeClaim *karpv1.NodeClaim, nodeClass *v1alpha1.IBMNodeClass) cloudprovider.DriftReason {

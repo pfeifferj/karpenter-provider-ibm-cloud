@@ -73,8 +73,8 @@ type provider struct {
 func NewProvider(client *ibm.Client) Provider {
 	return &provider{
 		client:           client,
-		kubeClient:       nil,                        // Will be set when needed via SetKubernetesClient
-		subnetCache:      cache.New(5 * time.Minute), // Cache subnets for 5 minutes
+		kubeClient:       nil,                                      // Will be set when needed via SetKubernetesClient
+		subnetCache:      cache.NewNamed("subnets", 5*time.Minute), // Cache subnets for 5 minutes
 		vpcClientManager: vpcclient.NewManager(client, constants.DefaultVPCClientCacheTTL),
 	}
 }

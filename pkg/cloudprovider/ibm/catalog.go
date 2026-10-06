@@ -22,6 +22,7 @@ import (
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/httpclient"
 )
 
 type iamClientInterface interface {
@@ -60,6 +61,7 @@ func (c *GlobalCatalogClient) ensureClient(ctx context.Context) (globalCatalogCl
 	if err != nil {
 		return nil, fmt.Errorf("initializing Global Catalog client: %w", err)
 	}
+	client.Service.SetHTTPClient(httpclient.InstrumentHTTPClient(client.Service.GetHTTPClient(), "global"))
 	c.client = client
 	c.currentToken = token
 	return c.client, nil

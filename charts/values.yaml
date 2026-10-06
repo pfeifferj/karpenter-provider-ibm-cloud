@@ -77,6 +77,8 @@ podDisruptionBudget:
 
 # IBM Cloud credentials configuration
 credentials:
+  # Required for IKS; checks the expected VPC credential account when set
+  accountId: ""
   # Required: ibm cloud api key for general operations
   ibmApiKey: ""
   # Required: ibm cloud region (e.g., us-south, eu-de)
@@ -524,7 +526,7 @@ metrics:
 
       # Error rate alerts
       highErrorRate:
-        threshold: 0.1  # 10% error rate
+        threshold: 0.1  # Reconciliation errors per second
         for: 10m
         severity: warning
 

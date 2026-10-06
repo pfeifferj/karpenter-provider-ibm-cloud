@@ -25,6 +25,7 @@ import (
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -53,6 +54,17 @@ type Controller struct {
 	vpcClientManager *vpcclient.Manager
 }
 
+type validationRegionKey struct{}
+
+func (c *Controller) validationVPCClient(ctx context.Context) (*ibm.VPCClient, error) {
+	vpc, err := c.vpcClientManager.GetVPCClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	region, _ := ctx.Value(validationRegionKey{}).(string)
+	return vpc.ForRegion(region)
+}
+
 // NewController constructs a controller instance
 func NewController(kubeClient client.Client, apiReader client.Reader) (*Controller, error) {
 	if kubeClient == nil {
@@ -72,7 +84,7 @@ func NewController(kubeClient client.Client, apiReader client.Reader) (*Controll
 	subnetProvider := subnet.NewProvider(ibmClient)
 
 	// Create cache for zone-subnet mappings
-	zoneSubnetCache := cache.New(15 * time.Minute)
+	zoneSubnetCache := cache.NewNamed("zone-subnets", 15*time.Minute)
 
 	return &Controller{
 		kubeClient:       kubeClient,
@@ -114,6 +126,7 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 
+	ctx = context.WithValue(ctx, validationRegionKey{}, nc.Spec.Region)
 	// Store original for patching
 	stored := nc.DeepCopy()
 
@@ -123,19 +136,18 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		nc.Status.ValidationError = err.Error()
 
 		// Set Ready condition to False with validation error
-		nc.Status.Conditions = []metav1.Condition{
-			{
-				Type:               "Ready",
-				Status:             metav1.ConditionFalse,
-				LastTransitionTime: metav1.Now(),
-				Reason:             "ValidationFailed",
-				Message:            err.Error(),
-			},
-		}
+		meta.SetStatusCondition(&nc.Status.Conditions, metav1.Condition{
+			ObservedGeneration: nc.Generation,
+			Type:               "Ready",
+			Status:             metav1.ConditionFalse,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "ValidationFailed",
+			Message:            err.Error(),
+		})
 
 		if err := c.kubeClient.Status().Patch(ctx, nc, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
 			if errors.IsConflict(err) {
-				return reconcile.Result{Requeue: true}, nil
+				return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 			}
 			return reconcile.Result{}, err
 		}
@@ -147,19 +159,18 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	nc.Status.ValidationError = ""
 
 	// Set Ready condition to True
-	nc.Status.Conditions = []metav1.Condition{
-		{
-			Type:               "Ready",
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
-			Reason:             "Ready",
-			Message:            "NodeClass is ready",
-		},
-	}
+	meta.SetStatusCondition(&nc.Status.Conditions, metav1.Condition{
+		ObservedGeneration: nc.Generation,
+		Type:               "Ready",
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             "Ready",
+		Message:            "NodeClass is ready",
+	})
 
 	if err := c.patchNodeClassStatus(ctx, nc, stored); err != nil {
 		if errors.IsConflict(err) {
-			return reconcile.Result{Requeue: true}, nil
+			return reconcile.Result{RequeueAfter: time.Millisecond}, nil
 		}
 		return reconcile.Result{}, err
 	}
@@ -352,7 +363,7 @@ func (c *Controller) validateIBMCloudResources(ctx context.Context, nc *v1alpha1
 
 // resolveDefaultSecurityGroup gets the default security group ID for a VPC
 func (c *Controller) resolveDefaultSecurityGroup(ctx context.Context, vpcID string) (string, error) {
-	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
+	vpcClient, err := c.validationVPCClient(ctx)
 	if err != nil {
 		return "", fmt.Errorf("getting VPC client: %w", err)
 	}
@@ -374,7 +385,8 @@ func (c *Controller) validateRegion(ctx context.Context, region string) error {
 		return err
 	}
 
-	// Get VPC client to query regions
+	// The region list is served by every regional endpoint, so it is read through the configured
+	// one; dialing the region under validation would fail before reporting it as unknown.
 	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
 	if err != nil {
 		return fmt.Errorf("getting VPC client: %w", err)
@@ -519,22 +531,12 @@ func (c *Controller) createRegionVPCClient(ctx context.Context, vpcURL, region s
 		return nil, fmt.Errorf("getting VPC client: %w", err)
 	}
 
-	// Note: The current implementation returns the default VPC client
-	// In a production environment, you would want to create a new VPC client
-	// with the region-specific URL. For now, we'll use the existing client
-	// but log a warning if the regions don't match
-	currentRegion := c.ibmClient.GetRegion()
-	if currentRegion != region {
-		log.Log.V(1).Info("Warning: VPC validation using default region client",
-			"default_region", currentRegion, "requested_region", region)
-	}
-
-	return vpcClient, nil
+	return vpcClient.ForRegion(region)
 }
 
 // validateVPC checks if the VPC exists and is accessible
 func (c *Controller) validateVPC(ctx context.Context, vpcID, resourceGroupID string) error {
-	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
+	vpcClient, err := c.validationVPCClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -662,7 +664,7 @@ func (c *Controller) validateZoneSubnetCompatibility(ctx context.Context, zone, 
 func (c *Controller) validateImageConfiguration(ctx context.Context, nc *v1alpha1.IBMNodeClass) error {
 	logger := log.FromContext(ctx)
 
-	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
+	vpcClient, err := c.validationVPCClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -716,7 +718,7 @@ func (c *Controller) validateImageConfiguration(ctx context.Context, nc *v1alpha
 func (c *Controller) validateImage(ctx context.Context, imageIdentifier, region string) error {
 	logger := log.FromContext(ctx)
 
-	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
+	vpcClient, err := c.validationVPCClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -738,7 +740,7 @@ func (c *Controller) validateSecurityGroups(ctx context.Context, securityGroupID
 		return nil
 	}
 
-	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
+	vpcClient, err := c.validationVPCClient(ctx)
 	if err != nil {
 		return fmt.Errorf("getting VPC client: %w", err)
 	}
@@ -799,7 +801,7 @@ func (c *Controller) validateSSHKeys(ctx context.Context, sshKeyIDs []string, re
 		return nil
 	}
 
-	vpcClient, err := c.vpcClientManager.GetVPCClient(ctx)
+	vpcClient, err := c.validationVPCClient(ctx)
 	if err != nil {
 		return fmt.Errorf("getting VPC client: %w", err)
 	}

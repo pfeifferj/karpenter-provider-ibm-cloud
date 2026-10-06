@@ -23,8 +23,6 @@ import (
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/stretchr/testify/require"
-
-	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 )
 
 // GetAvailableInstanceType returns the smallest 2-4 vCPU / 4-16 GB profile
@@ -54,8 +52,7 @@ func (s *E2ETestSuite) GetMultipleInstanceTypes(t *testing.T, count int) []strin
 // falling back to a static list would just mask the real problem.
 func (s *E2ETestSuite) discoverInstanceProfiles(t *testing.T) []string {
 	s.profileOnce.Do(func() {
-		baseURL := "https://" + s.testRegion + ".iaas.cloud.ibm.com/v1"
-		client, err := ibm.NewVPCClient(baseURL, "iam", s.apiKey, s.testRegion, s.testResourceGroup)
+		client, err := s.vpcClient()
 		require.NoError(t, err, "create VPC client for instance profile discovery")
 		coll, _, err := client.ListInstanceProfiles(t.Context(), &vpcv1.ListInstanceProfilesOptions{})
 		require.NoError(t, err, "list VPC instance profiles")

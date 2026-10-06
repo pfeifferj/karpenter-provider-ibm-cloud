@@ -1,0 +1,229 @@
+rule_files:
+  - prometheusrule.yaml
+evaluation_interval: 30s
+tests:
+  - name: Pending pods alert before any node counter exists
+    interval: 1m
+    input_series:
+      - series: 'karpenter_scheduler_unschedulable_pods_count{job="audit-karpenter-ibm"}'
+        values: '3x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: KarpenterIBMNoNodeProvisioning
+        exp_alerts:
+          - exp_labels:
+              service: karpenter-ibm
+              severity: critical
+            exp_annotations:
+              summary: No node provisioning activity with pending pods
+              description: No nodes have been provisioned in 30 minutes despite 3 unschedulable pods
+              runbook_url: &runbook https://github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/blob/main/docs/troubleshooting.md
+
+  - name: Recent node creation suppresses provisioning alert
+    interval: 1m
+    input_series:
+      - series: 'karpenter_scheduler_unschedulable_pods_count{job="audit-karpenter-ibm"}'
+        values: '3x40'
+      - series: 'karpenter_nodes_created_total{job="audit-karpenter-ibm"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: KarpenterIBMNoNodeProvisioning
+        exp_alerts: []
+
+  - name: Rate limited responses join the total across HTTP status labels
+    interval: 1m
+    input_series:
+      - series: 'karpenter_ibm_api_requests_total{job="audit-karpenter-ibm",operation="CreateInstance",region="us-south",status="429"}'
+        values: '0+6x40'
+      - series: 'karpenter_ibm_api_requests_total{job="audit-karpenter-ibm",operation="CreateInstance",region="us-south",status="201"}'
+        values: '0+54x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: KarpenterIBMAPIRateLimit
+        exp_alerts:
+          - exp_labels:
+              job: audit-karpenter-ibm
+              operation: CreateInstance
+              region: us-south
+              service: karpenter-ibm
+              severity: warning
+            exp_annotations:
+              summary: IBM Cloud API rate limiting detected
+              description: IBM Cloud API rate limiting is occurring at 10% for CreateInstance operations
+              runbook_url: *runbook
+      - eval_time: 35m
+        alertname: KarpenterIBMAPIErrors
+        exp_alerts:
+          - exp_labels:
+              job: audit-karpenter-ibm
+              operation: CreateInstance
+              region: us-south
+              service: karpenter-ibm
+              severity: warning
+            exp_annotations:
+              summary: High IBM Cloud API error rate
+              description: IBM Cloud API error rate is 10% for CreateInstance operations
+              runbook_url: *runbook
+
+  - name: Cache with only misses alerts
+    interval: 1m
+    input_series:
+      - series: 'karpenter_ibm_cache_hits_total{job="audit-karpenter-ibm",cache="instances"}'
+        values: '0x40'
+      - series: 'karpenter_ibm_cache_misses_total{job="audit-karpenter-ibm",cache="instances"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: KarpenterIBMLowCacheHitRate
+        exp_alerts:
+          - exp_labels:
+              cache: instances
+              service: karpenter-ibm
+              severity: info
+            exp_annotations:
+              summary: Low cache hit rate detected
+              description: instances cache hit rate is 0%
+              runbook_url: *runbook
+
+  - name: Healthy cache ratio suppresses the percentage threshold alert
+    interval: 1m
+    input_series:
+      - series: 'karpenter_ibm_cache_hits_total{job="audit-karpenter-ibm",cache="instances"}'
+        values: '0+54x40'
+      - series: 'karpenter_ibm_cache_misses_total{job="audit-karpenter-ibm",cache="instances"}'
+        values: '0+6x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: KarpenterIBMLowCacheHitRate
+        exp_alerts: []
+
+  - name: Not-found responses are absence proofs, not API errors
+    interval: 1m
+    input_series:
+      - series: 'karpenter_ibm_api_requests_total{job="audit-karpenter-ibm",operation="GetInstance",region="us-south",status="404"}'
+        values: '0+30x40'
+      - series: 'karpenter_ibm_api_requests_total{job="audit-karpenter-ibm",operation="GetInstance",region="us-south",status="200"}'
+        values: '0+30x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: KarpenterIBMAPIErrors
+        exp_alerts: []
+
+  - name: Unreachable controller alerts
+    interval: 1m
+    input_series:
+      - series: 'up{job="audit-karpenter-ibm",instance="controller:8080"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: KarpenterIBMControllerDown
+        exp_alerts:
+          - exp_labels:
+              instance: controller:8080
+              job: audit-karpenter-ibm
+              service: karpenter-ibm
+              severity: critical
+            exp_annotations:
+              summary: Karpenter IBM Cloud Provider controller is down
+              description: The Karpenter IBM Cloud Provider controller has been down for more than 5m
+              runbook_url: *runbook
+
+  - name: Sustained reconcile errors alert
+    interval: 1m
+    input_series:
+      - series: 'controller_runtime_reconcile_errors_total{job="audit-karpenter-ibm",controller="nodeclaim.allocation"}'
+        values: '0+12x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: KarpenterIBMHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              controller: nodeclaim.allocation
+              job: audit-karpenter-ibm
+              service: karpenter-ibm
+              severity: warning
+            exp_annotations:
+              summary: Karpenter IBM Cloud Provider has high error rate
+              description: Karpenter IBM Cloud Provider has 200m reconciliation errors per second over the last 5 minutes
+              runbook_url: *runbook
+
+  - name: Slow reconciliation alerts
+    interval: 1m
+    input_series:
+      - series: 'controller_runtime_reconcile_duration_seconds_bucket{job="audit-karpenter-ibm",le="60"}'
+        values: '0x30'
+      - series: 'controller_runtime_reconcile_duration_seconds_bucket{job="audit-karpenter-ibm",le="120"}'
+        values: '0+10x30'
+      - series: 'controller_runtime_reconcile_duration_seconds_bucket{job="audit-karpenter-ibm",le="+Inf"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: KarpenterIBMSlowReconciliation
+        exp_alerts:
+          - exp_labels:
+              service: karpenter-ibm
+              severity: warning
+            exp_annotations:
+              summary: Karpenter IBM Cloud Provider reconciliation is slow
+              description: 99th percentile reconciliation time is 1m 59s
+              runbook_url: *runbook
+
+  - name: Slow node provisioning alerts
+    interval: 1m
+    input_series:
+      - series: 'karpenter_ibm_provisioning_duration_seconds_bucket{job="audit-karpenter-ibm",le="600"}'
+        values: '0x30'
+      - series: 'karpenter_ibm_provisioning_duration_seconds_bucket{job="audit-karpenter-ibm",le="1200"}'
+        values: '0+10x30'
+      - series: 'karpenter_ibm_provisioning_duration_seconds_bucket{job="audit-karpenter-ibm",le="+Inf"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 28m
+        alertname: KarpenterIBMSlowNodeProvisioning
+        exp_alerts:
+          - exp_labels:
+              service: karpenter-ibm
+              severity: warning
+            exp_annotations:
+              summary: Slow node provisioning detected
+              description: 99th percentile node provisioning time is 19m 54s
+              runbook_url: *runbook
+
+  - name: High memory alerts
+    interval: 1m
+    input_series:
+      - series: 'process_resident_memory_bytes{job="audit-karpenter-ibm",instance="controller:8080"}'
+        values: '629145600x45'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: KarpenterIBMHighMemoryUsage
+        exp_alerts:
+          - exp_labels:
+              instance: controller:8080
+              job: audit-karpenter-ibm
+              service: karpenter-ibm
+              severity: warning
+            exp_annotations:
+              summary: High memory usage detected
+              description: Karpenter IBM Cloud Provider memory usage is 600MB
+              runbook_url: *runbook
+
+  - name: High CPU alerts
+    interval: 1m
+    input_series:
+      - series: 'process_cpu_seconds_total{job="audit-karpenter-ibm",instance="controller:8080"}'
+        values: '0+54x45'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: KarpenterIBMHighCPUUsage
+        exp_alerts:
+          - exp_labels:
+              instance: controller:8080
+              job: audit-karpenter-ibm
+              service: karpenter-ibm
+              severity: warning
+            exp_annotations:
+              summary: High CPU usage detected
+              description: Karpenter IBM Cloud Provider CPU usage is 90%
+              runbook_url: *runbook

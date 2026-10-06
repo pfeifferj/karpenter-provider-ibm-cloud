@@ -25,14 +25,27 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
 
 // TestE2ECleanupNodePoolDeletion tests proper cleanup when deleting NodePools
 func TestE2ECleanupNodePoolDeletion(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
 	testName := fmt.Sprintf("cleanup-nodepool-%d", time.Now().Unix())
+	t.Cleanup(func() { suite.cleanupTestResources(t, testName) })
 	t.Logf("Starting NodePool cleanup test: %s", testName)
 	ctx := context.Background()
 
@@ -62,7 +75,7 @@ func TestE2ECleanupNodePoolDeletion(t *testing.T) {
 	t.Logf("Initial provisioned nodes: %d", len(initialNodes))
 
 	// Delete the NodePool first - this should trigger cleanup
-	err := suite.kubeClient.Delete(ctx, nodePool)
+	err := suite.kubeClient.Delete(ctx, nodePool, client.Preconditions{UID: &nodePool.UID})
 	require.NoError(t, err)
 	t.Logf("Deleted NodePool: %s", nodePool.Name)
 
@@ -83,6 +96,7 @@ func TestE2ECleanupNodePoolDeletion(t *testing.T) {
 func TestE2ECleanupNodeClassDeletion(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
 	testName := fmt.Sprintf("cleanup-nodeclass-%d", time.Now().Unix())
+	t.Cleanup(func() { suite.cleanupTestResources(t, testName) })
 	t.Logf("Starting NodeClass cleanup test: %s", testName)
 	ctx := context.Background()
 
@@ -121,7 +135,7 @@ func TestE2ECleanupNodeClassDeletion(t *testing.T) {
 	suite.waitForPodsGone(t, deployment.Name+"-workload")
 
 	// Delete the NodePool first
-	err = suite.kubeClient.Delete(ctx, nodePool)
+	err = suite.kubeClient.Delete(ctx, nodePool, client.Preconditions{UID: &nodePool.UID})
 	require.NoError(t, err)
 	t.Logf("Deleted NodePool: %s", nodePool.Name)
 
@@ -129,7 +143,7 @@ func TestE2ECleanupNodeClassDeletion(t *testing.T) {
 	suite.waitForNodeClaimsCleanedUp(t, nodePool.Name, 10*time.Minute)
 
 	// Now try to delete the NodeClass - it should succeed if no NodePools reference it
-	err = suite.kubeClient.Delete(ctx, nodeClass)
+	err = suite.kubeClient.Delete(ctx, nodeClass, client.Preconditions{UID: &nodeClass.UID})
 	require.NoError(t, err)
 	t.Logf("Successfully deleted NodeClass: %s", nodeClass.Name)
 
@@ -142,6 +156,7 @@ func TestE2ECleanupNodeClassDeletion(t *testing.T) {
 func TestE2ECleanupOrphanedResources(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
 	testName := fmt.Sprintf("cleanup-orphaned-%d", time.Now().Unix())
+	t.Cleanup(func() { suite.cleanupTestResources(t, testName) })
 	t.Logf("Starting orphaned resources cleanup test: %s", testName)
 	ctx := context.Background()
 
@@ -164,7 +179,7 @@ func TestE2ECleanupOrphanedResources(t *testing.T) {
 	originalNodeClaim := nodeClaimList.Items[0]
 
 	// Simulate an orphaned state by manually deleting the NodePool while keeping NodeClaims
-	err = suite.kubeClient.Delete(ctx, nodePool)
+	err = suite.kubeClient.Delete(ctx, nodePool, client.Preconditions{UID: &nodePool.UID})
 	require.NoError(t, err)
 	t.Logf("Deleted NodePool, leaving NodeClaim potentially orphaned: %s", originalNodeClaim.Name)
 
@@ -187,6 +202,7 @@ func TestE2ECleanupOrphanedResources(t *testing.T) {
 func TestE2ECleanupIBMCloudResources(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
 	testName := fmt.Sprintf("cleanup-ibmcloud-%d", time.Now().Unix())
+	t.Cleanup(func() { suite.cleanupTestResources(t, testName) })
 	t.Logf("Starting IBM Cloud resources cleanup test: %s", testName)
 	ctx := context.Background()
 
@@ -212,33 +228,295 @@ func TestE2ECleanupIBMCloudResources(t *testing.T) {
 	t.Logf("Instances after provisioning: %d (expected increase: %d)",
 		afterProvisioningCount, afterProvisioningCount-initialInstanceCount)
 
-	// Should have more instances now
-	require.Greater(t, afterProvisioningCount, initialInstanceCount,
-		"Should have provisioned new IBM Cloud instances")
+	var provisioned []string
+	for id := range instancesAfterProvisioning {
+		if _, existed := initialInstances[id]; !existed {
+			provisioned = append(provisioned, id)
+		}
+	}
+	require.NotEmpty(t, provisioned, "Should have provisioned new IBM Cloud instances")
 
 	// Start cleanup process
 	suite.cleanupTestWorkload(t, deployment.Name, "default")
 	suite.waitForPodsGone(t, deployment.Name+"-workload")
 
 	// Delete NodePool to trigger instance cleanup
-	err = suite.kubeClient.Delete(ctx, nodePool)
+	err = suite.kubeClient.Delete(ctx, nodePool, client.Preconditions{UID: &nodePool.UID})
 	require.NoError(t, err)
 	t.Logf("Deleted NodePool, waiting for IBM Cloud instances to be cleaned up")
 
-	// Wait for instances to be cleaned up in IBM Cloud using proper polling
-	finalInstanceCount := suite.waitForInstanceCountReduction(t, initialInstanceCount, 15*time.Minute)
-
-	// Verify cleanup was successful (allow some tolerance for long-running instances)
-	require.LessOrEqual(t, finalInstanceCount, initialInstanceCount+1,
-		"Most IBM Cloud instances should be cleaned up (found %d, expected ~%d)",
-		finalInstanceCount, initialInstanceCount)
-
-	if finalInstanceCount > initialInstanceCount {
-		t.Logf("Warning: %d instances may still be cleaning up (this can take additional time)",
-			finalInstanceCount-initialInstanceCount)
-	}
+	suite.waitForInstancesGone(t, provisioned, 15*time.Minute)
 
 	// Cleanup remaining test resources
 	suite.cleanupTestResources(t, testName)
 	t.Logf("IBM Cloud resources cleanup test completed: %s", testName)
+}
+
+func cleanupTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, policyv1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	group := schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}
+	scheme.AddKnownTypes(group, &karpv1.NodePool{}, &karpv1.NodePoolList{}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
+	metav1.AddToGroupVersion(scheme, group)
+	return scheme
+}
+
+func cleanupClass(name, testName string) *v1alpha1.IBMNodeClass {
+	return &v1alpha1.IBMNodeClass{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "class-uid", Labels: map[string]string{"test": "e2e", "test-name": testName}}}
+}
+
+func cleanupPool(name, testName string, class *v1alpha1.IBMNodeClass) *karpv1.NodePool {
+	return &karpv1.NodePool{
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: "pool-uid", Labels: map[string]string{"test": "e2e", "test-name": testName}},
+		Spec: karpv1.NodePoolSpec{Template: karpv1.NodeClaimTemplate{Spec: karpv1.NodeClaimTemplateSpec{
+			NodeClassRef: &karpv1.NodeClassReference{Group: v1alpha1.Group, Kind: "IBMNodeClass", Name: class.Name},
+		}}},
+	}
+}
+
+func cleanupClaim(name string, pool *karpv1.NodePool) *karpv1.NodeClaim {
+	return &karpv1.NodeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: "claim-uid", Labels: map[string]string{karpv1.NodePoolLabelKey: pool.Name},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "karpenter.sh/v1", Kind: "NodePool", Name: pool.Name, UID: pool.UID}}},
+		Spec: karpv1.NodeClaimSpec{NodeClassRef: pool.Spec.Template.Spec.NodeClassRef},
+	}
+}
+
+func TestCleanupOwnedResourcesPreservesForeignResources(t *testing.T) {
+	ctx := context.Background()
+	class := cleanupClass("owned-class", "owned")
+	class.Labels = map[string]string{"created-by": "karpenter-e2e"}
+	pool := cleanupPool("owned-pool", "owned", class)
+	claim := cleanupClaim("generated-claim", pool)
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "owned-workload", Namespace: "default", UID: "deployment-uid", Labels: map[string]string{"purpose": "karpenter-test"}}}
+	legacy := &v1alpha1.IBMNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "e2e-test-1700000000-nodeclass", UID: "legacy-uid"}}
+	foreign := []client.Object{
+		&v1alpha1.IBMNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "production-nodeclass", UID: "foreign-class", Finalizers: []string{"karpenter-ibm.sh/termination"}}},
+		&karpv1.NodePool{ObjectMeta: metav1.ObjectMeta{Name: "production-nodepool", UID: "foreign-pool", Finalizers: []string{"example.com/finalizer"}}},
+		&karpv1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: "production-claim", UID: "foreign-claim", Finalizers: []string{karpv1.TerminationFinalizer}}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "production-workload", Namespace: "default", UID: "foreign-deployment"}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "prefix-e2e-test-1700000000-workload", Namespace: "default", UID: "foreign-prefix"}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "controller", Namespace: "karpenter", UID: "controller-uid", Labels: map[string]string{"test": "e2e"}}},
+	}
+	objects := append([]client.Object{class, pool, claim, deployment, legacy}, foreign...)
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(objects...).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	require.NoError(t, suite.cleanupSelectedResources(ctx, ""))
+	require.NoError(t, suite.waitForStaleResourcesGone(ctx, t))
+	for _, object := range foreign {
+		current := object.DeepCopyObject().(client.Object)
+		require.NoError(t, kube.Get(ctx, client.ObjectKeyFromObject(object), current))
+		require.Equal(t, object.GetUID(), current.GetUID())
+		require.Equal(t, object.GetFinalizers(), current.GetFinalizers())
+		require.True(t, current.GetDeletionTimestamp().IsZero())
+	}
+	for _, object := range []client.Object{class, pool, claim, deployment, legacy} {
+		current := object.DeepCopyObject().(client.Object)
+		require.True(t, apierrors.IsNotFound(kube.Get(ctx, client.ObjectKeyFromObject(object), current)))
+	}
+}
+
+func TestCleanupCurrentTestPreservesOtherTests(t *testing.T) {
+	ctx := context.Background()
+	class := cleanupClass("current-class", "current")
+	pool := cleanupPool("current-pool", "current", class)
+	claim := cleanupClaim("generated-current", pool)
+	claim.OwnerReferences[0].APIVersion = "karpenter.sh/v1beta1"
+	otherClass := cleanupClass("other-class", "other")
+	otherPool := cleanupPool("other-pool", "other", otherClass)
+	otherPool.UID = "other-pool-uid"
+	otherClaim := cleanupClaim("generated-other", otherPool)
+	otherClaim.UID = "other-claim-uid"
+	currentWorkload := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "current-workload", Namespace: "default", UID: "workload-uid", Labels: map[string]string{"test": "e2e"}}}
+	otherWorkload := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "current-other-workload", Namespace: "default", UID: "other-workload-uid", Labels: map[string]string{"test": "e2e", "test-name": "current-other"}}}
+	var deletionOrder []string
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(class, pool, claim, otherClass, otherPool, otherClaim, currentWorkload, otherWorkload).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, object client.Object, options ...client.DeleteOption) error {
+			deleteOptions := (&client.DeleteOptions{}).ApplyOptions(options)
+			require.NotNil(t, deleteOptions.Preconditions)
+			require.Equal(t, object.GetUID(), *deleteOptions.Preconditions.UID)
+			require.Equal(t, object.GetResourceVersion(), *deleteOptions.Preconditions.ResourceVersion)
+			require.Nil(t, deleteOptions.GracePeriodSeconds)
+			deletionOrder = append(deletionOrder, object.GetName())
+			return c.Delete(ctx, object, options...)
+		},
+	}).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	require.NoError(t, suite.cleanupSelectedResources(ctx, "current"))
+	require.Equal(t, []string{currentWorkload.Name, claim.Name, pool.Name, class.Name}, deletionOrder)
+	for _, object := range []client.Object{otherClass, otherPool, otherClaim, otherWorkload} {
+		require.NoError(t, kube.Get(ctx, client.ObjectKeyFromObject(object), object.DeepCopyObject().(client.Object)))
+	}
+}
+
+func TestCleanupTimeoutPreservesFinalizersAndOwners(t *testing.T) {
+	class := cleanupClass("class", "current")
+	pool := cleanupPool("pool", "current", class)
+	claim := cleanupClaim("claim", pool)
+	claim.Finalizers = []string{karpv1.TerminationFinalizer, "loadbalancer.nodeclaim.ibm.sh/finalizer", "karpenter-ibm.sh/vpc-launch"}
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(class, pool, claim).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, suite.cleanupSelectedResources(ctx, "current"), context.DeadlineExceeded)
+	currentClaim := &karpv1.NodeClaim{}
+	require.NoError(t, kube.Get(context.Background(), client.ObjectKeyFromObject(claim), currentClaim))
+	require.False(t, currentClaim.DeletionTimestamp.IsZero())
+	require.Equal(t, claim.Finalizers, currentClaim.Finalizers)
+	for _, object := range []client.Object{pool, class} {
+		current := object.DeepCopyObject().(client.Object)
+		require.NoError(t, kube.Get(context.Background(), client.ObjectKeyFromObject(object), current))
+		require.True(t, current.GetDeletionTimestamp().IsZero())
+	}
+}
+
+func TestCleanupPreservesClassWithForeignDependents(t *testing.T) {
+	class := cleanupClass("class", "owned")
+	foreignPool := cleanupPool("production-pool", "", class)
+	foreignPool.Labels = map[string]string{"team": "production"}
+	foreignClaim := cleanupClaim("production-claim", foreignPool)
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(class, foreignPool, foreignClaim).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, suite.cleanupSelectedResources(ctx, ""), context.DeadlineExceeded)
+	for _, object := range []client.Object{class, foreignPool, foreignClaim} {
+		current := object.DeepCopyObject().(client.Object)
+		require.NoError(t, kube.Get(context.Background(), client.ObjectKeyFromObject(object), current))
+		require.True(t, current.GetDeletionTimestamp().IsZero())
+	}
+}
+
+func TestCleanupRejectsReplacedResourceIdentity(t *testing.T) {
+	original := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "default", UID: "original-uid", Labels: map[string]string{"test": "e2e"}}}
+	replacement := original.DeepCopy()
+	replacement.UID = "replacement-uid"
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(replacement).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	require.Error(t, suite.deleteCleanupObject(context.Background(), original, cleanupScope{}))
+	current := &appsv1.Deployment{}
+	require.NoError(t, kube.Get(context.Background(), client.ObjectKeyFromObject(original), current))
+	require.Equal(t, replacement.UID, current.UID)
+	require.True(t, current.DeletionTimestamp.IsZero())
+}
+
+func TestCleanupDeleteRetriesStatusConflictWithFreshPreconditions(t *testing.T) {
+	pool := cleanupPool("pool", "current", cleanupClass("class", "current"))
+	claim := cleanupClaim("claim", pool)
+	claim.Finalizers = []string{karpv1.TerminationFinalizer, "karpenter-ibm.sh/vpc-launch"}
+	var versions []string
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithStatusSubresource(&karpv1.NodeClaim{}).WithObjects(claim).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, object client.Object, options ...client.DeleteOption) error {
+			deleteOptions := (&client.DeleteOptions{}).ApplyOptions(options)
+			require.NotNil(t, deleteOptions.Preconditions)
+			require.Equal(t, claim.UID, *deleteOptions.Preconditions.UID)
+			require.Equal(t, object.GetResourceVersion(), *deleteOptions.Preconditions.ResourceVersion)
+			versions = append(versions, *deleteOptions.Preconditions.ResourceVersion)
+			if len(versions) == 1 {
+				current := &karpv1.NodeClaim{}
+				require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(object), current))
+				current.StatusConditions().SetTrue("Launched")
+				require.NoError(t, c.Status().Update(ctx, current))
+				return apierrors.NewConflict(schema.GroupResource{Group: "karpenter.sh", Resource: "nodeclaims"}, object.GetName(), fmt.Errorf("resource version changed after status update"))
+			}
+			return c.Delete(ctx, object, options...)
+		},
+	}).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	scope := cleanupScope{testName: "current", poolUIDs: map[string]types.UID{pool.Name: pool.UID}}
+	require.NoError(t, suite.deleteCleanupObject(t.Context(), claim, scope))
+	require.Len(t, versions, 2)
+	require.NotEqual(t, versions[0], versions[1])
+	current := &karpv1.NodeClaim{}
+	require.NoError(t, kube.Get(t.Context(), client.ObjectKeyFromObject(claim), current))
+	require.False(t, current.DeletionTimestamp.IsZero())
+	require.Equal(t, claim.Finalizers, current.Finalizers)
+	require.True(t, current.StatusConditions().Get("Launched").IsTrue())
+}
+
+func TestCleanupDeleteProtectsReplacementUIDDuringRetry(t *testing.T) {
+	original := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "default", UID: "original-uid", Labels: map[string]string{"test": "e2e"}}}
+	replacement := original.DeepCopy()
+	replacement.UID = "replacement-uid"
+	replacement.Finalizers = []string{"example.com/protect"}
+	deletes := 0
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(original).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, object client.Object, _ ...client.DeleteOption) error {
+			deletes++
+			require.NoError(t, c.Delete(ctx, object))
+			require.NoError(t, c.Create(ctx, replacement))
+			return apierrors.NewConflict(schema.GroupResource{Group: "apps", Resource: "deployments"}, object.GetName(), fmt.Errorf("object was replaced"))
+		},
+	}).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	require.Error(t, suite.deleteCleanupObject(t.Context(), original, cleanupScope{}))
+	require.Equal(t, 1, deletes)
+	current := &appsv1.Deployment{}
+	require.NoError(t, kube.Get(t.Context(), client.ObjectKeyFromObject(original), current))
+	require.Equal(t, replacement.UID, current.UID)
+	require.True(t, current.DeletionTimestamp.IsZero())
+	require.Equal(t, replacement.Finalizers, current.Finalizers)
+}
+
+func TestCleanupDeleteRechecksOwnershipDuringRetry(t *testing.T) {
+	pool := cleanupPool("pool", "current", cleanupClass("class", "current"))
+	claim := cleanupClaim("claim", pool)
+	claim.Finalizers = []string{karpv1.TerminationFinalizer}
+	deletes := 0
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(claim).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, object client.Object, _ ...client.DeleteOption) error {
+			deletes++
+			current := &karpv1.NodeClaim{}
+			require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(object), current))
+			current.OwnerReferences[0].UID = "replacement-pool-uid"
+			require.NoError(t, c.Update(ctx, current))
+			return apierrors.NewConflict(schema.GroupResource{Group: "karpenter.sh", Resource: "nodeclaims"}, object.GetName(), fmt.Errorf("owner changed"))
+		},
+	}).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	scope := cleanupScope{testName: "current", poolUIDs: map[string]types.UID{pool.Name: pool.UID}}
+	require.Error(t, suite.deleteCleanupObject(t.Context(), claim, scope))
+	require.Equal(t, 1, deletes)
+	current := &karpv1.NodeClaim{}
+	require.NoError(t, kube.Get(t.Context(), client.ObjectKeyFromObject(claim), current))
+	require.Equal(t, claim.UID, current.UID)
+	require.True(t, current.DeletionTimestamp.IsZero())
+	require.Equal(t, claim.Finalizers, current.Finalizers)
+}
+
+func TestCleanupDeleteWaitsForExistingTerminationAfterConflict(t *testing.T) {
+	claim := &karpv1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: "owned", UID: "claim-uid", Labels: map[string]string{"test": "e2e"}, Finalizers: []string{karpv1.TerminationFinalizer}}}
+	deletes := 0
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(claim).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, object client.Object, options ...client.DeleteOption) error {
+			deletes++
+			require.NoError(t, c.Delete(ctx, object, options...))
+			return apierrors.NewConflict(schema.GroupResource{Group: "karpenter.sh", Resource: "nodeclaims"}, object.GetName(), fmt.Errorf("another deleter already started termination"))
+		},
+	}).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	require.NoError(t, suite.deleteCleanupObject(t.Context(), claim, cleanupScope{}))
+	require.Equal(t, 1, deletes)
+	current := &karpv1.NodeClaim{}
+	require.NoError(t, kube.Get(t.Context(), client.ObjectKeyFromObject(claim), current))
+	require.False(t, current.DeletionTimestamp.IsZero())
+	require.Equal(t, claim.Finalizers, current.Finalizers)
+}
+
+func TestCleanupListFailurePreservesResources(t *testing.T) {
+	class := cleanupClass("class", "current")
+	kube := fake.NewClientBuilder().WithScheme(cleanupTestScheme(t)).WithObjects(class).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return fmt.Errorf("inventory unavailable")
+		},
+	}).Build()
+	suite := &E2ETestSuite{kubeClient: kube}
+	require.Error(t, suite.cleanupSelectedResources(context.Background(), "current"))
+	current := &v1alpha1.IBMNodeClass{}
+	require.NoError(t, kube.Get(context.Background(), client.ObjectKeyFromObject(class), current))
+	require.True(t, current.DeletionTimestamp.IsZero())
 }

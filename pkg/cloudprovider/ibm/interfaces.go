@@ -29,6 +29,7 @@ type IKSClientInterface interface {
 
 	// GetWorkerDetails retrieves detailed information about an IKS worker
 	GetWorkerDetails(ctx context.Context, clusterID, workerID string) (*IKSWorkerDetails, error)
+	ListWorkers(ctx context.Context, clusterID string) ([]*IKSWorkerDetails, error)
 
 	// GetVPCInstanceIDFromWorker extracts the VPC instance ID from worker details
 	GetVPCInstanceIDFromWorker(ctx context.Context, clusterID, workerID string) (string, error)
@@ -41,14 +42,6 @@ type IKSClientInterface interface {
 
 	// ResizeWorkerPool resizes a worker pool to the specified size
 	ResizeWorkerPool(ctx context.Context, clusterID, poolID string, newSize int) error
-
-	// IncrementWorkerPool atomically increments a worker pool's size by 1.
-	// Returns the new size after increment.
-	IncrementWorkerPool(ctx context.Context, clusterID, poolID string) (int, error)
-
-	// DecrementWorkerPool atomically decrements a worker pool's size by 1.
-	// Returns the new size after decrement. Will not go below 0.
-	DecrementWorkerPool(ctx context.Context, clusterID, poolID string) (int, error)
 
 	// CreateWorkerPool creates a new worker pool with the specified configuration
 	CreateWorkerPool(ctx context.Context, clusterID string, request *WorkerPoolCreateRequest) (*WorkerPool, error)

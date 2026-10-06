@@ -417,6 +417,7 @@ if [[ -f "/etc/kubernetes/additional-ca.crt" ]]; then
 fi
 
 # Create bootstrap kubeconfig
+install -m 0600 /dev/null /var/lib/kubelet/bootstrap-kubeconfig
 cat > /var/lib/kubelet/bootstrap-kubeconfig << EOF
 apiVersion: v1
 kind: Config
@@ -542,6 +543,7 @@ echo "$(date): Instance ID: $INSTANCE_ID, Provider ID: $PROVIDER_ID"
 
 # Create bootstrap kubeconfig with correct API server endpoint
 mkdir -p /etc/kubernetes
+install -m 0600 /dev/null /etc/kubernetes/bootstrap-kubeconfig
 cat > /etc/kubernetes/bootstrap-kubeconfig << EOF
 apiVersion: v1
 kind: Config
@@ -661,52 +663,14 @@ echo "$(date): CNI binaries installed"
 # Install CNI configuration based on detected plugin
 case "$CNI_PLUGIN" in
   "calico")
-    echo "$(date): Installing Calico CNI configuration..."
+    echo "$(date): Preparing Calico node name..."
 
-    # Create nodename file - this is critical for Calico CNI to work
-    # This prevents the race condition where CNI is invoked before the DaemonSet creates this file
-    echo "$HOSTNAME" > /var/lib/calico/nodename
+    # Calico reads this file verbatim before its DaemonSet starts.
+    printf '%s' "$HOSTNAME" > /var/lib/calico/nodename
     echo "$(date): Created Calico nodename file: $HOSTNAME"
 
-    cat > /etc/cni/net.d/10-calico.conflist << 'EOF'
-{
-  "name": "k8s-pod-network",
-  "cniVersion": "0.3.1",
-  "plugins": [
-    {
-      "type": "calico",
-      "log_level": "info",
-      "log_file_path": "/var/log/calico/cni/cni.log",
-      "datastore_type": "kubernetes",
-      "nodename": "__KUBERNETES_NODE_NAME__",
-      "mtu": 1440,
-      "ipam": {
-          "type": "calico-ipam"
-      },
-      "policy": {
-          "type": "k8s"
-      },
-      "kubernetes": {
-          "kubeconfig": "__KUBECONFIG_FILEPATH__"
-      }
-    },
-    {
-      "type": "portmap",
-      "snat": true,
-      "capabilities": {"portMappings": true}
-    },
-    {
-      "type": "bandwidth",
-      "capabilities": {"bandwidth": true}
-    }
-  ]
-}
-EOF
-    # Point at calico-node's ServiceAccount kubeconfig (written by its
-    # install-cni init container). The kubelet bootstrap kubeconfig lacks
-    # RBAC for clusterinformations.crd.projectcalico.org.
-    sed -i "s/__KUBERNETES_NODE_NAME__/$(hostname)/g" /etc/cni/net.d/10-calico.conflist
-    sed -i "s/__KUBECONFIG_FILEPATH__/\/etc\/cni\/net.d\/calico-kubeconfig/g" /etc/cni/net.d/10-calico.conflist
+    # The host-network install-cni container writes credentials before its
+    # conflist. Publishing a conflist here exposes incomplete CNI to kubelet.
     ;;
   "cilium")
     echo "$(date): Creating temporary CNI configuration for Cilium bootstrap..."
@@ -771,7 +735,7 @@ EOF
     ;;
 esac
 
-echo "$(date): CNI configuration installed for $CNI_PLUGIN"
+echo "$(date): CNI bootstrap preparation completed for $CNI_PLUGIN"
 
 # Start kubelet
 systemctl daemon-reload
@@ -816,13 +780,13 @@ check_cni_ready() {
         [ -x /opt/cni/bin/calico ] || return 1
         [ -x /opt/cni/bin/calico-ipam ] || return 1
 
-        # Check 2: CNI configuration exists and is valid JSON
-        [ -f /etc/cni/net.d/10-calico.conflist ] || return 1
+        [ -s /etc/cni/net.d/10-calico.conflist ] || return 1
+        [ -s /etc/cni/net.d/calico-kubeconfig ] || return 1
 
-        # Check 3: Calico nodename file exists (created during bootstrap)
-        [ -f /var/lib/calico/nodename ] || return 1
+        # Check 2: Calico nodename file exists (created during bootstrap)
+        [ -s /var/lib/calico/nodename ] || return 1
 
-        # Check 4: CNI can be invoked successfully
+        # Check 3: CNI can be invoked successfully
         if [ -x /opt/cni/bin/calico ] && [ -f /etc/cni/net.d/10-calico.conflist ]; then
             # Try a simple CNI version check
             CNI_PATH=/opt/cni/bin /opt/cni/bin/calico version >/dev/null 2>&1 || return 1

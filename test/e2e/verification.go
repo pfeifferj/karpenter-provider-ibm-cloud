@@ -20,9 +20,12 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -79,23 +82,40 @@ func (s *E2ETestSuite) verifyKarpenterNodesExist(t *testing.T) {
 
 // verifyInstancesInIBMCloud verifies that instances exist and are managed by Karpenter
 func (s *E2ETestSuite) verifyInstancesInIBMCloud(t *testing.T) {
-	// This is a simplified verification - in a real implementation,
-	// you would check the IBM Cloud VPC API for actual instances
-	ctx := context.Background()
+	t.Helper()
+	instances, err := s.getIBMCloudInstances(t)
+	require.NoError(t, err, "list actual IBM Cloud instances")
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
 	var nodeList corev1.NodeList
-	err := s.kubeClient.List(ctx, &nodeList)
+	err = s.kubeClient.List(ctx, &nodeList)
 	require.NoError(t, err)
+	require.NoError(t, verifyManagedNodeInstances(nodeList.Items, s.testRegion, instances))
+}
 
-	karpenterNodes := 0
-	for _, node := range nodeList.Items {
-		if labelValue, exists := node.Labels["karpenter.sh/nodepool"]; exists && labelValue != "" {
-			karpenterNodes++
-			t.Logf("Found Karpenter node in cluster: %s", node.Name)
-			// In a real test, we would extract the provider ID and verify it exists in IBM Cloud
+func verifyManagedNodeInstances(nodes []corev1.Node, region string, instances map[string]string) error {
+	managed := 0
+	prefix := "ibm:///" + region + "/"
+	for _, node := range nodes {
+		if node.Labels[karpv1.NodePoolLabelKey] == "" {
+			continue
+		}
+		managed++
+		if !strings.HasPrefix(node.Spec.ProviderID, prefix) {
+			return fmt.Errorf("managed Node %s has an unexpected provider ID %q", node.Name, node.Spec.ProviderID)
+		}
+		instanceID := strings.TrimPrefix(node.Spec.ProviderID, prefix)
+		if instanceID == "" || strings.Contains(instanceID, "/") {
+			return fmt.Errorf("managed Node %s has an invalid instance ID", node.Name)
+		}
+		if _, exists := instances[instanceID]; !exists {
+			return fmt.Errorf("managed Node %s instance %s is absent from the test VPC inventory", node.Name, instanceID)
 		}
 	}
-
-	require.Greater(t, karpenterNodes, 0, "At least one Karpenter node should exist")
+	if managed == 0 {
+		return fmt.Errorf("no Karpenter-managed Nodes exist")
+	}
+	return nil
 }
 
 // verifyInstancesUseAllowedTypes verifies that all Karpenter nodes use instance types from the allowed list
@@ -200,22 +220,7 @@ func (s *E2ETestSuite) verifyInstanceUsesAllowedType(t *testing.T, nodeClaimName
 
 // isNodeClaimReady checks if a NodeClaim is in a ready state
 func (s *E2ETestSuite) isNodeClaimReady(nodeClaim karpv1.NodeClaim) bool {
-	// Check if the NodeClaim has a ProviderID (instance was created)
-	if nodeClaim.Status.ProviderID == "" {
-		return false
-	}
-
-	// Check conditions for readiness
-	for _, condition := range nodeClaim.Status.Conditions {
-		if condition.Type == "Ready" && condition.Status == "True" {
-			return true
-		}
-		if condition.Type == "Launched" && condition.Status == "True" {
-			return true
-		}
-	}
-
-	return false
+	return nodeClaim.Status.ProviderID != "" && nodeClaim.DeletionTimestamp == nil && nodeClaim.StatusConditions().Get("Ready").IsTrue()
 }
 
 // getKarpenterNodes returns nodes managed by the given NodePool
@@ -280,30 +285,47 @@ func (s *E2ETestSuite) monitorNodeStability(t *testing.T, nodePoolName string, i
 	t.Logf("Node stability monitoring completed for %v", duration)
 }
 
-// getIBMCloudInstances retrieves current IBM Cloud instances (simplified implementation)
 func (s *E2ETestSuite) getIBMCloudInstances(t *testing.T) (map[string]string, error) {
-	// This is a placeholder - in a real implementation, this would call IBM Cloud VPC API
-	// to get actual instance information
-	instances := make(map[string]string)
+	t.Helper()
+	return s.getIBMCloudInstancesWithContext(t.Context())
+}
 
-	// For now, we'll get the information from Kubernetes nodes
-	ctx := context.Background()
-	var nodeList corev1.NodeList
-	err := s.kubeClient.List(ctx, &nodeList)
+func (s *E2ETestSuite) getIBMCloudInstancesWithContext(parent context.Context) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(parent, time.Minute)
+	defer cancel()
+	vpcClient, err := s.vpcClient()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating VPC inventory client: %w", err)
 	}
+	return instancesInVPC(ctx, vpcClient, s.testVPC)
+}
 
-	for _, node := range nodeList.Items {
-		if labelValue, exists := node.Labels["karpenter.sh/nodepool"]; exists && labelValue != "" {
-			// Extract instance ID from provider ID
-			instanceID := extractInstanceIDFromProviderID(node.Spec.ProviderID)
-			if instanceID != "" {
-				instances[instanceID] = node.Name
-			}
+type instanceInventory interface {
+	ListInstances(context.Context) ([]vpcv1.Instance, error)
+}
+
+func instancesInVPC(ctx context.Context, inventory instanceInventory, vpcID string) (map[string]string, error) {
+	if vpcID == "" {
+		return nil, fmt.Errorf("test VPC ID is required for inventory")
+	}
+	listed, err := inventory.ListInstances(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing IBM Cloud instances: %w", err)
+	}
+	instances := make(map[string]string)
+	for _, instance := range listed {
+		if instance.VPC == nil || instance.VPC.ID == nil || *instance.VPC.ID != vpcID {
+			continue
 		}
+		if instance.ID == nil || *instance.ID == "" {
+			return nil, fmt.Errorf("instance in test VPC has no ID")
+		}
+		name := ""
+		if instance.Name != nil {
+			name = *instance.Name
+		}
+		instances[*instance.ID] = name
 	}
-
 	return instances, nil
 }
 

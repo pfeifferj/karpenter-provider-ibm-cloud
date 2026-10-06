@@ -20,8 +20,8 @@ package e2e
 
 import (
 	"context"
-	"os"
-	"os/exec"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -30,677 +30,378 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/apis/v1alpha1"
 )
 
-// deleteNodeClaim deletes a specific NodeClaim
-func (s *E2ETestSuite) deleteNodeClaim(t *testing.T, nodeClaimName string) {
-	ctx := context.Background()
-	var nodeClaim karpv1.NodeClaim
-	err := s.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaimName}, &nodeClaim)
-	require.NoError(t, err)
-	err = s.kubeClient.Delete(ctx, &nodeClaim)
-	require.NoError(t, err)
+var legacyE2EName = regexp.MustCompile(`^(e2e-test|drift-stability|instance-selection|nodepool-instance-selection|validation-test|valid-nodeclass|cleanup-nodepool|cleanup-nodeclass|cleanup-orphaned|cleanup-ibmcloud|multizone-distribution|zone-anti-affinity|topology-spread|placement-strategy-validation|zone-failover|block-device-test|image-selector-test|startup-taints|startup-taint-removal|basic-taints|taint-values|taint-sync|unregistered-taint|subnet-drift-placement|sg-drift|sg-drift-default|consolidation-pdb|pdb-test|anti-affinity|node-affinity)-[0-9]{10,}(-[a-z0-9-]+)?$`)
+
+func isE2EOwned(object client.Object) bool {
+	if object.GetNamespace() == "karpenter" {
+		return false
+	}
+	labels := object.GetLabels()
+	if labels["test"] == "e2e" || labels["created-by"] == "karpenter-e2e" {
+		return true
+	}
+	switch labels["purpose"] {
+	case "e2e-verification", "instance-type-test", "nodepool-instancetype-test", "karpenter-test",
+		"multi-zone-test", "block-device-test", "image-selector-test", "image-selector-placement-test",
+		"placement-strategy-test", "default-sg-test":
+		return true
+	}
+	return legacyE2EName.MatchString(object.GetName())
 }
 
-// cleanupTestWorkload deletes a test deployment
-func (s *E2ETestSuite) cleanupTestWorkload(t *testing.T, deploymentName, namespace string) {
-	ctx := context.Background()
-	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      deploymentName,
-			Namespace: namespace,
-		},
-	}
-	err := s.kubeClient.Delete(ctx, deployment)
-	if err != nil && !errors.IsNotFound(err) {
-		t.Logf("Failed to delete deployment %s: %v", deploymentName, err)
-	}
+type cleanupScope struct {
+	testName string
+	poolUIDs map[string]types.UID
 }
 
-// waitForResourceDeletion waits for resources to be completely deleted
-func (s *E2ETestSuite) waitForResourceDeletion(ctx context.Context, t *testing.T, resourceName string, listObj client.ObjectList, labelSelector map[string]string, maxWait time.Duration) bool {
-	t.Logf("Waiting for %s deletion (max %v)...", resourceName, maxWait)
+func (scope cleanupScope) directlyOwns(object client.Object) bool {
+	if object.GetNamespace() == "karpenter" {
+		return false
+	}
+	if scope.testName == "" {
+		return isE2EOwned(object)
+	}
+	if name := object.GetLabels()["test-name"]; name != "" {
+		return name == scope.testName
+	}
+	return isE2EOwned(object) && (object.GetName() == scope.testName || strings.HasPrefix(object.GetName(), scope.testName+"-"))
+}
 
-	start := time.Now()
-	for time.Since(start) < maxWait {
-		err := s.kubeClient.List(ctx, listObj, client.MatchingLabels(labelSelector))
-		if err != nil {
-			t.Logf("Error checking %s deletion: %v", resourceName, err)
-			return false
-		}
-
-		var itemCount int
-		switch list := listObj.(type) {
-		case *appsv1.DeploymentList:
-			itemCount = len(list.Items)
-		case *karpv1.NodeClaimList:
-			itemCount = len(list.Items)
-		case *karpv1.NodePoolList:
-			itemCount = len(list.Items)
-		case *v1alpha1.IBMNodeClassList:
-			itemCount = len(list.Items)
-		case *policyv1.PodDisruptionBudgetList:
-			itemCount = len(list.Items)
-		}
-
-		if itemCount == 0 {
-			t.Logf("All %s resources deleted", resourceName)
+func (scope cleanupScope) owns(object client.Object) bool {
+	if scope.testName != "" && object.GetLabels()["test-name"] != "" && object.GetLabels()["test-name"] != scope.testName {
+		return false
+	}
+	if scope.directlyOwns(object) {
+		return true
+	}
+	if _, ok := object.(*karpv1.NodeClaim); !ok {
+		return false
+	}
+	for _, owner := range object.GetOwnerReferences() {
+		if owner.Kind == "NodePool" && strings.HasPrefix(owner.APIVersion, "karpenter.sh/") && owner.UID != "" && scope.poolUIDs[owner.Name] == owner.UID {
 			return true
 		}
-
-		t.Logf("Still waiting for %s deletion... (%d remaining, %v elapsed)", resourceName, itemCount, time.Since(start).Round(time.Second))
-		time.Sleep(10 * time.Second)
 	}
-
-	t.Logf("Warning: %s deletion timeout after %v", resourceName, maxWait)
 	return false
 }
 
-// cleanupTestResources performs comprehensive cleanup of test resources with proper timeouts
-func (s *E2ETestSuite) cleanupTestResources(t *testing.T, testName string) {
-	ctx := context.Background()
-	t.Logf("Starting cleanup for test: %s", testName)
-
-	// List of resources to clean up in specific order (pods first, then IBMNodeClass last)
-	resources := []struct {
-		name          string
-		obj           client.Object
-		listObj       client.ObjectList
-		timeout       time.Duration
-		deleteTimeout time.Duration
-	}{
-		{
-			name:          "PodDisruptionBudget",
-			obj:           &policyv1.PodDisruptionBudget{},
-			listObj:       &policyv1.PodDisruptionBudgetList{},
-			timeout:       30 * time.Second,
-			deleteTimeout: 15 * time.Second,
-		},
-		{
-			name:          "Deployment",
-			obj:           &appsv1.Deployment{},
-			listObj:       &appsv1.DeploymentList{},
-			timeout:       60 * time.Second,
-			deleteTimeout: 30 * time.Second,
-		},
-		{
-			name:          "NodeClaim",
-			obj:           &karpv1.NodeClaim{},
-			listObj:       &karpv1.NodeClaimList{},
-			timeout:       3 * time.Minute,
-			deleteTimeout: 30 * time.Second,
-		},
-		{
-			name:          "NodePool",
-			obj:           &karpv1.NodePool{},
-			listObj:       &karpv1.NodePoolList{},
-			timeout:       2 * time.Minute,
-			deleteTimeout: 30 * time.Second,
-		},
-		{
-			name:          "IBMNodeClass",
-			obj:           &v1alpha1.IBMNodeClass{},
-			listObj:       &v1alpha1.IBMNodeClassList{},
-			timeout:       2 * time.Minute,
-			deleteTimeout: 30 * time.Second,
-		},
+func (s *E2ETestSuite) newCleanupScope(ctx context.Context, testName string) (cleanupScope, error) {
+	scope := cleanupScope{testName: testName, poolUIDs: map[string]types.UID{}}
+	pools := &karpv1.NodePoolList{}
+	if err := s.kubeClient.List(ctx, pools); err != nil {
+		return scope, fmt.Errorf("listing cleanup pools: %w", err)
 	}
-
-	// Clean up resources by test name label in specific order
-	for _, resource := range resources {
-		t.Logf("Cleaning up %s resources for test %s", resource.name, testName)
-
-		// Create context with timeout for the delete operations
-		deleteCtx, cancel := context.WithTimeout(ctx, resource.deleteTimeout)
-
-		// List resources with multiple possible label selectors
-		labelSelectors := []map[string]string{
-			{"test-name": testName},
-			{"test": "e2e"},
-		}
-
-		resourcesDeleted := false
-		for _, labels := range labelSelectors {
-			err := s.kubeClient.List(ctx, resource.listObj, client.MatchingLabels(labels))
-			if err != nil {
-				t.Logf("Failed to list %s resources with labels %v: %v", resource.name, labels, err)
-				continue
-			}
-
-			// Delete items using type assertions with timeout context
-			switch list := resource.listObj.(type) {
-			case *appsv1.DeploymentList:
-				if len(list.Items) > 0 {
-					for _, item := range list.Items {
-						t.Logf("Deleting %s: %s", resource.name, item.Name)
-						if err := s.kubeClient.Delete(deleteCtx, &item); err != nil && !errors.IsNotFound(err) {
-							t.Logf("Failed to delete %s %s: %v", resource.name, item.Name, err)
-						} else {
-							resourcesDeleted = true
-						}
-					}
-				}
-			case *karpv1.NodeClaimList:
-				if len(list.Items) > 0 {
-					for _, item := range list.Items {
-						t.Logf("Deleting %s: %s", resource.name, item.Name)
-						if err := s.kubeClient.Delete(deleteCtx, &item); err != nil && !errors.IsNotFound(err) {
-							t.Logf("Failed to delete %s %s: %v", resource.name, item.Name, err)
-						} else {
-							resourcesDeleted = true
-						}
-					}
-				}
-			case *karpv1.NodePoolList:
-				if len(list.Items) > 0 {
-					for _, item := range list.Items {
-						t.Logf("Deleting %s: %s", resource.name, item.Name)
-						if err := s.kubeClient.Delete(deleteCtx, &item); err != nil && !errors.IsNotFound(err) {
-							t.Logf("Failed to delete %s %s: %v", resource.name, item.Name, err)
-						} else {
-							resourcesDeleted = true
-						}
-					}
-				}
-			case *v1alpha1.IBMNodeClassList:
-				if len(list.Items) > 0 {
-					for _, item := range list.Items {
-						t.Logf("Deleting %s: %s", resource.name, item.Name)
-						if err := s.kubeClient.Delete(deleteCtx, &item); err != nil && !errors.IsNotFound(err) {
-							t.Logf("Failed to delete %s %s: %v", resource.name, item.Name, err)
-						} else {
-							resourcesDeleted = true
-						}
-					}
-				}
-			case *policyv1.PodDisruptionBudgetList:
-				if len(list.Items) > 0 {
-					for _, item := range list.Items {
-						t.Logf("Deleting %s: %s", resource.name, item.Name)
-						if err := s.kubeClient.Delete(deleteCtx, &item); err != nil && !errors.IsNotFound(err) {
-							t.Logf("Failed to delete %s %s: %v", resource.name, item.Name, err)
-						} else {
-							resourcesDeleted = true
-						}
-					}
-				}
-			}
-		}
-
-		cancel() // Cancel the delete timeout context
-
-		// If we deleted any resources, wait for them to be fully deleted
-		if resourcesDeleted {
-			// Create bounded context for waiting
-			waitCtx, waitCancel := context.WithTimeout(ctx, resource.timeout)
-			// Wait for deletion with appropriate timeout for IBM Cloud resources
-			success := s.waitForResourceDeletion(waitCtx, t, resource.name, resource.listObj, map[string]string{"test-name": testName}, resource.timeout)
-			if !success {
-				// Also check with "test": "e2e" label
-				s.waitForResourceDeletion(waitCtx, t, resource.name, resource.listObj, map[string]string{"test": "e2e"}, resource.timeout/2)
-			}
-			waitCancel()
+	for i := range pools.Items {
+		pool := &pools.Items[i]
+		if scope.directlyOwns(pool) {
+			scope.poolUIDs[pool.Name] = pool.UID
 		}
 	}
-
-	t.Logf("Cleanup completed for test %s", testName)
+	return scope, nil
 }
 
-// cleanupFloatingIP removes a floating IP from IBM Cloud
-func (s *E2ETestSuite) cleanupFloatingIP(t *testing.T, floatingIP string) {
-	t.Logf("Cleaning up floating IP: %s", floatingIP)
-
-	// Get floating IP details to find ID
-	cmd := exec.Command("ibmcloud", "is", "floating-ips", "--output", "json")
-	output, err := cmd.Output()
+func (s *E2ETestSuite) cleanupObjects(ctx context.Context, list client.ObjectList, scope cleanupScope) ([]client.Object, error) {
+	if err := s.kubeClient.List(ctx, list); err != nil {
+		return nil, err
+	}
+	items, err := meta.ExtractList(list)
 	if err != nil {
-		t.Logf("Failed to list floating IPs for cleanup: %v", err)
-		return
+		return nil, err
 	}
-
-	outputStr := string(output)
-	if !strings.Contains(outputStr, floatingIP) {
-		t.Logf("Floating IP %s not found for cleanup", floatingIP)
-		return
-	}
-
-	// Find the floating IP ID from the output
-	lines := strings.Split(outputStr, "\n")
-	var floatingIPID string
-	for _, line := range lines {
-		if strings.Contains(line, floatingIP) && strings.Contains(line, "\"id\"") {
-			// Parse JSON to extract ID - simplified parsing
-			parts := strings.Split(line, "\"")
-			for i, part := range parts {
-				if part == "id" && i+2 < len(parts) {
-					floatingIPID = parts[i+2]
-					break
-				}
-			}
-			break
+	var objects []client.Object
+	for _, item := range items {
+		object, ok := item.(client.Object)
+		if !ok {
+			return nil, fmt.Errorf("unsupported cleanup object %T", item)
+		}
+		if scope.owns(object) {
+			objects = append(objects, object)
 		}
 	}
-
-	if floatingIPID == "" {
-		t.Logf("Could not find ID for floating IP %s", floatingIP)
-		return
-	}
-
-	// Delete the floating IP
-	deleteCmd := exec.Command("ibmcloud", "is", "floating-ip-delete", floatingIPID, "--force")
-	if err := deleteCmd.Run(); err != nil {
-		t.Logf("Failed to delete floating IP %s: %v", floatingIP, err)
-		return
-	}
-
-	t.Logf("Successfully cleaned up floating IP: %s", floatingIP)
+	return objects, nil
 }
 
-// cleanupAllStaleResources performs aggressive cleanup of ALL E2E resources (stale and current)
-func (s *E2ETestSuite) cleanupAllStaleResources(t *testing.T) {
+func (s *E2ETestSuite) deleteCleanupObject(ctx context.Context, object client.Object, scope cleanupScope) error {
+	expectedUID := object.GetUID()
+	if expectedUID == "" {
+		return fmt.Errorf("cleanup identity changed for %T %s", object, object.GetName())
+	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		current := object.DeepCopyObject().(client.Object)
+		if err := s.kubeClient.Get(ctx, client.ObjectKeyFromObject(object), current); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if current.GetUID() != expectedUID {
+			return fmt.Errorf("cleanup identity changed for %T %s", object, object.GetName())
+		}
+		if !scope.owns(current) {
+			return fmt.Errorf("cleanup ownership changed for %T %s", object, object.GetName())
+		}
+		if current.GetDeletionTimestamp() != nil {
+			return nil
+		}
+		uid, version := current.GetUID(), current.GetResourceVersion()
+		return client.IgnoreNotFound(s.kubeClient.Delete(ctx, current, client.Preconditions{UID: &uid, ResourceVersion: &version}))
+	})
+}
+
+func (s *E2ETestSuite) waitForCleanupObjectsGone(ctx context.Context, objects []client.Object) error {
+	return wait.PollUntilContextCancel(ctx, pollInterval, true, func(ctx context.Context) (bool, error) {
+		remaining := false
+		for _, object := range objects {
+			current := object.DeepCopyObject().(client.Object)
+			if err := s.kubeClient.Get(ctx, client.ObjectKeyFromObject(object), current); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return false, err
+			}
+			if current.GetUID() != object.GetUID() {
+				return false, fmt.Errorf("cleanup identity changed while waiting for %T %s", object, object.GetName())
+			}
+			remaining = true
+		}
+		return !remaining, nil
+	})
+}
+
+func referencesClass(reference *karpv1.NodeClassReference, name string) bool {
+	return reference != nil && reference.Group == v1alpha1.Group && reference.Kind == "IBMNodeClass" && reference.Name == name
+}
+
+func (s *E2ETestSuite) waitForCleanupDependents(ctx context.Context, object client.Object) error {
+	return wait.PollUntilContextCancel(ctx, pollInterval, true, func(ctx context.Context) (bool, error) {
+		claims := &karpv1.NodeClaimList{}
+		if err := s.kubeClient.List(ctx, claims); err != nil {
+			return false, err
+		}
+		switch object := object.(type) {
+		case *karpv1.NodePool:
+			for _, claim := range claims.Items {
+				if claim.Labels[karpv1.NodePoolLabelKey] == object.Name {
+					return false, nil
+				}
+				for _, owner := range claim.OwnerReferences {
+					if owner.Kind == "NodePool" && owner.UID == object.UID && owner.Name == object.Name {
+						return false, nil
+					}
+				}
+			}
+			nodes := &corev1.NodeList{}
+			if err := s.kubeClient.List(ctx, nodes); err != nil {
+				return false, err
+			}
+			for _, node := range nodes.Items {
+				if node.Labels[karpv1.NodePoolLabelKey] == object.Name {
+					return false, nil
+				}
+			}
+		case *v1alpha1.IBMNodeClass:
+			for _, claim := range claims.Items {
+				if referencesClass(claim.Spec.NodeClassRef, object.Name) {
+					return false, nil
+				}
+			}
+			pools := &karpv1.NodePoolList{}
+			if err := s.kubeClient.List(ctx, pools); err != nil {
+				return false, err
+			}
+			for _, pool := range pools.Items {
+				if referencesClass(pool.Spec.Template.Spec.NodeClassRef, object.Name) {
+					return false, nil
+				}
+			}
+		}
+		return true, nil
+	})
+}
+
+func (s *E2ETestSuite) cleanupSelectedResources(ctx context.Context, testName string) error {
+	scope, err := s.newCleanupScope(ctx, testName)
+	if err != nil {
+		return err
+	}
+	claims, err := s.cleanupObjects(ctx, &karpv1.NodeClaimList{}, scope)
+	if err != nil {
+		return err
+	}
+	var instanceIDs []string
+	for _, object := range claims {
+		if id := vpcInstanceID(object.(*karpv1.NodeClaim).Status.ProviderID); id != "" {
+			instanceIDs = append(instanceIDs, id)
+		}
+	}
+	resources := []struct {
+		name    string
+		list    client.ObjectList
+		timeout time.Duration
+	}{
+		{"PodDisruptionBudget", &policyv1.PodDisruptionBudgetList{}, time.Minute},
+		{"Deployment", &appsv1.DeploymentList{}, 2 * time.Minute},
+		{"Pod", &corev1.PodList{}, 2 * time.Minute},
+		{"NodeClaim", &karpv1.NodeClaimList{}, 5 * time.Minute},
+		{"NodePool", &karpv1.NodePoolList{}, 2 * time.Minute},
+		{"IBMNodeClass", &v1alpha1.IBMNodeClassList{}, 2 * time.Minute},
+	}
+	for _, resource := range resources {
+		stageCtx, cancel := context.WithTimeout(ctx, resource.timeout)
+		err := func() error {
+			for {
+				objects, err := s.cleanupObjects(stageCtx, resource.list, scope)
+				if err != nil {
+					return err
+				}
+				if len(objects) == 0 {
+					return nil
+				}
+				for _, object := range objects {
+					switch object.(type) {
+					case *karpv1.NodePool, *v1alpha1.IBMNodeClass:
+						if err := s.waitForCleanupDependents(stageCtx, object); err != nil {
+							return err
+						}
+					}
+					if err := s.deleteCleanupObject(stageCtx, object, scope); err != nil {
+						return err
+					}
+				}
+				if err := s.waitForCleanupObjectsGone(stageCtx, objects); err != nil {
+					return err
+				}
+			}
+		}()
+		cancel()
+		if err != nil {
+			return fmt.Errorf("cleanup of %s failed; remaining resources and finalizers were preserved: %w", resource.name, err)
+		}
+	}
+	// NodeClaim deletion completes once the provider accepts the delete; the instance itself
+	// must also be gone before the test counts as cleaned up.
+	if len(instanceIDs) == 0 || s.apiKey == "" || s.testVPC == "" {
+		return nil
+	}
+	cloudCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	if remaining, err := pollInstancesGone(cloudCtx, instanceIDs, 10*time.Second, s.getIBMCloudInstancesWithContext, nil); err != nil {
+		return fmt.Errorf("IBM Cloud instances %v outlived their NodeClaims: %w", remaining, err)
+	}
+	return nil
+}
+
+// vpcInstanceID returns the instance ID of a VPC provider ID, or "" for other backends.
+func vpcInstanceID(providerID string) string {
+	parts := strings.Split(strings.TrimPrefix(providerID, "ibm:///"), "/")
+	if !strings.HasPrefix(providerID, "ibm:///") || len(parts) != 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+func (s *E2ETestSuite) deleteNodeClaim(t *testing.T, nodeClaimName string) {
+	t.Helper()
+	ctx := context.Background()
+	scope, err := s.newCleanupScope(ctx, "")
+	require.NoError(t, err)
+	claim := &karpv1.NodeClaim{}
+	require.NoError(t, s.kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaimName}, claim))
+	require.NoError(t, s.deleteCleanupObject(ctx, claim, scope))
+}
+
+func (s *E2ETestSuite) cleanupTestWorkload(t *testing.T, deploymentName, namespace string) {
+	t.Helper()
+	ctx := context.Background()
+	deployment := &appsv1.Deployment{}
+	if err := s.kubeClient.Get(ctx, client.ObjectKey{Name: deploymentName, Namespace: namespace}, deployment); err != nil {
+		if !apierrors.IsNotFound(err) {
+			t.Errorf("reading cleanup deployment %s: %v", deploymentName, err)
+		}
+		return
+	}
+	if err := s.deleteCleanupObject(ctx, deployment, cleanupScope{}); err != nil {
+		t.Errorf("deleting cleanup deployment %s: %v", deploymentName, err)
+	}
+}
+
+func (s *E2ETestSuite) cleanupTestResources(t *testing.T, testName string) {
+	t.Helper()
+	if testName == "" {
+		t.Error("cleanup requires a nonempty test-name")
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-
-	t.Logf("Starting AGGRESSIVE cleanup of ALL E2E resources...")
-
-	// Phase 1: Emergency cleanup - delete ALL IBMNodeClasses (they cause circuit breaker issues)
-	t.Logf("Phase 1: Emergency IBMNodeClass cleanup...")
-	var allNodeClasses v1alpha1.IBMNodeClassList
-	if err := s.kubeClient.List(ctx, &allNodeClasses); err == nil {
-		for _, nodeClass := range allNodeClasses.Items {
-			if err := s.kubeClient.Delete(ctx, &nodeClass); err != nil && !errors.IsNotFound(err) {
-				t.Logf("Warning: Force deleting IBMNodeClass %s: %v", nodeClass.Name, err)
-				// Force delete with finalizer removal if needed
-				s.forceDeleteWithFinalizers(ctx, t, &nodeClass)
-			} else {
-				t.Logf("Deleted IBMNodeClass: %s", nodeClass.Name)
-			}
-		}
+	if err := s.cleanupSelectedResources(ctx, testName); err != nil {
+		t.Errorf("cleanup for test %s: %v", testName, err)
 	}
-
-	// Phase 2: Standard resource cleanup with multiple label patterns
-	labelPatterns := []map[string]string{
-		{"test": "e2e"},
-		{"created-by": "karpenter-e2e"},
-		{"purpose": "e2e-verification"},
-		{"purpose": "instance-type-test"},
-		{"purpose": "nodepool-instancetype-test"},
-		{"purpose": "karpenter-test"},
-	}
-
-	// Also clean by name patterns (for resources that might not have proper labels)
-	namePatterns := []string{
-		"e2e-test-",
-		"drift-stability-",
-		"instance-selection-",
-		"nodepool-instance-selection-",
-		"validation-test-",
-		"valid-nodeclass-",
-		"-nodeclass",
-		"-nodepool",
-		"-workload",
-	}
-
-	t.Logf("Phase 2: Systematic resource cleanup...")
-
-	// Clean up in reverse dependency order (most dependent first)
-	resources := []struct {
-		name    string
-		listObj client.ObjectList
-		objType string
-	}{
-		{"Deployments", &appsv1.DeploymentList{}, "Deployment"},
-		{"PodDisruptionBudgets", &policyv1.PodDisruptionBudgetList{}, "PDB"},
-		{"NodeClaims", &karpv1.NodeClaimList{}, "NodeClaim"},
-		{"NodePools", &karpv1.NodePoolList{}, "NodePool"},
-		{"IBMNodeClasses", &v1alpha1.IBMNodeClassList{}, "IBMNodeClass"}, // Last cleanup
-	}
-
-	for _, resource := range resources {
-		t.Logf("Cleaning %s...", resource.name)
-
-		// Try cleanup by labels
-		for _, labels := range labelPatterns {
-			s.deleteResourcesByLabels(ctx, t, resource.listObj, labels, resource.objType)
-		}
-
-		// Try cleanup by name patterns
-		s.deleteResourcesByNamePattern(ctx, t, resource.listObj, namePatterns, resource.objType)
-	}
-
-	// Block until deletes complete so the next test's workload does not
-	// schedule on residual karpenter nodes.
-	s.waitForStaleResourcesGone(ctx, t)
-
-	t.Logf("Aggressive cleanup completed")
 }
 
-// waitForStaleResourcesGone blocks until karpenter NodeClaims, NodePools,
-// and IBMNodeClasses drain, force-removing finalizers on timeout.
-func (s *E2ETestSuite) waitForStaleResourcesGone(ctx context.Context, t *testing.T) {
-	deadline := 2 * time.Minute
-	waitCtx, cancel := context.WithTimeout(ctx, deadline)
+func (s *E2ETestSuite) cleanupAllStaleResources(t *testing.T) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-
-	err := wait.PollUntilContextTimeout(waitCtx, 5*time.Second, deadline, true, func(ctx context.Context) (bool, error) {
-		var ncList karpv1.NodeClaimList
-		if err := s.kubeClient.List(ctx, &ncList); err != nil {
-			return false, nil
-		}
-		var npList karpv1.NodePoolList
-		if err := s.kubeClient.List(ctx, &npList); err != nil {
-			return false, nil
-		}
-		var nodeClassList v1alpha1.IBMNodeClassList
-		if err := s.kubeClient.List(ctx, &nodeClassList); err != nil {
-			return false, nil
-		}
-		total := len(ncList.Items) + len(npList.Items) + len(nodeClassList.Items)
-		if total == 0 {
-			return true, nil
-		}
-		t.Logf("Waiting for stale resources to drain: %d NodeClaims, %d NodePools, %d IBMNodeClasses",
-			len(ncList.Items), len(npList.Items), len(nodeClassList.Items))
-		return false, nil
-	})
-	if err == nil {
-		return
+	if err := s.cleanupSelectedResources(ctx, ""); err != nil {
+		t.Errorf("cleanup of owned E2E resources: %v", err)
+		return false
 	}
-
-	t.Logf("Stale resources did not drain in %s; force-removing finalizers", deadline)
-	var ncList karpv1.NodeClaimList
-	if listErr := s.kubeClient.List(ctx, &ncList); listErr == nil {
-		for i := range ncList.Items {
-			s.forceDeleteWithFinalizers(ctx, t, &ncList.Items[i])
-		}
+	if err := s.waitForStaleResourcesGone(ctx, t); err != nil {
+		t.Errorf("verifying E2E cleanup: %v", err)
+		return false
 	}
-	var npList karpv1.NodePoolList
-	if listErr := s.kubeClient.List(ctx, &npList); listErr == nil {
-		for i := range npList.Items {
-			s.forceDeleteWithFinalizers(ctx, t, &npList.Items[i])
-		}
-	}
-	var nodeClassList v1alpha1.IBMNodeClassList
-	if listErr := s.kubeClient.List(ctx, &nodeClassList); listErr == nil {
-		for i := range nodeClassList.Items {
-			s.forceDeleteWithFinalizers(ctx, t, &nodeClassList.Items[i])
-		}
-	}
+	return true
 }
 
-// forceDeleteWithFinalizers removes finalizers and force deletes a resource
-func (s *E2ETestSuite) forceDeleteWithFinalizers(ctx context.Context, t *testing.T, obj client.Object) {
-	// Remove finalizers
-	obj.SetFinalizers([]string{})
-	if err := s.kubeClient.Update(ctx, obj); err != nil {
-		t.Logf("Failed to remove finalizers from %s: %v", obj.GetName(), err)
+func (s *E2ETestSuite) waitForStaleResourcesGone(ctx context.Context, t *testing.T) error {
+	t.Helper()
+	scope, err := s.newCleanupScope(ctx, "")
+	if err != nil {
+		return err
 	}
-
-	// Force delete with zero grace period
-	if err := s.kubeClient.Delete(ctx, obj, client.GracePeriodSeconds(0)); err != nil && !errors.IsNotFound(err) {
-		t.Logf("Failed to force delete %s: %v", obj.GetName(), err)
+	for _, list := range []client.ObjectList{&appsv1.DeploymentList{}, &policyv1.PodDisruptionBudgetList{}, &corev1.PodList{}, &karpv1.NodeClaimList{}, &karpv1.NodePoolList{}, &v1alpha1.IBMNodeClassList{}} {
+		objects, err := s.cleanupObjects(ctx, list, scope)
+		if err != nil {
+			return err
+		}
+		if err := s.waitForCleanupObjectsGone(ctx, objects); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-// deleteResourcesByLabels deletes resources matching label selectors
-func (s *E2ETestSuite) deleteResourcesByLabels(ctx context.Context, t *testing.T, listObj client.ObjectList, labels map[string]string, resourceType string) {
-	if err := s.kubeClient.List(ctx, listObj, client.MatchingLabels(labels)); err != nil {
-		return
-	}
-
-	switch list := listObj.(type) {
-	case *appsv1.DeploymentList:
-		for _, item := range list.Items {
-			// Skip resources in karpenter namespace to avoid deleting the controller
-			if item.Namespace == "karpenter" {
-				t.Logf("Skipping %s in karpenter namespace: %s", resourceType, item.Name)
-				continue
-			}
-			s.kubeClient.Delete(ctx, &item, client.GracePeriodSeconds(0))
-			t.Logf("Deleted %s: %s", resourceType, item.Name)
-		}
-	case *karpv1.NodeClaimList:
-		for _, item := range list.Items {
-			s.forceDeleteWithFinalizers(ctx, t, &item)
-			t.Logf("Force deleted %s: %s", resourceType, item.Name)
-		}
-	case *karpv1.NodePoolList:
-		for _, item := range list.Items {
-			s.forceDeleteWithFinalizers(ctx, t, &item)
-			t.Logf("Force deleted %s: %s", resourceType, item.Name)
-		}
-	case *v1alpha1.IBMNodeClassList:
-		for _, item := range list.Items {
-			s.forceDeleteWithFinalizers(ctx, t, &item)
-			t.Logf("Force deleted %s: %s", resourceType, item.Name)
-		}
-	case *policyv1.PodDisruptionBudgetList:
-		for _, item := range list.Items {
-			s.kubeClient.Delete(ctx, &item, client.GracePeriodSeconds(0))
-			t.Logf("Deleted %s: %s", resourceType, item.Name)
-		}
-	}
-}
-
-// deleteResourcesByNamePattern deletes resources matching name patterns
-func (s *E2ETestSuite) deleteResourcesByNamePattern(ctx context.Context, t *testing.T, listObj client.ObjectList, patterns []string, resourceType string) {
-	if err := s.kubeClient.List(ctx, listObj); err != nil {
-		return
-	}
-
-	switch list := listObj.(type) {
-	case *appsv1.DeploymentList:
-		for _, item := range list.Items {
-			// Skip resources in karpenter namespace to avoid deleting the controller
-			if item.Namespace == "karpenter" {
-				continue
-			}
-			if s.matchesAnyPattern(item.Name, patterns) {
-				s.kubeClient.Delete(ctx, &item, client.GracePeriodSeconds(0))
-				t.Logf("Pattern-deleted %s: %s", resourceType, item.Name)
-			}
-		}
-	case *karpv1.NodeClaimList:
-		for _, item := range list.Items {
-			if s.matchesAnyPattern(item.Name, patterns) {
-				s.forceDeleteWithFinalizers(ctx, t, &item)
-				t.Logf("Pattern-deleted %s: %s", resourceType, item.Name)
-			}
-		}
-	case *karpv1.NodePoolList:
-		for _, item := range list.Items {
-			if s.matchesAnyPattern(item.Name, patterns) {
-				s.forceDeleteWithFinalizers(ctx, t, &item)
-				t.Logf("Pattern-deleted %s: %s", resourceType, item.Name)
-			}
-		}
-	case *v1alpha1.IBMNodeClassList:
-		for _, item := range list.Items {
-			if s.matchesAnyPattern(item.Name, patterns) {
-				s.forceDeleteWithFinalizers(ctx, t, &item)
-				t.Logf("Pattern-deleted %s: %s", resourceType, item.Name)
-			}
-		}
-	case *policyv1.PodDisruptionBudgetList:
-		for _, item := range list.Items {
-			if s.matchesAnyPattern(item.Name, patterns) {
-				s.kubeClient.Delete(ctx, &item, client.GracePeriodSeconds(0))
-				t.Logf("Pattern-deleted %s: %s", resourceType, item.Name)
-			}
-		}
-	}
-}
-
-// matchesAnyPattern checks if a name matches any of the given patterns
-func (s *E2ETestSuite) matchesAnyPattern(name string, patterns []string) bool {
-	for _, pattern := range patterns {
-		if strings.Contains(name, pattern) {
-			return true
-		}
-	}
-	return false
-}
-
-// cleanupOrphanedKubernetesResources removes resources that may be left behind after tests
 func (s *E2ETestSuite) cleanupOrphanedKubernetesResources(t *testing.T) {
+	t.Helper()
 	ctx := context.Background()
-	t.Logf("Cleaning up orphaned Kubernetes resources")
-
-	// Find nodes without corresponding NodeClaims
-	var nodeList corev1.NodeList
-	err := s.kubeClient.List(ctx, &nodeList, client.MatchingLabels{
-		"karpenter.sh/nodepool": "",
-	})
-	if err != nil {
-		t.Logf("Failed to list Karpenter nodes: %v", err)
+	pods := &corev1.PodList{}
+	if err := s.kubeClient.List(ctx, pods); err != nil {
+		t.Errorf("listing failed E2E pods: %v", err)
 		return
 	}
-
-	var nodeClaimList karpv1.NodeClaimList
-	err = s.kubeClient.List(ctx, &nodeClaimList)
-	if err != nil {
-		t.Logf("Failed to list NodeClaims: %v", err)
-		return
-	}
-
-	// Create a map of NodeClaim names to check for orphaned nodes
-	nodeClaimNames := make(map[string]bool)
-	for _, nodeClaim := range nodeClaimList.Items {
-		if nodeClaim.Status.NodeName != "" {
-			nodeClaimNames[nodeClaim.Status.NodeName] = true
-		}
-	}
-
-	// Check for orphaned nodes
-	orphanedNodes := 0
-	for _, node := range nodeList.Items {
-		if _, exists := node.Labels["karpenter.sh/nodepool"]; exists {
-			if !nodeClaimNames[node.Name] {
-				t.Logf("Found potentially orphaned node: %s", node.Name)
-				orphanedNodes++
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase == corev1.PodFailed && isE2EOwned(pod) {
+			if err := s.deleteCleanupObject(ctx, pod, cleanupScope{}); err != nil {
+				t.Errorf("deleting failed E2E pod %s: %v", pod.Name, err)
 			}
 		}
 	}
-
-	if orphanedNodes > 0 {
-		t.Logf("Found %d potentially orphaned nodes", orphanedNodes)
-	} else {
-		t.Logf("No orphaned nodes found")
-	}
-
-	// Clean up failed pods that might be stuck
-	var podList corev1.PodList
-	err = s.kubeClient.List(ctx, &podList, client.InNamespace("default"))
-	if err != nil {
-		t.Logf("Failed to list pods: %v", err)
-		return
-	}
-
-	failedPods := 0
-	for _, pod := range podList.Items {
-		if pod.Status.Phase == corev1.PodFailed && pod.Labels["test"] == "e2e" {
-			err := s.kubeClient.Delete(ctx, &pod)
-			if err != nil {
-				t.Logf("Failed to delete failed pod %s: %v", pod.Name, err)
-			} else {
-				failedPods++
-			}
-		}
-	}
-
-	if failedPods > 0 {
-		t.Logf("Cleaned up %d failed E2E pods", failedPods)
-	}
-
-	t.Logf("Orphaned resource cleanup completed")
 }
 
-// WithAutoCleanup wraps a test function with automatic cleanup
-// This ensures cleanup happens even if test panics or fails
 func (s *E2ETestSuite) WithAutoCleanup(t *testing.T, testName string, testFunc func()) {
-	// Track if test completed successfully
-	completed := false
-
-	// Setup defer cleanup that ALWAYS runs
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("ALERT: TEST PANICKED: %s - performing emergency cleanup: %v", testName, r)
-			s.emergencyCleanup(t, testName)
-			panic(r) // Re-panic after cleanup
-		}
-
-		if !completed {
-			t.Logf("Test failed or interrupted: %s - performing cleanup", testName)
-		} else {
-			t.Logf("Test completed: %s - performing cleanup", testName)
-		}
-
-		s.cleanupTestResources(t, testName)
-
-		// Also check for any stale resources that might have been missed
-		if os.Getenv("E2E_AGGRESSIVE_CLEANUP") == "true" {
-			t.Logf("Aggressive cleanup mode - checking for stale resources")
-			s.cleanupAllStaleResources(t)
-		}
-	}()
-
-	// Run the actual test
+	t.Helper()
+	defer s.cleanupTestResources(t, testName)
 	testFunc()
-	completed = true
-}
-
-// emergencyCleanup performs immediate cleanup when test panics
-func (s *E2ETestSuite) emergencyCleanup(t *testing.T, testName string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	t.Logf("ALERT: Emergency cleanup for test: %s", testName)
-
-	// Immediate force delete of test resources
-	resources := []struct {
-		name    string
-		listObj client.ObjectList
-	}{
-		{"IBMNodeClasses", &v1alpha1.IBMNodeClassList{}},
-		{"NodeClaims", &karpv1.NodeClaimList{}},
-		{"NodePools", &karpv1.NodePoolList{}},
-		{"Deployments", &appsv1.DeploymentList{}},
-	}
-
-	for _, resource := range resources {
-		if err := s.kubeClient.List(ctx, resource.listObj, client.MatchingLabels{"test-name": testName}); err != nil {
-			continue
-		}
-
-		switch list := resource.listObj.(type) {
-		case *v1alpha1.IBMNodeClassList:
-			for _, item := range list.Items {
-				s.forceDeleteWithFinalizers(ctx, t, &item)
-				t.Logf("Emergency deleted IBMNodeClass: %s", item.Name)
-			}
-		case *karpv1.NodeClaimList:
-			for _, item := range list.Items {
-				s.forceDeleteWithFinalizers(ctx, t, &item)
-				t.Logf("Emergency deleted NodeClaim: %s", item.Name)
-			}
-		case *karpv1.NodePoolList:
-			for _, item := range list.Items {
-				s.forceDeleteWithFinalizers(ctx, t, &item)
-				t.Logf("Emergency deleted NodePool: %s", item.Name)
-			}
-		case *appsv1.DeploymentList:
-			for _, item := range list.Items {
-				s.kubeClient.Delete(ctx, &item, client.GracePeriodSeconds(0))
-				t.Logf("Emergency deleted Deployment: %s", item.Name)
-			}
-		}
-	}
 }

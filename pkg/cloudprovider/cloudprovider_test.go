@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/metrics"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/nodeclass"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
@@ -123,7 +124,7 @@ func (m *mockInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Nod
 			},
 		},
 		Spec: corev1.NodeSpec{
-			ProviderID: "ibm://test-instance-id",
+			ProviderID: "ibm:///us-south/test-instance-id",
 		},
 	}, nil
 }
@@ -192,11 +193,11 @@ func getTestScheme() *runtime.Scheme {
 }
 
 func getTestNodeClass() *v1alpha1.IBMNodeClass {
-	return &v1alpha1.IBMNodeClass{
+	result := &v1alpha1.IBMNodeClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-nodeclass",
 			Annotations: map[string]string{
-				v1alpha1.AnnotationIBMNodeClassHash:        "12345",
+				v1alpha1.AnnotationIBMNodeClassHash:        "",
 				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
 			},
 		},
@@ -222,6 +223,16 @@ func getTestNodeClass() *v1alpha1.IBMNodeClass {
 			},
 		},
 	}
+	result.Annotations[v1alpha1.AnnotationIBMNodeClassHash] = testProvisioningHash(result)
+	return result
+}
+
+func testProvisioningHash(nc *v1alpha1.IBMNodeClass) string {
+	hash, err := nodeclass.ProvisioningHash(nc)
+	if err != nil {
+		panic(err)
+	}
+	return hash
 }
 
 func getTestNodeClaim(nodeClassName string) *karpv1.NodeClaim {
@@ -364,7 +375,7 @@ func TestCloudProvider_Create(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
 				assert.NotEmpty(t, result.Status.ProviderID)
-				assert.Equal(t, "ibm://test-instance-id", result.Status.ProviderID)
+				assert.Equal(t, "ibm:///us-south/test-instance-id", result.Status.ProviderID)
 			}
 		})
 	}
@@ -631,7 +642,7 @@ func TestCloudProvider_Delete(t *testing.T) {
 					Name: "test-nodeclaim",
 				},
 				Status: karpv1.NodeClaimStatus{
-					ProviderID: "ibm://test-instance-id",
+					ProviderID: "ibm:///us-south/test-instance-id",
 					NodeName:   "test-node",
 				},
 			},
@@ -640,7 +651,7 @@ func TestCloudProvider_Delete(t *testing.T) {
 					Name: "test-node",
 				},
 				Spec: corev1.NodeSpec{
-					ProviderID: "ibm://test-instance-id",
+					ProviderID: "ibm:///us-south/test-instance-id",
 				},
 			},
 			instanceProvider: &mockInstanceProvider{},
@@ -811,8 +822,8 @@ func TestCloudProvider_IsDrifted(t *testing.T) {
 					Name: "test-nodeclaim",
 					Annotations: map[string]string{
 						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-						v1alpha1.AnnotationIBMNodeClassHash:        "12345",      // Match the hash in getTestNodeClass
-						v1alpha1.AnnotationIBMNodeClaimImageID:     "image-id-1", // Match the imageID in getTestNodeClass
+						v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(getTestNodeClass()), // Match the hash in getTestNodeClass
+						v1alpha1.AnnotationIBMNodeClaimImageID:     "image-id-1",                             // Match the imageID in getTestNodeClass
 					},
 				},
 				Spec: karpv1.NodeClaimSpec{
@@ -851,8 +862,8 @@ func TestCloudProvider_IsDrifted(t *testing.T) {
 					Name: "test-nodeclaim",
 					Annotations: map[string]string{
 						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-						v1alpha1.AnnotationIBMNodeClassHash:        "12345",        // matches NodeClass hash
-						v1alpha1.AnnotationIBMNodeClaimImageID:     "old-image-id", // Different imageID to trigger image drift
+						v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(getTestNodeClass()), // matches NodeClass hash
+						v1alpha1.AnnotationIBMNodeClaimImageID:     "old-image-id",                           // Different imageID to trigger image drift
 					},
 				},
 				Spec: karpv1.NodeClaimSpec{
@@ -908,7 +919,7 @@ func TestCloudProvider_IsDrifted_SubnetDrift_WhenStoredSubnetNotSelected(t *test
 			Name: "test-nodeclaim",
 			Annotations: map[string]string{
 				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-				v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(nodeClass),
 				v1alpha1.AnnotationIBMNodeClaimSubnetID:    "subnet-zzz", // not in SelectedSubnets
 			},
 		},
@@ -942,7 +953,7 @@ func TestCloudProvider_IsDrifted_NoSubnetDrift_WhenStoredSubnetStillSelected(t *
 			Name: "test-nodeclaim",
 			Annotations: map[string]string{
 				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-				v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(nodeClass),
 				v1alpha1.AnnotationIBMNodeClaimSubnetID:    "subnet-123",
 			},
 		},
@@ -976,7 +987,7 @@ func TestCloudProvider_IsDrifted_SubnetCheck_SkipsWhenNoSubnetsDiscovered(t *tes
 			Name: "test-nodeclaim",
 			Annotations: map[string]string{
 				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-				v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(nodeClass),
 				v1alpha1.AnnotationIBMNodeClaimSubnetID:    "subnet-123",
 			},
 		},
@@ -1009,7 +1020,7 @@ func TestCloudProvider_IsDrifted_NoSubnetDrift_WhenExplicitSubnetMatches(t *test
 			Name: "test-nodeclaim",
 			Annotations: map[string]string{
 				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-				v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(nodeClass),
 				v1alpha1.AnnotationIBMNodeClaimSubnetID:    "subnet-explicit",
 			},
 		},
@@ -1042,7 +1053,7 @@ func TestCloudProvider_IsDrifted_SubnetDrift_WhenExplicitSubnetChanged(t *testin
 			Name: "test-nodeclaim",
 			Annotations: map[string]string{
 				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-				v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(nodeClass),
 				v1alpha1.AnnotationIBMNodeClaimSubnetID:    "subnet-old",
 			},
 		},
@@ -1143,7 +1154,7 @@ func TestCloudProvider_IsDrifted_SecurityGroupCheck_SkipsWhenNoAnnotation(t *tes
 			Name: "test-nodeclaim",
 			Annotations: map[string]string{
 				v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-				v1alpha1.AnnotationIBMNodeClassHash:        nodeClass.Annotations[v1alpha1.AnnotationIBMNodeClassHash],
+				v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(nodeClass),
 				v1alpha1.AnnotationIBMNodeClaimImageID:     nodeClass.Status.ResolvedImageID,
 				// No security groups annotation
 			},
@@ -1179,7 +1190,7 @@ func TestCloudProvider_IsDrifted_RecordsMetrics(t *testing.T) {
 					Name: "test-nodeclaim",
 					Annotations: map[string]string{
 						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-						v1alpha1.AnnotationIBMNodeClassHash:        "12345",
+						v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(getTestNodeClass()),
 						v1alpha1.AnnotationIBMNodeClaimImageID:     "image-id-1",
 					},
 				},
@@ -1219,7 +1230,7 @@ func TestCloudProvider_IsDrifted_RecordsMetrics(t *testing.T) {
 					Name: "test-nodeclaim",
 					Annotations: map[string]string{
 						v1alpha1.AnnotationIBMNodeClassHashVersion: v1alpha1.IBMNodeClassHashVersion,
-						v1alpha1.AnnotationIBMNodeClassHash:        "12345",
+						v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(getTestNodeClass()),
 						v1alpha1.AnnotationIBMNodeClaimImageID:     "old-image-id",
 					},
 				},
@@ -1284,13 +1295,13 @@ func TestCloudProvider_Get(t *testing.T) {
 	}{
 		{
 			name:       "get fails due to nil client",
-			providerID: "ibm://test-instance-id",
+			providerID: "ibm:///us-south/test-instance-id",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
 				},
 				Spec: corev1.NodeSpec{
-					ProviderID: "ibm://test-instance-id",
+					ProviderID: "ibm:///us-south/test-instance-id",
 				},
 			},
 			getInstance: &corev1.Node{
@@ -1298,7 +1309,7 @@ func TestCloudProvider_Get(t *testing.T) {
 					Name: "test-node",
 				},
 				Spec: corev1.NodeSpec{
-					ProviderID: "ibm://test-instance-id",
+					ProviderID: "ibm:///us-south/test-instance-id",
 				},
 			},
 			expectError:  true,
@@ -1312,13 +1323,13 @@ func TestCloudProvider_Get(t *testing.T) {
 		},
 		{
 			name:       "instance provider error",
-			providerID: "ibm://test-instance-id",
+			providerID: "ibm:///us-south/test-instance-id",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
 				},
 				Spec: corev1.NodeSpec{
-					ProviderID: "ibm://test-instance-id",
+					ProviderID: "ibm:///us-south/test-instance-id",
 				},
 			},
 			getError:    fmt.Errorf("failed to get instance"),
@@ -1409,7 +1420,7 @@ func TestCloudProvider_List(t *testing.T) {
 						},
 					},
 					Spec: corev1.NodeSpec{
-						ProviderID: "ibm://instance-1",
+						ProviderID: "ibm:///us-south/instance-1",
 					},
 				},
 				&corev1.Node{
@@ -1420,7 +1431,7 @@ func TestCloudProvider_List(t *testing.T) {
 						},
 					},
 					Spec: corev1.NodeSpec{
-						ProviderID: "ibm://instance-2",
+						ProviderID: "ibm:///us-south/instance-2",
 					},
 				},
 				&corev1.Node{
@@ -1430,7 +1441,7 @@ func TestCloudProvider_List(t *testing.T) {
 					},
 				},
 			},
-			expectError: false,
+			expectError: true,
 			expected:    0,
 		},
 		{
@@ -1564,7 +1575,7 @@ func TestCloudProvider_Get_ErrorWrapping(t *testing.T) {
 		providerFactory: getTestProviderFactory(fakeClient),
 	}
 
-	_, err := cp.Get(ctx, "ibm://some-instance")
+	_, err := cp.Get(ctx, "ibm:///us-south/some-instance")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "getting instance provider")
@@ -1588,7 +1599,7 @@ func TestCloudProvider_Delete_WithNodeClassRef(t *testing.T) {
 			},
 		},
 		Status: karpv1.NodeClaimStatus{
-			ProviderID: "ibm://test-instance-id",
+			ProviderID: "ibm:///us-south/test-instance-id",
 		},
 	}
 
@@ -1617,7 +1628,7 @@ func TestCloudProvider_Delete_WithoutNodeClassRef(t *testing.T) {
 			NodeClassRef: nil,
 		},
 		Status: karpv1.NodeClaimStatus{
-			ProviderID: "ibm://test-instance-id",
+			ProviderID: "ibm:///us-south/test-instance-id",
 		},
 	}
 
@@ -1648,7 +1659,7 @@ func TestCloudProvider_Delete_EmptyNodeClassRefName(t *testing.T) {
 			},
 		},
 		Status: karpv1.NodeClaimStatus{
-			ProviderID: "ibm://test-instance-id",
+			ProviderID: "ibm:///us-south/test-instance-id",
 		},
 	}
 
@@ -1700,7 +1711,7 @@ func TestCloudProvider_IsDrifted_HashVersionDrift(t *testing.T) {
 			Name: "test-nodeclaim",
 			Annotations: map[string]string{
 				v1alpha1.AnnotationIBMNodeClassHashVersion: "0", // Different from IBMNodeClassHashVersion ("1")
-				v1alpha1.AnnotationIBMNodeClassHash:        "12345",
+				v1alpha1.AnnotationIBMNodeClassHash:        testProvisioningHash(getTestNodeClass()),
 			},
 		},
 		Spec: karpv1.NodeClaimSpec{

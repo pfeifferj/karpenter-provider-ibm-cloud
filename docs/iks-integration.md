@@ -4,13 +4,14 @@ This guide focuses specifically on using Karpenter IBM Cloud Provider with IBM K
 
 ## Overview
 
-The IKS integration provides experimental auto-scaling for IBM Kubernetes Service clusters by leveraging existing worker pools and IBM-managed infrastructure.
+The IKS integration provides experimental auto-scaling for IBM Kubernetes Service clusters through dedicated worker pools with IBM-managed infrastructure. Each NodeClaim owns one single-zone pool and one real worker.
 
 ## Prerequisites
 
 ### IKS Cluster Requirements
 - **IKS Cluster**: Running IBM Kubernetes Service cluster
-- **Worker Pools**: Pre-configured worker pools for different instance types
+- **Worker Pools**: Permission and quota to create and delete a dedicated pool for each NodeClaim
+- **Account Identity**: Set Helm's `credentials.accountId` to the 32-character hexadecimal account ID containing the IKS cluster; this sets `IBM_ACCOUNT_ID` on the controller
 - **API Access**: Service ID with IKS cluster access permissions
 - **Network Configuration**: VPC with proper security groups
 
@@ -31,21 +32,23 @@ ibmcloud ks cluster get --cluster <cluster-id>
 
 ### Step 1: Install Karpenter
 ```bash
-# Create namespace and secrets
-kubectl create namespace karpenter
-
-kubectl create secret generic karpenter-ibm-credentials \
-  --from-literal=ibmApiKey="your-general-api-key" \
-  --from-literal=vpcApiKey="your-vpc-api-key" \
-  --namespace karpenter
-
 # Install via Helm
 helm repo add karpenter-ibm https://karpenter-ibm.sh
 helm repo update
 helm install karpenter karpenter-ibm/karpenter-ibm \
   --namespace karpenter \
   --create-namespace \
-  --set controller.env.IBM_REGION="us-south"
+  --values iks-values.yaml
+```
+
+Create `iks-values.yaml` with the account ID and credentials for your cluster:
+
+```yaml
+credentials:
+  accountId: "replace-with-32-character-account-id"
+  ibmApiKey: "replace-with-api-key"
+  vpcApiKey: "replace-with-vpc-api-key"
+  region: us-south
 ```
 
 ### Step 2: Create IKS NodeClass
@@ -65,7 +68,14 @@ spec:
   # IKS-SPECIFIC CONFIGURATION
   bootstrapMode: iks-api                # Use IKS API for node bootstrapping
   iksClusterID: "cluster-12345678"      # Your IKS cluster ID (required for iks-api mode)
-  iksWorkerPoolID: "pool-default"       # Optional: specific worker pool
+  iksWorkerPoolID: "pool-default"       # Optional: flavor template; this pool is not resized
+  instanceProfile: bx2-4x16
+  zone: us-south-1
+  subnet: 0717-replace-with-subnet-id
+  resourceGroup: replace-with-resource-group-id
+  iksDynamicPools:
+    enabled: true
+    allowedInstanceTypes: ["bx2-4x16"]
 
   # Security and networking
   securityGroups:
@@ -115,7 +125,11 @@ spec:
 ## Important IKS Constraints
 
 ### Instance Type Limitations
-**Critical**: IKS mode cannot dynamically select instance types because worker pools have pre-configured instance types.
+`iksDynamicPools.enabled: true` is required. Shared worker pools are not resized because their scale-down operation cannot identify the worker owned by a particular NodeClaim. An optional `iksWorkerPoolID` supplies the flavor for a new dedicated pool. The chosen flavor, zone, and resources must satisfy the NodeClaim requirements.
+
+Launch completes once the worker exists and reports the flavor's catalog capacity until the Node registers its own resources. The claim stores its original cluster, account, pool, and worker identities before returning a provider ID. Deletion removes only that owned allocation after Karpenter drains the Node. Do not enable another autoscaler on these pools.
+
+A lost cloud response can leave an allocation uncertain. Its finalizer and reservation remain in place until the controller can prove ownership and absence; investigate the reported cloud error rather than removing the finalizer.
 
 See [IKS Mode Instance Type Constraints](limitations.md#iks-mode-instance-type-constraints) for more details.
 

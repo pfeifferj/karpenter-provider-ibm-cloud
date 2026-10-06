@@ -53,170 +53,6 @@ func TestIKSWorkerPoolProvider_NewProvider_NilClient(t *testing.T) {
 	assert.Contains(t, err.Error(), "IBM client cannot be nil")
 }
 
-func TestFindOrSelectWorkerPool_Strategies(t *testing.T) {
-	tests := []struct {
-		name                  string
-		nodeClass             *v1alpha1.IBMNodeClass
-		requestedInstanceType string
-		workerPools           []*ibm.WorkerPool
-		expectedPoolID        string
-		expectedInstanceType  string
-		expectError           bool
-		errorContains         string
-	}{
-		{
-			name: "exact match - same instance type and zone",
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{Zone: "us-south-1"},
-			},
-			requestedInstanceType: "bx2-4x16",
-			workerPools: []*ibm.WorkerPool{
-				{ID: "pool-1", Flavor: "bx2-4x16", Zone: "us-south-1"},
-				{ID: "pool-2", Flavor: "bx2-8x32", Zone: "us-south-1"},
-			},
-			expectedPoolID:       "pool-1",
-			expectedInstanceType: "bx2-4x16",
-			expectError:          false,
-		},
-		{
-			name: "same zone different flavor",
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{Zone: "us-south-1"},
-			},
-			requestedInstanceType: "nonexistent-flavor",
-			workerPools: []*ibm.WorkerPool{
-				{ID: "pool-1", Flavor: "bx2-4x16", Zone: "us-south-1"},
-				{ID: "pool-2", Flavor: "bx2-8x32", Zone: "us-south-2"},
-			},
-			expectedPoolID:       "pool-1", // First pool in same zone
-			expectedInstanceType: "bx2-4x16",
-			expectError:          false,
-		},
-		{
-			name: "matching flavor different zone",
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{Zone: "nonexistent-zone"},
-			},
-			requestedInstanceType: "bx2-4x16",
-			workerPools: []*ibm.WorkerPool{
-				{ID: "pool-1", Flavor: "bx2-4x16", Zone: "us-south-1"},
-				{ID: "pool-2", Flavor: "bx2-8x32", Zone: "us-south-2"},
-			},
-			expectedPoolID:       "pool-1", // First pool with matching flavor
-			expectedInstanceType: "bx2-4x16",
-			expectError:          false,
-		},
-		{
-			name: "fallback to first available pool",
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{Zone: "nonexistent-zone"},
-			},
-			requestedInstanceType: "nonexistent-flavor",
-			workerPools: []*ibm.WorkerPool{
-				{ID: "pool-1", Flavor: "bx2-4x16", Zone: "us-south-1"},
-				{ID: "pool-2", Flavor: "bx2-8x32", Zone: "us-south-2"},
-			},
-			expectedPoolID:       "pool-1", // First available pool
-			expectedInstanceType: "bx2-4x16",
-			expectError:          false,
-		},
-		{
-			name: "specific worker pool configured",
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{
-					Zone:            "us-south-1",
-					IKSWorkerPoolID: "pool-2",
-				},
-			},
-			requestedInstanceType: "bx2-4x16",
-			workerPools: []*ibm.WorkerPool{
-				{ID: "pool-1", Flavor: "bx2-4x16", Zone: "us-south-1"},
-				{ID: "pool-2", Flavor: "bx2-8x32", Zone: "us-south-2"},
-			},
-			expectedPoolID:       "pool-2",
-			expectedInstanceType: "bx2-8x32", // Flavor from pool-2
-			expectError:          false,
-		},
-		{
-			name: "no worker pools available",
-			nodeClass: &v1alpha1.IBMNodeClass{
-				Spec: v1alpha1.IBMNodeClassSpec{Zone: "us-south-1"},
-			},
-			requestedInstanceType: "bx2-4x16",
-			workerPools:           []*ibm.WorkerPool{},
-			expectError:           true,
-			errorContains:         "no worker pools found",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a test helper that simulates the worker pool selection logic
-			var selectedPool *ibm.WorkerPool
-			var err error
-
-			// Simulate the logic from findOrSelectWorkerPool
-			if tt.nodeClass.Spec.IKSWorkerPoolID != "" {
-				// Find specific pool
-				for _, pool := range tt.workerPools {
-					if pool.ID == tt.nodeClass.Spec.IKSWorkerPoolID {
-						selectedPool = pool
-						break
-					}
-				}
-			} else if len(tt.workerPools) == 0 {
-				err = fmt.Errorf("no worker pools found")
-			} else {
-				// Strategy 1: Exact match
-				for _, pool := range tt.workerPools {
-					if pool.Flavor == tt.requestedInstanceType && pool.Zone == tt.nodeClass.Spec.Zone {
-						selectedPool = pool
-						break
-					}
-				}
-
-				// Strategy 2: Same zone
-				if selectedPool == nil {
-					for _, pool := range tt.workerPools {
-						if pool.Zone == tt.nodeClass.Spec.Zone {
-							selectedPool = pool
-							break
-						}
-					}
-				}
-
-				// Strategy 3: Same flavor
-				if selectedPool == nil && tt.requestedInstanceType != "" {
-					for _, pool := range tt.workerPools {
-						if pool.Flavor == tt.requestedInstanceType {
-							selectedPool = pool
-							break
-						}
-					}
-				}
-
-				// Strategy 4: Fallback
-				if selectedPool == nil {
-					selectedPool = tt.workerPools[0]
-				}
-			}
-
-			// Validate results
-			if tt.expectError {
-				assert.Error(t, err)
-				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains)
-				}
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, selectedPool)
-				assert.Equal(t, tt.expectedPoolID, selectedPool.ID)
-				assert.Equal(t, tt.expectedInstanceType, selectedPool.Flavor)
-			}
-		})
-	}
-}
-
 func TestValidateNodeClassConfiguration(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -334,22 +170,22 @@ func TestIKSWorkerPoolProvider_DeleteMethodSignature(t *testing.T) {
 	assert.Contains(t, err.Error(), "cluster ID or pool ID not found")
 }
 
-func TestIKSWorkerPoolProvider_GetMethodNotImplemented(t *testing.T) {
+func TestIKSWorkerPoolProvider_GetRejectsInvalidProviderID(t *testing.T) {
 	provider := &IKSWorkerPoolProvider{}
 
 	result, err := provider.Get(context.Background(), "test-provider-id")
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get operation not implemented")
+	assert.Contains(t, err.Error(), "invalid IKS provider ID")
 }
 
-func TestIKSWorkerPoolProvider_ListMethodNotImplemented(t *testing.T) {
+func TestIKSWorkerPoolProvider_ListRequiresClient(t *testing.T) {
 	provider := &IKSWorkerPoolProvider{}
 
 	result, err := provider.List(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list operation not implemented")
+	assert.Contains(t, err.Error(), "kubernetes client not set")
 }
 
 func TestIKSWorkerPoolProvider_ResizePoolNilClient(t *testing.T) {

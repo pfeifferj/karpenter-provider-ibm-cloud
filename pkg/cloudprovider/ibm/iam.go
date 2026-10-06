@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/httpclient"
 )
 
 // TokenResponse represents the response from a token request
@@ -60,14 +61,21 @@ type IAMClient struct {
 	expiry        time.Time
 }
 
+// NewIAMAuthenticator creates an IAM authenticator with API request metrics.
+func NewIAMAuthenticator(apiKey string) *core.IamAuthenticator {
+	client := core.DefaultHTTPClient()
+	client.Timeout = 30 * time.Second
+	return &core.IamAuthenticator{
+		ApiKey: apiKey,
+		Client: httpclient.InstrumentHTTPClient(client, "global"),
+	}
+}
+
 func NewIAMClient(apiKey string) *IAMClient {
 	return &IAMClient{
 		apiKey: apiKey,
 		Authenticator: &iamAuthenticator{
-			auth: &core.IamAuthenticator{
-				ApiKey: apiKey,
-				// Remove scope - IBM SDK doesn't support custom scopes this way
-			},
+			auth: NewIAMAuthenticator(apiKey),
 		},
 	}
 }
