@@ -147,6 +147,9 @@ plugins:
         remove_comments: true
   - git-revision-date-localized:
       enable_creation_date: true
+      # Added in a merge commit, so git reports no creating commit for it.
+      exclude:
+        - nightly-builds.md
       type: date
       fallback_to_build_date: true
 
