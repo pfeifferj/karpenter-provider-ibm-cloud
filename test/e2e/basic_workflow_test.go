@@ -24,12 +24,14 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 // TestE2EFullWorkflow tests the complete end-to-end workflow
 func TestE2EFullWorkflow(t *testing.T) {
 	suite := SetupE2ETestSuite(t)
 	testName := fmt.Sprintf("e2e-test-%d", time.Now().Unix())
+	t.Cleanup(func() { suite.cleanupTestResources(t, testName) })
 	t.Logf("Starting E2E test: %s", testName)
 
 	// Step 1: Create NodeClass
@@ -41,7 +43,9 @@ func TestE2EFullWorkflow(t *testing.T) {
 	t.Logf("NodeClass is ready: %s", nodeClass.Name)
 
 	// Step 3: Create NodePool
-	nodePool := suite.createTestNodePool(t, testName, nodeClass.Name)
+	nodePool := suite.createTestNodePoolObject(t, testName, nodeClass.Name)
+	nodePool.Spec.Template.Spec.ExpireAfter = karpv1.MustParseNillableDuration("Never")
+	require.NoError(t, suite.kubeClient.Create(t.Context(), nodePool))
 	t.Logf("Created NodePool: %s", nodePool.Name)
 
 	// Step 4: Deploy test workload to trigger Karpenter provisioning
@@ -60,14 +64,7 @@ func TestE2EFullWorkflow(t *testing.T) {
 	suite.verifyInstancesInIBMCloud(t)
 	t.Logf("Verified instances exist in IBM Cloud")
 
-	// Step 8: Cleanup test resources
-	suite.cleanupTestWorkload(t, deployment.Name, deployment.Namespace)
-	t.Logf("Deleted test workload: %s", deployment.Name)
-
-	// Step 9: Clean up remaining resources ONLY after all verification is complete
-	t.Logf("Cleaning up remaining test resources")
-	suite.cleanupTestResources(t, testName)
-	t.Logf("E2E test completed successfully: %s", testName)
+	t.Logf("E2E provisioning and inventory verification completed: %s", testName)
 }
 
 // TestE2ENodePoolInstanceTypeSelection tests the customer's configuration:

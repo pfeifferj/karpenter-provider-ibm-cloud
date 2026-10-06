@@ -339,9 +339,10 @@ func TestE2EBlockDeviceMapping(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check that pod completed successfully (exit code 0)
-	if completedPod.Status.Phase == corev1.PodSucceeded {
+	switch completedPod.Status.Phase {
+	case corev1.PodSucceeded:
 		t.Logf("Pod completed successfully - block device test passed")
-	} else if completedPod.Status.Phase == corev1.PodFailed {
+	case corev1.PodFailed:
 		// Get container status for failure details
 		for _, containerStatus := range completedPod.Status.ContainerStatuses {
 			if containerStatus.State.Terminated != nil {
