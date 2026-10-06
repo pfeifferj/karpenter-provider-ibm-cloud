@@ -116,6 +116,28 @@ func TestCreateDoesNotRetryUncertainSubmission(t *testing.T) {
 	require.Contains(t, fresh.Finalizers, LaunchFinalizer)
 }
 
+func TestCreateRejectsProfileMismatchBeforeCloudOrCheckpoint(t *testing.T) {
+	provider, claim, _, _, _ := launchFixture(t)
+	ctx := context.Background()
+	require.NoError(t, v1alpha1.AddToScheme(provider.kubeClient.Scheme()))
+	class := &v1alpha1.IBMNodeClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "class-uid", Generation: 1},
+		Spec:       v1alpha1.IBMNodeClassSpec{Region: "us-south", Zone: "us-south-1", Subnet: "subnet", VPC: "vpc", ResourceGroup: strings.Repeat("a", 32), SecurityGroups: []string{"security-group"}, Image: "image", UserData: "#!/bin/sh\ntrue", InstanceProfile: "bx2-2x8"},
+		Status:     v1alpha1.IBMNodeClassStatus{ResolvedImageID: "image", Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, ObservedGeneration: 1}}},
+	}
+	require.NoError(t, provider.kubeClient.Create(ctx, class))
+	claim.Spec.NodeClassRef.Name = class.Name
+	claim.Annotations = nil
+	claim.Finalizers = nil
+	require.NoError(t, provider.kubeClient.Update(ctx, claim))
+	_, err := provider.Create(ctx, claim, []*cloudprovider.InstanceType{{Name: "bx4-2x8", Overhead: &cloudprovider.InstanceTypeOverhead{}}})
+	require.EqualError(t, err, "selected instance profile bx4-2x8 differs from the current NodeClass profile bx2-2x8")
+	fresh := &karpv1.NodeClaim{}
+	require.NoError(t, provider.kubeClient.Get(ctx, client.ObjectKeyFromObject(claim), fresh))
+	require.Empty(t, fresh.Annotations[LaunchAnnotation])
+	require.NotContains(t, fresh.Finalizers, LaunchFinalizer)
+}
+
 func TestPendingCleanupPreservesUncertainAndUnrelatedResources(t *testing.T) {
 	for _, rejected := range []bool{false, true} {
 		t.Run(fmt.Sprint(rejected), func(t *testing.T) {

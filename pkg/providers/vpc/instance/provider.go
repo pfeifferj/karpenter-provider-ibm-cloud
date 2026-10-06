@@ -304,6 +304,9 @@ func (p *VPCInstanceProvider) Create(ctx context.Context, nodeClaim *karpv1.Node
 		return nil, fmt.Errorf("instance profile is empty or whitespace-only: '%s'. "+
 			"This will cause IBM VPC oneOf constraint validation to fail", instanceProfile)
 	}
+	if nodeClass.Spec.InstanceProfile != "" && instanceProfile != nodeClass.Spec.InstanceProfile {
+		return nil, fmt.Errorf("selected instance profile %s differs from the current NodeClass profile %s", instanceProfile, nodeClass.Spec.InstanceProfile)
+	}
 
 	capacityType := capacitytype.ResolveCapacityType(nodeClaim, instanceTypes)
 

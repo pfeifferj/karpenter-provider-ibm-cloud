@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"sort"
 	"strconv"
@@ -242,6 +243,19 @@ func (p *IBMInstanceTypeProvider) List(ctx context.Context, nodeClass *v1alpha1.
 	}
 
 	logger.Info("Successfully listed instance types", "count", len(instanceTypes))
+	if nodeClass != nil {
+		if nodeClass.Spec.InstanceProfile != "" {
+			for _, instanceType := range instanceTypes {
+				if instanceType.Name == nodeClass.Spec.InstanceProfile {
+					return []*cloudprovider.InstanceType{instanceType}, nil
+				}
+			}
+			return nil, nil
+		}
+		if nodeClass.Spec.InstanceRequirements != nil {
+			return p.filterCatalog(instanceTypes, nodeClass.Spec.InstanceRequirements)
+		}
+	}
 	return instanceTypes, nil
 }
 
@@ -257,77 +271,39 @@ func (p *IBMInstanceTypeProvider) Delete(ctx context.Context, instanceType *clou
 
 // FilterInstanceTypes returns instance types that meet requirements
 func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requirements *v1alpha1.InstanceTypeRequirements, nodeClass *v1alpha1.IBMNodeClass) ([]*cloudprovider.InstanceType, error) {
-	if p.client == nil {
-		return nil, fmt.Errorf("IBM client not initialized")
+	class := &v1alpha1.IBMNodeClass{}
+	if nodeClass != nil {
+		class = nodeClass.DeepCopy()
 	}
-	// Get all instance types
-	allTypes, err := p.List(ctx, nodeClass)
-	if err != nil {
-		return nil, err
-	}
+	class.Spec.InstanceProfile = ""
+	class.Spec.InstanceRequirements = requirements
+	return p.List(ctx, class)
+}
 
-	// Convert to extended instance types with pricing
-	var extendedTypes []*ExtendedInstanceType
-	for _, it := range allTypes {
-		// Get price for this instance type (use first zone from client's region)
-		if p.client == nil {
-			return nil, fmt.Errorf("IBM client not initialized - cannot determine region for pricing")
-		}
-
-		region := p.client.GetRegion()
-		zones, err := p.getZonesForRegion(ctx, region)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get zones for region %s: %w", region, err)
-		}
-		if len(zones) == 0 {
-			return nil, fmt.Errorf("no zones found for region %s", region)
-		}
-
-		// Use any available zone for pricing since IBM Cloud pricing is uniform across zones in a region
-		// This avoids confusion in logs where zone might not match the NodeClass zone
-		zone := zones[0] // Pricing is region-level, zone selection doesn't affect price
-
-		price, err := p.pricingProvider.GetPrice(ctx, it.Name, zone)
-		if err != nil {
-			// Log warning but continue with 0 price to avoid breaking functionality
-			// Note: This is just for pricing info, doesn't affect provisioning zone
-			log.FromContext(ctx).V(1).Info("Could not get pricing for instance type, using fallback price",
-				"instance_type", it.Name, "pricing_zone", zone, "error", err, "fallback_price", 0.0)
-			price = 0.0
-		}
-
-		ext := &ExtendedInstanceType{
-			InstanceType: it,
-			Architecture: getArchitecture(it),
-			Price:        price,
-		}
-		extendedTypes = append(extendedTypes, ext)
-	}
-
-	var filtered []*ExtendedInstanceType
-
-	// Parse MaximumHourlyPrice if set
+func (p *IBMInstanceTypeProvider) filterCatalog(instanceTypes []*cloudprovider.InstanceType, requirements *v1alpha1.InstanceTypeRequirements) ([]*cloudprovider.InstanceType, error) {
 	var maxPrice float64
-	if requirements.MaximumHourlyPrice != "" {
+	priceLimited := requirements.MaximumHourlyPrice != ""
+	if priceLimited {
 		var err error
 		maxPrice, err = strconv.ParseFloat(requirements.MaximumHourlyPrice, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid MaximumHourlyPrice value: %w", err)
 		}
+		if math.IsNaN(maxPrice) || math.IsInf(maxPrice, 0) || maxPrice < 0 {
+			return nil, fmt.Errorf("MaximumHourlyPrice must be a finite nonnegative number")
+		}
 	}
 
-	for _, it := range extendedTypes {
-		// Check architecture requirement
-		if requirements.Architecture != "" && it.Architecture != requirements.Architecture {
+	var filtered []*ExtendedInstanceType
+	for _, it := range instanceTypes {
+		if requirements.Architecture != "" && getArchitecture(it) != requirements.Architecture {
 			continue
 		}
 
-		// Check CPU requirement
 		if requirements.MinimumCPU > 0 && it.Capacity.Cpu().Value() < int64(requirements.MinimumCPU) {
 			continue
 		}
 
-		// Check memory requirement
 		if requirements.MinimumMemory > 0 {
 			memoryGB := float64(it.Capacity.Memory().Value()) / (1024 * 1024 * 1024)
 			if memoryGB < float64(requirements.MinimumMemory) {
@@ -335,12 +311,29 @@ func (p *IBMInstanceTypeProvider) FilterInstanceTypes(ctx context.Context, requi
 			}
 		}
 
-		// Check price requirement
-		if requirements.MaximumHourlyPrice != "" && maxPrice > 0 && it.Price > maxPrice {
-			continue
+		if priceLimited {
+			var offerings cloudprovider.Offerings
+			for _, offering := range it.Offerings {
+				if offering.Price >= 0 && offering.Price <= maxPrice {
+					offerings = append(offerings, offering)
+				}
+			}
+			if len(offerings) == 0 {
+				continue
+			}
+			copy := it.DeepCopy()
+			copy.Offerings = offerings
+			it = copy
 		}
 
-		filtered = append(filtered, it)
+		price := math.Inf(1)
+		for _, offering := range it.Offerings {
+			price = math.Min(price, offering.Price)
+		}
+		if math.IsInf(price, 1) {
+			price = 0
+		}
+		filtered = append(filtered, &ExtendedInstanceType{InstanceType: it, Architecture: getArchitecture(it), Price: price})
 	}
 
 	// Rank the filtered instances by cost efficiency
@@ -746,11 +739,15 @@ func (p *IBMInstanceTypeProvider) convertVPCProfileToInstanceType(ctx context.Co
 		spotDiscountPercent = 60
 	}
 
-	// Create per-zone, per-capacity-type offerings
+	// A price cap needs a real quote; filterCatalog rejects quotes that are not finite and nonnegative.
+	priceLimited := nodeClass != nil && nodeClass.Spec.InstanceRequirements != nil && nodeClass.Spec.InstanceRequirements.MaximumHourlyPrice != ""
 	var offerings cloudprovider.Offerings
 	for _, zone := range zones {
 		for _, capacityType := range supportedCapacityTypes {
-			price, _ := p.pricingProvider.GetPrice(ctx, *profile.Name, zone)
+			price, priceErr := p.pricingProvider.GetPrice(ctx, *profile.Name, zone)
+			if priceLimited && priceErr != nil {
+				continue
+			}
 			if capacityType == karpv1.CapacityTypeSpot {
 				price = price * float64(spotDiscountPercent) / 100.0
 			}
