@@ -18,6 +18,7 @@ package instancetype
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -65,4 +66,33 @@ func TestRegionalRawCacheSharesFetchAndKeepsClassPodLimits(t *testing.T) {
 	for _, offering := range defaultClass.Offerings {
 		require.Equal(t, []string{"us-south-1"}, offering.Requirements.Get(corev1.LabelTopologyZone).Values())
 	}
+}
+
+func TestRefreshFailureKeepsPreviousProfiles(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock, manager := newMockVPCManager(t, ctrl)
+	profile := makeVPCProfile("bx2-2x8", 2, 8, "amd64")
+	gomock.InOrder(
+		mock.EXPECT().ListInstanceProfilesWithContext(gomock.Any(), gomock.Any()).Return(&vpcv1.InstanceProfileCollection{Profiles: []vpcv1.InstanceProfile{profile}}, &core.DetailedResponse{StatusCode: 200}, nil),
+		mock.EXPECT().ListInstanceProfilesWithContext(gomock.Any(), gomock.Any()).Return(nil, &core.DetailedResponse{StatusCode: 403}, errors.New("forbidden")),
+	)
+	provider := &IBMInstanceTypeProvider{client: &MockIBMClient{}, pricingProvider: &MockPricingProvider{}, vpcClientManager: manager}
+	region := provider.regionForClass(nil)
+	_, err := provider.rawProfiles(context.Background(), region)
+	require.NoError(t, err)
+
+	require.Error(t, provider.Refresh(context.Background()))
+	profiles, err := provider.rawProfiles(context.Background(), region)
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	require.Equal(t, "bx2-2x8", *profiles[0].Name)
+}
+
+func TestRefreshFailureWithoutPreviousProfilesFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mock, manager := newMockVPCManager(t, ctrl)
+	mock.EXPECT().ListInstanceProfilesWithContext(gomock.Any(), gomock.Any()).Return(nil, &core.DetailedResponse{StatusCode: 403}, errors.New("forbidden"))
+	provider := &IBMInstanceTypeProvider{client: &MockIBMClient{}, pricingProvider: &MockPricingProvider{}, vpcClientManager: manager}
+	_, err := provider.rawProfiles(context.Background(), provider.regionForClass(nil))
+	require.Error(t, err)
 }

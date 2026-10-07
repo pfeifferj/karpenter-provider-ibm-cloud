@@ -355,7 +355,12 @@ func (p *IBMInstanceTypeProvider) listFromVPC(ctx context.Context, nodeClass *v1
 type profileSnapshot struct {
 	profiles []vpcv1.InstanceProfile
 	updated  time.Time
+	// refreshErr is set while a previous catalog is served because the last refetch failed.
+	refreshErr error
 }
+
+// staleProfileRetry is how long a previous catalog is served after a failed refetch.
+const staleProfileRetry = 5 * time.Minute
 
 func (p *IBMInstanceTypeProvider) regionForClass(nc *v1alpha1.IBMNodeClass) string {
 	if nc != nil && nc.Spec.Region != "" {
@@ -428,7 +433,14 @@ func (p *IBMInstanceTypeProvider) rawProfiles(ctx context.Context, region string
 			return true, nil
 		})
 		if err != nil {
-			return nil, err
+			if !ok {
+				return nil, err
+			}
+			log.FromContext(ctx).Error(err, "Serving previous VPC instance profiles", "region", region)
+			p.profilesMu.Lock()
+			p.profiles[region] = profileSnapshot{profiles: cached.profiles, updated: time.Now().Add(staleProfileRetry - time.Hour), refreshErr: err}
+			p.profilesMu.Unlock()
+			return cached.profiles, nil
 		}
 		p.profilesMu.Lock()
 		if p.profiles == nil {
@@ -451,10 +463,11 @@ func (p *IBMInstanceTypeProvider) rawProfiles(ctx context.Context, region string
 func (p *IBMInstanceTypeProvider) Refresh(ctx context.Context) error {
 	regions := map[string]bool{p.regionForClass(nil): true}
 	p.profilesMu.Lock()
-	for region := range p.profiles {
+	for region, snapshot := range p.profiles {
 		regions[region] = true
+		snapshot.updated = time.Time{}
+		p.profiles[region] = snapshot
 	}
-	p.profiles = map[string]profileSnapshot{}
 	p.profilesMu.Unlock()
 	p.zonesMu.Lock()
 	p.zonesCache = map[string][]string{}
@@ -463,6 +476,12 @@ func (p *IBMInstanceTypeProvider) Refresh(ctx context.Context) error {
 	for region := range regions {
 		if _, err := p.rawProfiles(ctx, region); err != nil {
 			return err
+		}
+		p.profilesMu.Lock()
+		refreshErr := p.profiles[region].refreshErr
+		p.profilesMu.Unlock()
+		if refreshErr != nil {
+			return fmt.Errorf("refreshing VPC instance profiles for %s: %w", region, refreshErr)
 		}
 	}
 	return nil
