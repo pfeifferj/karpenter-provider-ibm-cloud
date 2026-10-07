@@ -38,6 +38,7 @@ import (
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	jsonpatch "github.com/evanphx/json-patch/v5"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	certificatesv1 "k8s.io/api/certificates/v1"
@@ -322,24 +323,30 @@ func TestCSRDecisionUsesAtomicApprovalPreconditions(t *testing.T) {
 				fresh.Spec.Request = []byte("replacement")
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, http.MethodPatch, r.Method)
-				require.True(t, strings.HasSuffix(r.URL.Path, "/approval"))
-				require.Equal(t, "application/json-patch+json", r.Header.Get("Content-Type"))
+				assert.Equal(t, http.MethodPatch, r.Method)
+				assert.True(t, strings.HasSuffix(r.URL.Path, "/approval"))
+				assert.Equal(t, "application/json-patch+json", r.Header.Get("Content-Type"))
 				body, err := io.ReadAll(r.Body)
-				require.NoError(t, err)
+				if !assert.NoError(t, err) {
+					return
+				}
 				patch, err := jsonpatch.DecodePatch(body)
-				require.NoError(t, err)
+				if !assert.NoError(t, err) {
+					return
+				}
 				current, err := json.Marshal(fresh)
-				require.NoError(t, err)
+				if !assert.NoError(t, err) {
+					return
+				}
 				updated, err := patch.Apply(current)
 				w.Header().Set("Content-Type", "application/json")
 				if err != nil {
 					w.WriteHeader(http.StatusConflict)
-					require.NoError(t, json.NewEncoder(w).Encode(&metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: "Failure", Reason: metav1.StatusReasonConflict, Code: 409}))
+					assert.NoError(t, json.NewEncoder(w).Encode(&metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: "Failure", Reason: metav1.StatusReasonConflict, Code: 409}))
 					return
 				}
 				_, err = w.Write(updated)
-				require.NoError(t, err)
+				assert.NoError(t, err)
 			}))
 			defer server.Close()
 			kc, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
@@ -349,6 +356,50 @@ func TestCSRDecisionUsesAtomicApprovalPreconditions(t *testing.T) {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestServingCSRRejectsAddressesOutsideTheNode(t *testing.T) {
+	for name, alter := range map[string]func(*x509.CertificateRequest){
+		"other node DNS name": func(r *x509.CertificateRequest) { r.DNSNames = []string{"claim-b"} },
+		"second DNS name":     func(r *x509.CertificateRequest) { r.DNSNames = append(r.DNSNames, "claim-b") },
+		"extra IP":            func(r *x509.CertificateRequest) { r.IPAddresses = append(r.IPAddresses, net.ParseIP("10.240.0.10")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, p, _, _, original := csrFixture(t, true)
+			csr := makeCSR(t, true, nil, alter)
+			original.Spec.Request = csr.Spec.Request
+			_, err := c.client.CertificatesV1().CertificateSigningRequests().Update(context.Background(), original, metav1.UpdateOptions{})
+			require.NoError(t, err)
+			p.EXPECT().VerifyLaunchInstance(gomock.Any(), gomock.Any()).Return(csrVM(), nil).AnyTimes()
+			p.EXPECT().VerifyLaunchNetworkAddresses(gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{"10.240.0.9"}, []string{}, nil).AnyTimes()
+			_, _ = c.Reconcile(context.Background(), ctrl.Request{NamespacedName: k8stypes.NamespacedName{Name: original.Name}})
+			fresh, err := c.client.CertificatesV1().CertificateSigningRequests().Get(context.Background(), original.Name, metav1.GetOptions{})
+			require.NoError(t, err)
+			for _, condition := range fresh.Status.Conditions {
+				require.NotEqual(t, certificatesv1.CertificateApproved, condition.Type)
+			}
+		})
+	}
+}
+
+func TestCSRRejectsLaunchFromAnotherCluster(t *testing.T) {
+	for _, serving := range []bool{false, true} {
+		t.Run(fmt.Sprintf("serving=%t", serving), func(t *testing.T) {
+			c, p, claim, _, csr := csrFixture(t, serving)
+			launch, err := json.Marshal(map[string]interface{}{"Version": 1, "MinimumWriterVersion": 1, "Name": ownership.InstanceName("other-cluster", "claim-uid"), "ClusterUID": "other-cluster", "ClaimUID": "claim-uid", "ClassUID": "class-uid", "AccountID": "account", "Region": "us-south"})
+			require.NoError(t, err)
+			claim.Annotations[vpcinstance.LaunchAnnotation] = string(launch)
+			require.NoError(t, c.reader.(client.Client).Update(context.Background(), claim))
+			p.EXPECT().VerifyLaunchInstance(gomock.Any(), gomock.Any()).Return(csrVM(), nil).AnyTimes()
+			p.EXPECT().VerifyLaunchNetworkAddresses(gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{"10.240.0.9"}, []string{}, nil).AnyTimes()
+			_, _ = c.Reconcile(context.Background(), ctrl.Request{NamespacedName: k8stypes.NamespacedName{Name: csr.Name}})
+			fresh, err := c.client.CertificatesV1().CertificateSigningRequests().Get(context.Background(), csr.Name, metav1.GetOptions{})
+			require.NoError(t, err)
+			for _, condition := range fresh.Status.Conditions {
+				require.NotEqual(t, certificatesv1.CertificateApproved, condition.Type)
 			}
 		})
 	}
