@@ -88,3 +88,31 @@ func TestDeletionUsesSavedTargetsAfterClassRemovalAndRetainsErrors(t *testing.T)
 		}
 	}
 }
+
+func TestDeletionWithoutSnapshotReleasesOnlyUnregisteredClaims(t *testing.T) {
+	for _, registered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "never registered", true: "registered"}[registered], func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, corev1.AddToScheme(scheme))
+			scheme.AddKnownTypes(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}, &karpv1.NodeClaim{}, &karpv1.NodeClaimList{})
+			require.NoError(t, v1alpha1.AddToScheme(scheme))
+			claim := &karpv1.NodeClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim", UID: "claim-uid", Finalizers: []string{LoadBalancerFinalizer, karpv1.TerminationFinalizer}, DeletionTimestamp: &metav1.Time{Time: time.Now()}}, Spec: karpv1.NodeClaimSpec{NodeClassRef: &karpv1.NodeClassReference{Group: v1alpha1.Group, Kind: "IBMNodeClass", Name: "class"}}, Status: karpv1.NodeClaimStatus{ProviderID: "ibm:///us-south/instance"}}
+			if registered {
+				claim.StatusConditions().SetTrue(karpv1.ConditionTypeRegistered)
+			}
+			kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(claim).WithStatusSubresource(claim).Build()
+			c := NewController(kube, nil, kube)
+			c.loadBalancerProvider = &checkpointProvider{}
+			_, err := c.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(claim)})
+			current := &karpv1.NodeClaim{}
+			require.NoError(t, kube.Get(context.Background(), client.ObjectKeyFromObject(claim), current))
+			if registered {
+				require.Error(t, err)
+				require.Contains(t, current.Finalizers, LoadBalancerFinalizer)
+			} else {
+				require.NoError(t, err)
+				require.NotContains(t, current.Finalizers, LoadBalancerFinalizer)
+			}
+		})
+	}
+}

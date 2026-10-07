@@ -126,7 +126,9 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return c.registerSnapshot(ctx, claim, snapshot)
 	}
 	if !claim.DeletionTimestamp.IsZero() {
-		if controllerutil.ContainsFinalizer(claim, LoadBalancerFinalizer) && claim.Status.ProviderID != "" {
+		// Every release registers only a joined Node's internal IP, so a claim that never
+		// registered cannot own a pool member.
+		if controllerutil.ContainsFinalizer(claim, LoadBalancerFinalizer) && claim.Status.ProviderID != "" && claim.StatusConditions().Get(karpv1.ConditionTypeRegistered).IsTrue() {
 			return reconcile.Result{}, fmt.Errorf("legacy load balancer finalizer has no immutable targets; restore verified original target snapshot before retirement")
 		}
 		return c.removeFinalizer(ctx, claim)
