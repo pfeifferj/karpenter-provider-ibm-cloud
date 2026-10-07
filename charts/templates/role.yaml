@@ -163,13 +163,21 @@ rules:
   resources:
   - clusterrolebindings
   verbs:
-  - delete
   - create
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - karpenter-ibm-auto-approve-csrs
+  - karpenter-ibm-auto-approve-kubelet-serving-csrs
+  - karpenter-ibm-auto-approve-renewals
+  - karpenter-ibm-bootstrap-nodes
+  resources:
+  - clusterrolebindings
+  verbs:
+  - delete
   - get
-  - list
   - patch
   - update
-  - watch
 - apiGroups:
   - storage.k8s.io
   resources:

@@ -16,8 +16,12 @@ package bootstrap
 
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;delete,namespace=kube-system
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;create;update;patch;delete,namespace=kube-system
-//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=create
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,resourceNames=karpenter-ibm-bootstrap-nodes;karpenter-ibm-auto-approve-renewals;karpenter-ibm-auto-approve-csrs;karpenter-ibm-auto-approve-kubelet-serving-csrs,verbs=get;update;patch;delete
 //+kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+// Binding system:node-bootstrapper and the nodeclient roles requires holding their permissions.
+//+kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests,verbs=create;get;list;watch
+//+kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests/nodeclient;certificatesigningrequests/selfnodeclient,verbs=create
 
 import (
 	"context"
