@@ -1012,7 +1012,13 @@ func (p *VPCInstanceProvider) Delete(ctx context.Context, node *corev1.Node) err
 		return targetErr
 	}
 	claim := &karpv1.NodeClaim{ObjectMeta: *node.ObjectMeta.DeepCopy(), Status: karpv1.NodeClaimStatus{ProviderID: node.Spec.ProviderID}}
-	verified, verifyErr := p.verifyLaunchInstance(ctx, claim, true)
+	var verified *vpcv1.Instance
+	var verifyErr error
+	if node.Annotations[LaunchAnnotation] == "" {
+		verified, verifyErr = p.verifyLegacyInstance(ctx, vpcClient, claim, instanceID, birthAccount)
+	} else {
+		verified, verifyErr = p.verifyLaunchInstance(ctx, claim, true)
+	}
 	if verifyErr != nil {
 		if cloudprovider.IsNodeClaimNotFoundError(verifyErr) {
 			p.instanceCache.Delete(instanceID)

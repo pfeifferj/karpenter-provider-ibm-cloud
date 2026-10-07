@@ -629,3 +629,60 @@ func TestLaunchRetargetingAndFutureStateNeverReachCloud(t *testing.T) {
 	_, err = provider.VerifyLaunchInstance(context.Background(), claim)
 	require.Error(t, err)
 }
+
+func legacyDeleteFixture(t *testing.T) (*VPCInstanceProvider, *corev1.Node, *vpcv1.Instance, *mockibm.MockvpcClientInterface) {
+	t.Helper()
+	provider, claim, _, mock, _ := launchFixture(t)
+	delete(claim.Annotations, LaunchAnnotation)
+	claim.Annotations[ownership.AccountIDAnnotation] = testAccountID
+	claim.Status.ProviderID = "ibm:///us-south/instance"
+	require.NoError(t, provider.kubeClient.Update(context.Background(), claim))
+	vm := &vpcv1.Instance{ID: core.StringPtr("instance"), Name: core.StringPtr(claim.Name), CRN: core.StringPtr("crn:v1:bluemix:public:is:us-south-1:a/" + testAccountID + "::instance:instance")}
+	node := &corev1.Node{ObjectMeta: *claim.ObjectMeta.DeepCopy(), Spec: corev1.NodeSpec{ProviderID: claim.Status.ProviderID}}
+	return provider, node, vm, mock
+}
+
+func TestDeleteLegacyInstanceWithoutLaunchCheckpoint(t *testing.T) {
+	provider, node, vm, mock := legacyDeleteFixture(t)
+	gomock.InOrder(
+		mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(vm, nil, nil),
+		mock.EXPECT().DeleteInstanceWithContext(gomock.Any(), gomock.Cond(func(options *vpcv1.DeleteInstanceOptions) bool { return *options.ID == "instance" })).Return(nil, nil),
+		mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(nil, nil, &ibm.IBMError{StatusCode: 404}),
+	)
+	err := provider.Delete(context.Background(), node)
+	require.True(t, cloudprovider.IsNodeClaimNotFoundError(err), "got %v", err)
+}
+
+func TestDeleteLegacyInstanceAlreadyGone(t *testing.T) {
+	provider, node, _, mock := legacyDeleteFixture(t)
+	mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(nil, nil, &ibm.IBMError{StatusCode: 404})
+	err := provider.Delete(context.Background(), node)
+	require.True(t, cloudprovider.IsNodeClaimNotFoundError(err), "got %v", err)
+}
+
+func TestDeleteLegacyInstanceRefusesUnprovenTargets(t *testing.T) {
+	for name, mutate := range map[string]func(*vpcv1.Instance){
+		"other name": func(vm *vpcv1.Instance) { vm.Name = core.StringPtr("other-claim") },
+		"foreign account": func(vm *vpcv1.Instance) {
+			vm.CRN = core.StringPtr("crn:v1:bluemix:public:is:us-south-1:a/" + strings.Repeat("b", 32) + "::instance:instance")
+		},
+		"other instance": func(vm *vpcv1.Instance) { vm.ID = core.StringPtr("other") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider, node, vm, mock := legacyDeleteFixture(t)
+			mutate(vm)
+			mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(vm, nil, nil)
+			err := provider.Delete(context.Background(), node)
+			require.Error(t, err)
+			require.False(t, cloudprovider.IsNodeClaimNotFoundError(err))
+		})
+	}
+}
+
+func TestDeleteLegacyInstanceTransientLookupIsNotNotFound(t *testing.T) {
+	provider, node, _, mock := legacyDeleteFixture(t)
+	mock.EXPECT().GetInstanceWithContext(gomock.Any(), getInstance("instance")).Return(nil, nil, &ibm.IBMError{StatusCode: 503})
+	err := provider.Delete(context.Background(), node)
+	require.Error(t, err)
+	require.False(t, cloudprovider.IsNodeClaimNotFoundError(err))
+}

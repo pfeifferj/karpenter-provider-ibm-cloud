@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -115,6 +116,36 @@ func (p *VPCInstanceProvider) verifyLaunchInstance(ctx context.Context, claim *k
 	}
 	if _, _, readErr := p.freshLaunchClaim(ctx, fresh); readErr != nil {
 		return nil, readErr
+	}
+	return vm, nil
+}
+
+// verifyLegacyInstance proves ownership of a VM launched before launch checkpoints existed.
+// Those releases named the VM after its NodeClaim and never persisted cloud ownership tags,
+// so the proof is the recorded provider ID, the VM name and the verified birth account.
+func (p *VPCInstanceProvider) verifyLegacyInstance(ctx context.Context, vpc *ibm.VPCClient, claim *karpv1.NodeClaim, instanceID, accountID string) (*vpcv1.Instance, error) {
+	if claim == nil || claim.UID == "" || p.reader() == nil {
+		return nil, fmt.Errorf("persisted NodeClaim identity is required")
+	}
+	fresh := &karpv1.NodeClaim{}
+	if err := p.reader().Get(ctx, client.ObjectKeyFromObject(claim), fresh); err != nil {
+		return nil, err
+	}
+	if fresh.UID != claim.UID || fresh.Status.ProviderID != claim.Status.ProviderID || fresh.Annotations[LaunchAnnotation] != "" {
+		return nil, fmt.Errorf("NodeClaim launch identity changed")
+	}
+	vm, err := vpc.GetInstance(ctx, instanceID)
+	if isIBMInstanceNotFoundError(err) {
+		return nil, cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("legacy instance %s not found", instanceID))
+	}
+	if err != nil {
+		return nil, err
+	}
+	if vm == nil || vm.ID == nil || *vm.ID != instanceID || vm.Name == nil || *vm.Name != fresh.Name {
+		return nil, fmt.Errorf("instance identity differs from the legacy NodeClaim")
+	}
+	if err := verifyInstanceAccount(vm, accountID); err != nil {
+		return nil, err
 	}
 	return vm, nil
 }
