@@ -31,7 +31,7 @@ jobs:
 
     - name: Install controller-gen
       run: |
-        go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+        go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0
         mkdir -p ~/.local/share/go/bin
         mv ~/go/bin/controller-gen ~/.local/share/go/bin/
 
@@ -60,6 +60,10 @@ jobs:
     - name: Run tests
       run: |
         go test -v -race ./...
+
+    - name: Test API module
+      working-directory: pkg/apis
+      run: go test -race ./...
 
     - name: Test E2E harness helpers
       run: env -u RUN_E2E_TESTS go test -mod=vendor -race -tags=e2e ./test/e2e
@@ -111,7 +115,7 @@ jobs:
 
     - name: Install mockgen
       run: |
-        go install github.com/golang/mock/mockgen@latest
+        go install go.uber.org/mock/mockgen@v0.6.0
 
     - name: Generate mocks
       run: make gen-mocks

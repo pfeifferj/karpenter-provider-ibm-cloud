@@ -9,7 +9,6 @@ rules:
   resources:
   - configmaps
   - nodes
-  - secrets
   verbs:
   - create
   - delete
@@ -20,6 +19,13 @@ rules:
   - watch
 - apiGroups:
   - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - events.k8s.io
   resources:
   - events
   verbs:
@@ -66,6 +72,7 @@ rules:
   - certificatesigningrequests/approval
   verbs:
   - update
+  - patch
 - apiGroups:
   - certificates.k8s.io
   resources:
@@ -77,6 +84,7 @@ rules:
   - certificates.k8s.io
   resourceNames:
   - kubernetes.io/kubelet-serving
+  - kubernetes.io/kube-apiserver-client-kubelet
   resources:
   - signers
   verbs:
@@ -155,6 +163,7 @@ rules:
   resources:
   - clusterrolebindings
   verbs:
+  - delete
   - create
   - get
   - list
@@ -170,6 +179,10 @@ rules:
   - get
   - list
   - watch
+- apiGroups: ["authorization.k8s.io"]
+  resources: ["subjectaccessreviews"]
+  verbs: ["create"]
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -231,3 +244,18 @@ rules:
   - pods/eviction
   verbs:
   - create
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "karpenter.fullname" . }}-bootstrap
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "create", "delete"]
+
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings"]
+  verbs: ["get", "create", "delete", "update", "patch"]

@@ -37,6 +37,7 @@ import (
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cloudprovider/ibm"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/constants"
 	commonTypes "github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/providers/common/types"
+	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/ownership"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/utils/vpcclient"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/version"
 )
@@ -45,12 +46,12 @@ import (
 type VPCBootstrapProvider struct {
 	client           *ibm.Client
 	k8sClient        kubernetes.Interface
-	kubeClient       client.Client
+	kubeClient       client.Reader
 	vpcClientManager *vpcclient.Manager
 }
 
 // NewVPCBootstrapProvider creates a new VPC bootstrap provider
-func NewVPCBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface, kubeClient client.Client) *VPCBootstrapProvider {
+func NewVPCBootstrapProvider(client *ibm.Client, k8sClient kubernetes.Interface, kubeClient client.Reader) *VPCBootstrapProvider {
 	return &VPCBootstrapProvider{
 		client:           client,
 		vpcClientManager: vpcclient.NewManager(client, constants.DefaultVPCClientCacheTTL),
@@ -100,8 +101,15 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 		logger.Info("Discovered API server endpoint", "endpoint", clusterEndpoint)
 	}
 
-	// Generate or find bootstrap token (valid for 24 hours)
-	bootstrapToken, err := commonTypes.FindOrCreateBootstrapToken(ctx, p.k8sClient, 24*time.Hour)
+	nodeClaimObj, err := p.getNodeClaim(ctx, nodeClaim)
+	if err != nil {
+		return "", fmt.Errorf("reading bootstrap NodeClaim: %w", err)
+	}
+	clusterUID, err := ownership.ClusterUID(ctx, p.kubeClient)
+	if err != nil {
+		return "", err
+	}
+	bootstrapToken, err := commonTypes.FindOrCreateClaimBootstrapToken(ctx, p.k8sClient, nodeClaimObj, clusterUID)
 	if err != nil {
 		return "", fmt.Errorf("generating bootstrap token: %w", err)
 	}
@@ -127,12 +135,6 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 	cniPlugin, cniVersion, err := p.detectCNIPluginAndVersion(ctx)
 	if err != nil {
 		return "", fmt.Errorf("detecting CNI plugin and version: %w", err)
-	}
-
-	// Get NodeClaim to extract labels, taints, and architecture
-	nodeClaimObj, err := p.getNodeClaim(ctx, nodeClaim)
-	if err != nil {
-		logger.Error(err, "Failed to get NodeClaim, proceeding without labels/taints")
 	}
 
 	// Detect architecture from the selected instance type with improved fallback chain
@@ -179,22 +181,23 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 
 	// Build bootstrap options for direct kubelet
 	options := commonTypes.Options{
-		ClusterEndpoint:   clusterEndpoint,
-		BootstrapToken:    bootstrapToken,
-		KubeletConfig:     nodeClass.Spec.Kubelet,
-		CustomUserData:    nodeClass.Spec.UserDataAppend,
-		ContainerRuntime:  containerRuntime,
-		CNIPlugin:         cniPlugin,
-		CNIVersion:        cniVersion,
-		Architecture:      architecture,
-		Region:            nodeClass.Spec.Region,
-		Zone:              nodeClass.Spec.Zone,
-		CABundle:          caCert,
-		DNSClusterIP:      clusterDNS,
-		NodeName:          nodeClaim.Name, // Use NodeClaim name as the node name
-		InstanceID:        instanceID,     // Pass the instance ID if provided
-		ProviderID:        "",             // Will be set from NodeClaim if available
-		KubernetesVersion: clusterVersion,
+		ClusterEndpoint:          clusterEndpoint,
+		BootstrapToken:           bootstrapToken,
+		BootstrapStatusConfigMap: "karpenter-bootstrap-" + string(nodeClaimObj.UID),
+		KubeletConfig:            nodeClass.Spec.Kubelet,
+		CustomUserData:           nodeClass.Spec.UserDataAppend,
+		ContainerRuntime:         containerRuntime,
+		CNIPlugin:                cniPlugin,
+		CNIVersion:               cniVersion,
+		Architecture:             architecture,
+		Region:                   nodeClass.Spec.Region,
+		Zone:                     nodeClass.Spec.Zone,
+		CABundle:                 caCert,
+		DNSClusterIP:             clusterDNS,
+		NodeName:                 nodeClaim.Name, // Use NodeClaim name as the node name
+		InstanceID:               instanceID,     // Pass the instance ID if provided
+		ProviderID:               "",             // Will be set from NodeClaim if available
+		KubernetesVersion:        clusterVersion,
 	}
 
 	// Add labels and taints if NodeClaim was found
@@ -248,7 +251,6 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 
 	logger.Info("Generated bootstrap configuration",
 		"endpoint", clusterEndpoint,
-		"token", fmt.Sprintf("%s...", bootstrapToken[:10]),
 		"region", nodeClass.Spec.Region,
 		"dns", clusterDNS,
 		"cni", cniPlugin,
@@ -340,11 +342,8 @@ func (p *VPCBootstrapProvider) detectCNIPluginAndVersion(ctx context.Context) (s
 
 	// Check for Calico (classic manifest install in kube-system, or tigera-operator install in calico-system)
 	for _, ns := range []string{"kube-system", "calico-system"} {
-		if _, err := p.k8sClient.AppsV1().DaemonSets(ns).Get(ctx, "calico-node", metav1.GetOptions{}); err == nil {
-			cniVersion, err := p.getLatestCNIVersion(ctx, "calico")
-			if err != nil {
-				return "", "", fmt.Errorf("failed to get Calico CNI version: %w", err)
-			}
+		if ds, err := p.k8sClient.AppsV1().DaemonSets(ns).Get(ctx, "calico-node", metav1.GetOptions{}); err == nil {
+			cniVersion := p.cniVersionFromContainers(ds.Spec.Template.Spec.Containers)
 			logger.Info("Detected Calico CNI plugin", "namespace", ns, "cniVersion", cniVersion)
 			return "calico", cniVersion, nil
 		}
@@ -352,34 +351,28 @@ func (p *VPCBootstrapProvider) detectCNIPluginAndVersion(ctx context.Context) (s
 
 	// Check for Cilium
 	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "cilium", metav1.GetOptions{}); err == nil {
-		version := p.extractVersionFromImage(ds.Spec.Template.Spec.Containers[0].Image)
+		version := p.cniVersionFromContainers(ds.Spec.Template.Spec.Containers)
 		logger.Info("Detected Cilium CNI plugin", "version", version)
 		return "cilium", version, nil
 	}
 
 	// Check for Flannel (in kube-flannel namespace)
-	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-flannel").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
-		cniVersion, err := p.getLatestCNIVersion(ctx, "flannel")
-		if err != nil {
-			return "", "", fmt.Errorf("failed to get Flannel CNI version: %w", err)
-		}
+	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-flannel").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
+		cniVersion := p.cniVersionFromContainers(ds.Spec.Template.Spec.Containers)
 		logger.Info("Detected Flannel CNI plugin in kube-flannel namespace", "cniVersion", cniVersion)
 		return "flannel", cniVersion, nil
 	}
 
 	// Also check kube-system for older Flannel installations
-	if _, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
-		cniVersion, err := p.getLatestCNIVersion(ctx, "flannel")
-		if err != nil {
-			return "", "", fmt.Errorf("failed to get Flannel CNI version: %w", err)
-		}
+	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "kube-flannel-ds", metav1.GetOptions{}); err == nil {
+		cniVersion := p.cniVersionFromContainers(ds.Spec.Template.Spec.Containers)
 		logger.Info("Detected Flannel CNI plugin in kube-system namespace", "cniVersion", cniVersion)
 		return "flannel", cniVersion, nil
 	}
 
 	// Check for Weave Net
 	if ds, err := p.k8sClient.AppsV1().DaemonSets("kube-system").Get(ctx, "weave-net", metav1.GetOptions{}); err == nil {
-		version := p.extractVersionFromImage(ds.Spec.Template.Spec.Containers[0].Image)
+		version := p.cniVersionFromContainers(ds.Spec.Template.Spec.Containers)
 		logger.Info("Detected Weave Net CNI plugin", "version", version)
 		return "weave", version, nil
 	}
@@ -387,10 +380,7 @@ func (p *VPCBootstrapProvider) detectCNIPluginAndVersion(ctx context.Context) (s
 	// Check for CNI configuration files in ConfigMaps
 	if cm, err := p.k8sClient.CoreV1().ConfigMaps("kube-system").Get(ctx, "calico-config", metav1.GetOptions{}); err == nil {
 		if _, exists := cm.Data["cni_network_config"]; exists {
-			cniVersion, err := p.getLatestCNIVersion(ctx, "calico")
-			if err != nil {
-				return "", "", fmt.Errorf("failed to get Calico CNI version: %w", err)
-			}
+			cniVersion := "unknown"
 			logger.Info("Detected Calico CNI plugin from ConfigMap", "cniVersion", cniVersion)
 			return "calico", cniVersion, nil
 		}
@@ -399,11 +389,20 @@ func (p *VPCBootstrapProvider) detectCNIPluginAndVersion(ctx context.Context) (s
 	return "", "", fmt.Errorf("no CNI plugin detected in cluster")
 }
 
+func (p *VPCBootstrapProvider) cniVersionFromContainers(containers []corev1.Container) string {
+	for _, container := range containers {
+		if container.Image != "" {
+			return p.extractVersionFromImage(container.Image)
+		}
+	}
+	return "unknown"
+}
+
 // extractVersionFromImage extracts version from container image
 func (p *VPCBootstrapProvider) extractVersionFromImage(image string) string {
-	parts := strings.Split(image, ":")
-	if len(parts) >= 2 {
-		tag := parts[len(parts)-1]
+	image, _, _ = strings.Cut(image, "@")
+	if colon := strings.LastIndex(image, ":"); colon > strings.LastIndex(image, "/") {
+		tag := image[colon+1:]
 		// If tag doesn't start with 'v', add it
 		if !strings.HasPrefix(tag, "v") && tag != "latest" {
 			return "v" + tag
