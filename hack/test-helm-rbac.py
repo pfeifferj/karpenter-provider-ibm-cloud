@@ -41,7 +41,7 @@ def verify(release, namespace, overrides):
         assert identity not in identities, f"duplicate RBAC identity: {identity}"
         identities.add(identity)
     bindings = [obj for obj in objects if obj["kind"] in {"RoleBinding", "ClusterRoleBinding"}]
-    assert len(bindings) == 4, f"expected four manager bindings, got {len(bindings)}"
+    assert len(bindings) == 5, f"expected five manager bindings, got {len(bindings)}"
     for binding in bindings:
         reference = binding["roleRef"]
         target_namespace = "" if reference["kind"] == "ClusterRole" else binding["metadata"].get("namespace", namespace)
@@ -51,6 +51,19 @@ def verify(release, namespace, overrides):
             if subject["kind"] == "ServiceAccount":
                 target = "ServiceAccount", subject.get("namespace", namespace), subject["name"]
                 assert target in identities, f"unresolved ServiceAccount for {release}: {target}"
+    cluster = next(obj for obj in objects if obj["kind"] == "ClusterRole")
+    assert all("secrets" not in rule.get("resources", []) for rule in cluster["rules"])
+    event_rules = [rule for rule in cluster["rules"] if "events" in rule.get("resources", [])]
+    assert {group for rule in event_rules for group in rule["apiGroups"]} == {"", "events.k8s.io"}
+    assert all(rule["resources"] == ["events"] and set(rule["verbs"]) == {"create", "patch"} for rule in event_rules)
+    bootstrap = next(obj for obj in objects if obj["kind"] == "Role" and obj["metadata"]["name"].endswith("-bootstrap"))
+    assert bootstrap["metadata"]["namespace"] == "kube-system"
+    assert bootstrap["rules"][0] == {"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "create", "delete"]}
+    signers = next(rule for rule in cluster["rules"] if "signers" in rule.get("resources", []))
+    assert set(signers["resourceNames"]) == {"kubernetes.io/kubelet-serving", "kubernetes.io/kube-apiserver-client-kubelet"}
+    assert signers["verbs"] == ["approve"]
+    assert any("subjectaccessreviews" in rule.get("resources", []) and "create" in rule["verbs"] for rule in cluster["rules"])
+    assert all(subject.get("name") != "system:nodes" for binding in bindings for subject in binding["subjects"])
     print(f"RBAC references resolved: {release}, namespace={namespace}, overrides={overrides}")
 
 
