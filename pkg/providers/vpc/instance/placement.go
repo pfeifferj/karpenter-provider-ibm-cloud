@@ -25,11 +25,13 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
@@ -157,8 +159,8 @@ func (p *VPCInstanceProvider) reserveBalancedZone(ctx context.Context, claim *ka
 	digest := sha256.Sum256([]byte(clusterUID + "/" + string(class.UID)))
 	key := types.NamespacedName{Namespace: namespace, Name: fmt.Sprintf("vpc-zones-%x", digest[:20])}
 	chosen := ""
-	backoff := retry.DefaultBackoff
-	backoff.Steps = 20
+	// Bounded growth: at most ~10s per sleep and ~20s in total before the launch is retried.
+	backoff := wait.Backoff{Duration: 20 * time.Millisecond, Factor: 2, Jitter: 1, Steps: 10}
 	err := retry.OnError(backoff, func(err error) bool { return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err) }, func() error {
 		freshClaim := &karpv1.NodeClaim{}
 		if err := p.reader().Get(ctx, client.ObjectKeyFromObject(claim), freshClaim); err != nil {
