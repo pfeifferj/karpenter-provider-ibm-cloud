@@ -26,6 +26,7 @@ import (
 	"github.com/IBM/platform-services-go-sdk/globalcatalogv1"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/batcher"
 	"github.com/kubernetes-sigs/karpenter-provider-ibm-cloud/pkg/cache"
@@ -55,7 +56,7 @@ type IBMPricingProvider struct {
 	priceCache     *cache.Cache
 	logger         *logging.Logger
 	lifecycle      context.Context
-	refreshFlight  cache.FlightGroup
+	refreshFlight  singleflight.Group
 	regionalMu     sync.Mutex
 	regional       map[string]*IBMPricingProvider
 }
