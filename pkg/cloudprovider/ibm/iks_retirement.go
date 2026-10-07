@@ -30,6 +30,6 @@ func (c *IKSClient) RemoveWorker(ctx context.Context, cluster, worker string) er
 	if err != nil {
 		return fmt.Errorf("getting IAM token: %w", err)
 	}
-	// https://github.com/IBM-Cloud/container-services-go-sdk/blob/master/kubernetesserviceapiv1/kubernetes_service_api_v1.go
+	// Request contract of V2RemoveWorker: https://github.com/IBM-Cloud/container-services-go-sdk/blob/61af133026540c0708a1e3f48659e3016d3d186a/kubernetesserviceapiv1/kubernetes_service_api_v1.go#L13491
 	return c.httpClient.PostJSON(ctx, "/removeWorker", token, map[string]string{"cluster": cluster, "workerID": worker}, nil)
 }
