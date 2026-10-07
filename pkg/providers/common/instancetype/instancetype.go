@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/IBM/vpc-go-sdk/vpcv1"
+	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -70,7 +71,7 @@ type IBMInstanceTypeProvider struct {
 	unavailableOfferings *ibmcache.UnavailableOfferings
 	profilesMu           sync.Mutex
 	profiles             map[string]profileSnapshot
-	profileFlights       ibmcache.FlightGroup
+	profileFlights       singleflight.Group
 	lifecycle            context.Context
 }
 
