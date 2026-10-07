@@ -20,20 +20,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
-  - events.k8s.io
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
-  - ""
-  resources:
   - namespaces
   - persistentvolumeclaims
   - persistentvolumes
@@ -50,6 +36,14 @@ rules:
   verbs:
   - create
 - apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - apps
   resources:
   - daemonsets
@@ -57,6 +51,12 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
 - apiGroups:
   - certificates.k8s.io
   resources:
@@ -71,8 +71,8 @@ rules:
   resources:
   - certificatesigningrequests/approval
   verbs:
-  - update
   - patch
+  - update
 - apiGroups:
   - certificates.k8s.io
   resources:
@@ -83,8 +83,8 @@ rules:
 - apiGroups:
   - certificates.k8s.io
   resourceNames:
-  - kubernetes.io/kubelet-serving
   - kubernetes.io/kube-apiserver-client-kubelet
+  - kubernetes.io/kubelet-serving
   resources:
   - signers
   verbs:
@@ -163,13 +163,21 @@ rules:
   resources:
   - clusterrolebindings
   verbs:
-  - delete
   - create
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - karpenter-ibm-auto-approve-csrs
+  - karpenter-ibm-auto-approve-kubelet-serving-csrs
+  - karpenter-ibm-auto-approve-renewals
+  - karpenter-ibm-bootstrap-nodes
+  resources:
+  - clusterrolebindings
+  verbs:
+  - delete
   - get
-  - list
   - patch
   - update
-  - watch
 - apiGroups:
   - storage.k8s.io
   resources:
@@ -179,10 +187,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups: ["authorization.k8s.io"]
-  resources: ["subjectaccessreviews"]
-  verbs: ["create"]
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -244,18 +248,23 @@ rules:
   - pods/eviction
   verbs:
   - create
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "karpenter.fullname" . }}-bootstrap
-  namespace: kube-system
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get", "list", "create", "delete"]
-
-- apiGroups: ["rbac.authorization.k8s.io"]
-  resources: ["roles", "rolebindings"]
-  verbs: ["get", "create", "delete", "update", "patch"]
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
+  verbs:
+  - create
+  - delete
+  - get
+  - patch
+  - update
