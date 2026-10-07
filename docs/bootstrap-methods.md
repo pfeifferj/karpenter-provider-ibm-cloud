@@ -55,7 +55,7 @@ spec:
 
 Bootstrap requests use the group below. Each NodeClaim receives its own token and a named ConfigMap status Role. Client and serving CSR approval verifies the claim, launch, cloud ownership, and requested node identity; serving approval is not granted to `system:nodes`. Generic `nodeclient` autoapproval for provider tokens must be disabled before provisioning.
 
-#### **Bootstrap Request Group**
+#### Bootstrap request group
 ```yaml
 # All bootstrap tokens use the same generic group
 group: "system:bootstrappers:karpenter:ibm-cloud"

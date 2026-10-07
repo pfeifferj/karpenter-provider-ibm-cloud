@@ -53,7 +53,7 @@ ibmcloud iam service-api-key-create karpenter-vpc $SERVICE_ID \
   --description "VPC-specific API access for Karpenter"
 ```
 
-**Save the API keys securely - they won't be shown again!** Scope policies to the intended resource group and required resources. Two API keys for the same Service ID share its permissions; use separate Service IDs when permission separation is needed. See [security considerations](security-considerations.md#2-api-credentials) for storage, tagging, and load-balancer writes.
+**Save the API keys securely; IBM Cloud shows them only once.** Scope policies to the intended resource group and required resources. Two API keys for the same Service ID share its permissions; use separate Service IDs when permission separation is needed. See [security considerations](security-considerations.md#2-api-credentials) for storage, tagging, and load-balancer writes.
 
 ### Step 2: Gather Required Resource Information
 

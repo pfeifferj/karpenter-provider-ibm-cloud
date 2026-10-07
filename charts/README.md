@@ -21,7 +21,7 @@ helm install karpenter karpenter-ibm/karpenter-ibm \
   --set credentials.vpcApiKey="your-vpc-api-key"
 ```
 
-Chart-managed NodeClasses use `customResources.nodeClass.spec`, with the same fields as an `IBMNodeClass.spec`. The former `common`, `vpc`, and `iks` wrappers are rejected; see `charts/examples/`. Images use top-level `image.repository`, `image.tag`, and optional `image.digest`.
+Chart-managed NodeClasses use `customResources.nodeClass.spec`, with the same fields as an `IBMNodeClass.spec`. Nested `common`, `vpc`, or `iks` keys are rejected; see `charts/examples/`. Images use top-level `image.repository`, `image.tag`, and optional `image.digest`.
 
 Credential values use camelCase. The rendered `<fullname>-credentials` Secret uses `ibm_api_key`, `vpc_api_key`, `region`, and optional `account_id`, `zone`, `resource_group_id`, `vpc_url`, and `vpc_auth_type`. Helm updates restart the controller through Pod checksums; direct Secret edits require a restart.
 
