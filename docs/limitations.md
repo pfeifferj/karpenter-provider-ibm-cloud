@@ -29,7 +29,7 @@ VPC launches store their original configuration and use a name derived from the 
 
 New VPC launches resolve and record the account from the VPC API key. Helm's optional `credentials.accountId` checks that the credential belongs to the expected account. Credential changes to another account block recovery and deletion instead of treating that account's 404 as proof of absence.
 
-Older claims record account identity after a successful lookup of their exact instance. If that instance is already absent and the claim has no recorded account, it remains quarantined until an operator verifies the original account and records its ID in the `karpenter-ibm.sh/account-id` annotation. Existing resources without immutable ownership tags are excluded from automatic orphan deletion. Retained volumes are not removed by launch rollback.
+Claims without a launch checkpoint record account identity after a successful lookup of their exact instance, and are deleted only when that instance's name equals the claim name and its CRN matches the recorded account. If that instance is already absent and the claim has no recorded account, it remains quarantined until an operator verifies the original account and records its ID in the `karpenter-ibm.sh/account-id` annotation. Existing resources without immutable ownership tags are excluded from automatic orphan deletion. Retained volumes are not removed by launch rollback.
 
 #### IKS Mode Instance Type Constraints {#iks-mode-instance-type-constraints}
 
