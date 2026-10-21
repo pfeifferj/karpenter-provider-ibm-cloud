@@ -151,7 +151,7 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 	}
 
 	// Second: Try NodeClaim labels if architecture detection failed
-	if architecture == "" && nodeClaimObj != nil {
+	if architecture == "" {
 		instanceType := nodeClaimObj.Labels["node.kubernetes.io/instance-type"]
 		if instanceType != "" {
 			architecture, err = p.detectArchitectureFromInstanceProfile(ctx, instanceType)
@@ -200,53 +200,44 @@ func (p *VPCBootstrapProvider) GetUserDataWithInstanceIDAndType(ctx context.Cont
 		KubernetesVersion:        clusterVersion,
 	}
 
-	// Add labels and taints if NodeClaim was found
-	if nodeClaimObj != nil {
-		// Start with NodeClaim labels
-		options.Labels = make(map[string]string)
-		for k, v := range nodeClaimObj.Labels {
-			options.Labels[k] = v
-		}
+	// Start with NodeClaim labels
+	options.Labels = make(map[string]string)
+	for k, v := range nodeClaimObj.Labels {
+		options.Labels[k] = v
+	}
 
-		reqs := scheduling.NewNodeSelectorRequirementsWithMinValues(nodeClaimObj.Spec.Requirements...)
-		requirementLabels := make(map[string]string)
-		for key, req := range reqs {
-			if req.Operator() == corev1.NodeSelectorOpIn && req.Len() == 1 {
-				requirementLabels[key] = req.Values()[0]
-			}
+	reqs := scheduling.NewNodeSelectorRequirementsWithMinValues(nodeClaimObj.Spec.Requirements...)
+	requirementLabels := make(map[string]string)
+	for key, req := range reqs {
+		if req.Operator() == corev1.NodeSelectorOpIn && req.Len() == 1 {
+			requirementLabels[key] = req.Values()[0]
 		}
-		for k, v := range requirementLabels {
-			options.Labels[k] = v
-		}
+	}
+	for k, v := range requirementLabels {
+		options.Labels[k] = v
+	}
 
-		// Ensure essential Karpenter labels are present
-		if nodePool, exists := nodeClaimObj.Labels["karpenter.sh/nodepool"]; exists {
-			options.Labels["karpenter.sh/nodepool"] = nodePool
-		}
-		if nodeClass, exists := nodeClaimObj.Labels["karpenter-ibm.sh/ibmnodeclass"]; exists {
-			options.Labels["karpenter-ibm.sh/ibmnodeclass"] = nodeClass
-		}
+	// NodeClaim's own Karpenter labels win over requirement values
+	if nodePool, exists := nodeClaimObj.Labels["karpenter.sh/nodepool"]; exists {
+		options.Labels["karpenter.sh/nodepool"] = nodePool
+	}
+	if nodeClass, exists := nodeClaimObj.Labels["karpenter-ibm.sh/ibmnodeclass"]; exists {
+		options.Labels["karpenter-ibm.sh/ibmnodeclass"] = nodeClass
+	}
 
-		// Add taints from NodeClaim (including startup taints)
-		options.Taints = append(nodeClaimObj.Spec.Taints, nodeClaimObj.Spec.StartupTaints...)
+	// Add taints from NodeClaim (including startup taints)
+	options.Taints = append(nodeClaimObj.Spec.Taints, nodeClaimObj.Spec.StartupTaints...)
 
-		// Add the unregistered taint if not already present (following AWS pattern)
-		hasUnregisteredTaint := false
-		for _, taint := range options.Taints {
-			if taint.MatchTaint(&karpv1.UnregisteredNoExecuteTaint) {
-				hasUnregisteredTaint = true
-				break
-			}
+	// Add the unregistered taint if not already present (following AWS pattern)
+	hasUnregisteredTaint := false
+	for _, taint := range options.Taints {
+		if taint.MatchTaint(&karpv1.UnregisteredNoExecuteTaint) {
+			hasUnregisteredTaint = true
+			break
 		}
-		if !hasUnregisteredTaint {
-			options.Taints = append(options.Taints, karpv1.UnregisteredNoExecuteTaint)
-		}
-	} else {
-		// If no NodeClaim found, create basic labels map
-		options.Labels = make(map[string]string)
-
-		// Still add the unregistered taint even without NodeClaim for safety
-		options.Taints = []corev1.Taint{karpv1.UnregisteredNoExecuteTaint}
+	}
+	if !hasUnregisteredTaint {
+		options.Taints = append(options.Taints, karpv1.UnregisteredNoExecuteTaint)
 	}
 
 	logger.Info("Generated bootstrap configuration",
